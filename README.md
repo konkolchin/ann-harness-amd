@@ -6,6 +6,11 @@ Reproducible baseline scripts for ANN testing with ready-to-use vectors (`sift-1
 - `scripts/run_milvus_hdf5.py` — Milvus Lite baseline (QPS, p99, recall@10)
 - `scripts/check_rocmds_gfx1030.sh` — environment/build check for hipRAFT + hipVS
 
+## Documentation
+
+- Runbook (PDF): [`docs/ANN_Testing_Framework (1).pdf`](docs/ANN_Testing_Framework%20(1).pdf)
+- Runbook source (LaTeX): [`docs/ann_framework_runbook.tex`](docs/ann_framework_runbook.tex)
+
 ## Quick start
 
 ```bash
