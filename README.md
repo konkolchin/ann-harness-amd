@@ -11,6 +11,7 @@ Reproducible baseline scripts for ANN testing with ready-to-use vectors (`sift-1
 
 - Runbook (PDF): [`docs/ANN_Testing_Framework (1).pdf`](docs/ANN_Testing_Framework%20(1).pdf)
 - Runbook source (LaTeX): [`docs/ann_framework_runbook.tex`](docs/ann_framework_runbook.tex)
+- Quickstart (copy-paste): [`docs/QUICKSTART.md`](docs/QUICKSTART.md)
 
 ## Quick start
 
