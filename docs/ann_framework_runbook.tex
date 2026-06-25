@@ -1,0 +1,440 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{longtable}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue
+}
+
+\title{Reproducible ANN Testing Framework\\[0.3em]
+\large SIFT HDF5 Baseline on AMD Machine\\
+\large (FAISS + Milvus Lite)}
+\author{Konstantin Kolchin}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document records a reproducible baseline workflow for ANN testing on an AMD machine,
+using ready-to-use vectors (SIFT HDF5) instead of an embedding stage.
+It includes setup steps, scripts to run, and measured results for FAISS and Milvus Lite.
+The goal is to provide a repeatable harness that any engineer can run before moving to
+Milvus GPU porting work.
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+\section{Scope and Goal}
+
+The workflow validates the first part of the demo pipeline with \textbf{ready vectors}
+and avoids text chunking/embedding complexity in early iterations.
+The concrete objectives are:
+\begin{itemize}[leftmargin=*]
+  \item Verify dataset ingest and search benchmarking on AMD host.
+  \item Establish reference metrics: QPS, recall@$k$, p99 latency.
+  \item Keep execution fully reproducible through explicit scripts and commands.
+\end{itemize}
+
+\section{Environment}
+
+\begin{itemize}[leftmargin=*]
+  \item Host: AMD machine (tested with Radeon RX 6800 XT / \texttt{gfx1030}).
+  \item Working directory: \texttt{\~/ann-demo}.
+  \item Python virtual environment: \texttt{.venv}.
+\end{itemize}
+
+\subsection{Python packages}
+
+\begin{verbatim}
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install numpy faiss-cpu h5py
+pip install "pymilvus[milvus_lite]"
+\end{verbatim}
+
+\section{Dataset Acquisition}
+
+FTP source (\texttt{ftp.irisa.fr}) may hang on restricted networks.
+The reliable path in this run was direct HTTPS with proxy bypass:
+
+\begin{verbatim}
+cd ~/ann-demo/data
+wget --no-proxy https://ann-benchmarks.com/sift-128-euclidean.hdf5
+\end{verbatim}
+
+Dataset content check:
+\begin{verbatim}
+['distances', 'neighbors', 'test', 'train']
+distances (10000, 100) float32
+neighbors (10000, 100) int32
+test      (10000, 128) float32
+train   (1000000, 128) float32
+\end{verbatim}
+
+\section{Scripts and Execution}
+
+\subsection{FAISS baseline script}
+\label{sec:faiss-script}
+
+Run:
+\begin{verbatim}
+python run_faiss_hdf5.py
+\end{verbatim}
+
+The script loads \texttt{train/test/neighbors} from HDF5 and runs:
+\begin{itemize}[leftmargin=*]
+  \item exact baseline: \texttt{IndexFlatL2},
+  \item ANN baseline: \texttt{IndexIVFFlat} with variable \texttt{nprobe}.
+\end{itemize}
+
+\subsection{Milvus Lite baseline script}
+\label{sec:milvus-script}
+
+Run:
+\begin{verbatim}
+python run_milvus_hdf5.py
+\end{verbatim}
+
+Important implementation note: insertion is chunked to avoid gRPC message limit
+(\texttt{RESOURCE\_EXHAUSTED} at 256 MB per message).
+
+Recommended insert pattern:
+\begin{verbatim}
+BATCH = 50000
+for s in range(0, xb.shape[0], BATCH):
+    e = min(s + BATCH, xb.shape[0])
+    col.insert([ids[s:e].tolist(), xb[s:e].tolist()])
+col.flush()
+\end{verbatim}
+
+\section{Measured Results}
+
+\subsection{FAISS results}
+
+\begin{table}[h]
+\centering
+\caption{FAISS SIFT1M baseline (\texttt{k=10})}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{QPS} & \textbf{recall@10} \\
+\midrule
+FlatL2 (exact)   & 1054.5  & 1.0000 \\
+IVF, nprobe=1    & 76649.6 & 0.3707 \\
+IVF, nprobe=4    & 20394.5 & 0.6984 \\
+IVF, nprobe=8    & 10419.9 & 0.8336 \\
+IVF, nprobe=16   & 4995.9  & 0.9274 \\
+IVF, nprobe=32   & 2785.5  & 0.9761 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Milvus Lite results}
+
+\begin{itemize}[leftmargin=*]
+  \item Insert time: 79.37 s
+  \item Index build time (IVF\_FLAT): 8.80 s
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Milvus Lite IVF\_FLAT results (\texttt{k=10})}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} \\
+\midrule
+1  & 1490.1 & 475.36 & 0.8943 \\
+4  & 1465.7 & 465.44 & 0.8943 \\
+8  & 1518.8 & 456.05 & 0.8943 \\
+16 & 1474.3 & 466.86 & 0.8943 \\
+32 & 1535.6 & 473.83 & 0.8943 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Observations}
+
+\begin{itemize}[leftmargin=*]
+  \item FAISS behaves as expected: recall increases with \texttt{nprobe} while QPS decreases.
+  \item Milvus Lite baseline is operational and provides stable benchmark output.
+  \item In this specific run, Milvus recall and QPS were nearly invariant across \texttt{nprobe}.
+        This should be rechecked with an additional parameter sweep and index verification.
+\end{itemize}
+
+\section{Re-run Checklist}
+
+\begin{enumerate}[label=\textbf{R\arabic*.}, leftmargin=*]
+  \item Activate environment and verify package versions.
+  \item Ensure \texttt{sift-128-euclidean.hdf5} is present in \texttt{data/}.
+  \item Run \verb|python run_faiss_hdf5.py| and save console output.
+  \item Run \verb|python run_milvus_hdf5.py| and save console output.
+  \item If insert fails with message-size error, reduce insert batch size.
+  \item Archive script versions and outputs with timestamp for traceability.
+\end{enumerate}
+
+\section{Next Steps}
+
+\begin{itemize}[leftmargin=*]
+  \item Repeat the same harness on the upcoming RX 9070 machine.
+  \item Validate hipRAFT/hipVS and Milvus GPU path on ROCm 7.x there.
+  \item Extend benchmark matrix to include GIST/Deep subsets.
+  \item Add Milvus standalone server run (beyond Lite) for closer production parity.
+\end{itemize}
+
+\appendix
+\section{Teammate Run Template}
+\label{app:teammate-template}
+
+This appendix provides a copy-paste template for additional benchmark runs.
+One filled block per run is recommended.
+
+\subsection*{Run Metadata}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.32\textwidth}X@{}}
+\toprule
+\textbf{Field} & \textbf{Value} \\
+\midrule
+Engineer & \\
+Date/Time (UTC) & \\
+Host name / machine ID & \\
+GPU model / architecture (\texttt{gfx*}) & \\
+OS / kernel & \\
+ROCm / HIP version & \\
+Python version & \\
+Script commit hash / version tag & \\
+Dataset file + checksum (if available) & \\
+\bottomrule
+\end{tabularx}
+
+\subsection*{Execution Summary}
+\begin{itemize}[leftmargin=*]
+  \item Environment setup command set used:
+  \item Dataset acquisition method used:
+  \item Any deviations from this runbook:
+  \item Errors/warnings observed:
+\end{itemize}
+
+\subsection*{FAISS Results (copy values)}
+\begin{table}[h]
+\centering
+\caption{FAISS run results}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{QPS} & \textbf{recall@10} \\
+\midrule
+FlatL2 (exact) &  &  \\
+IVF, nprobe=1  &  &  \\
+IVF, nprobe=4  &  &  \\
+IVF, nprobe=8  &  &  \\
+IVF, nprobe=16 &  &  \\
+IVF, nprobe=32 &  &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Milvus Results (copy values)}
+\begin{itemize}[leftmargin=*]
+  \item Insert time (s):
+  \item Index build time (s):
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Milvus IVF\_FLAT run results}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} \\
+\midrule
+1  &  &  &  \\
+4  &  &  &  \\
+8  &  &  &  \\
+16 &  &  &  \\
+32 &  &  &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Conclusion}
+\begin{itemize}[leftmargin=*]
+  \item Overall status (PASS / PARTIAL / FAIL):
+  \item Primary bottleneck:
+  \item Recommended next action:
+\end{itemize}
+
+\section{Script Source: \texttt{run\_faiss\_hdf5.py}}
+\label{app:script-faiss}
+
+\noindent\textbf{Last validated:} 2026-06-24 on host \texttt{Hongkong-Ubu20}
+(AMD Radeon RX 6800 XT, \texttt{gfx1030}, Python 3.10, \texttt{faiss-cpu 1.14.3}).
+
+\begin{verbatim}
+import time, h5py, numpy as np, faiss
+
+K = 10
+with h5py.File("data/sift-128-euclidean.hdf5", "r") as f:
+    xb = np.array(f["train"], dtype="float32")
+    xq = np.array(f["test"], dtype="float32")
+    gt = np.array(f["neighbors"], dtype="int64")
+
+d = xb.shape[1]
+print("xb", xb.shape, "xq", xq.shape, "gt", gt.shape)
+
+def recall_at_k(pred, gt, k):
+    return np.mean([len(set(pred[i,:k]).intersection(set(gt[i,:k]))) / k
+                    for i in range(pred.shape[0])])
+
+# Exact baseline
+flat = faiss.IndexFlatL2(d)
+flat.add(xb)
+t0 = time.time()
+_, I0 = flat.search(xq, K)
+t1 = time.time()
+print(f"[Flat] qps={xq.shape[0]/(t1-t0):.1f}, recall@{K}=1.0000")
+
+# ANN baseline
+nlist = 1024
+ivf = faiss.IndexIVFFlat(faiss.IndexFlatL2(d), d, nlist, faiss.METRIC_L2)
+ivf.train(xb[:200000])
+ivf.add(xb)
+
+for nprobe in [1, 4, 8, 16, 32]:
+    ivf.nprobe = nprobe
+    t0 = time.time()
+    _, I = ivf.search(xq, K)
+    t1 = time.time()
+    r = recall_at_k(I, gt, K)
+    print(f"[IVF] nprobe={nprobe:2d} qps={xq.shape[0]/(t1-t0):8.1f} recall@{K}={r:.4f}")
+\end{verbatim}
+
+\section{Script Source: \texttt{run\_milvus\_hdf5.py}}
+\label{app:script-milvus}
+
+\noindent\textbf{Last validated:} 2026-06-24 on host \texttt{Hongkong-Ubu20}
+(AMD Radeon RX 6800 XT, \texttt{gfx1030}, Python 3.10, \texttt{pymilvus 3.0.0},
+\texttt{milvus-lite 3.0}).
+
+\begin{verbatim}
+import time
+import numpy as np
+import h5py
+
+from pymilvus import (
+    connections, utility, FieldSchema, CollectionSchema, DataType, Collection
+)
+
+# ---------- config ----------
+MILVUS_URI = "./milvus_sift.db"   # Milvus Lite local file
+COLL = "sift1m_demo"
+K = 10
+NLIST = 1024
+NPROBES = [1, 4, 8, 16, 32]
+# ---------------------------
+
+def recall_at_k(pred_ids, gt_ids, k):
+    hits = 0
+    nq = pred_ids.shape[0]
+    for i in range(nq):
+        hits += len(set(pred_ids[i, :k]).intersection(set(gt_ids[i, :k])))
+    return hits / (nq * k)
+
+# load hdf5
+with h5py.File("data/sift-128-euclidean.hdf5", "r") as f:
+    xb = np.array(f["train"], dtype=np.float32)
+    xq = np.array(f["test"], dtype=np.float32)
+    gt = np.array(f["neighbors"], dtype=np.int64)
+
+d = xb.shape[1]
+print(f"xb={xb.shape}, xq={xq.shape}, gt={gt.shape}, dim={d}")
+
+# connect (Lite)
+connections.connect(alias="default", uri=MILVUS_URI)
+
+if utility.has_collection(COLL):
+    utility.drop_collection(COLL)
+
+schema = CollectionSchema(
+    fields=[
+        FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=False),
+        FieldSchema(name="vec", dtype=DataType.FLOAT_VECTOR, dim=d),
+    ],
+    description="SIFT1M benchmark",
+)
+
+col = Collection(name=COLL, schema=schema)
+
+# insert (chunked to avoid gRPC message size limit)
+ids = np.arange(xb.shape[0], dtype=np.int64)
+BATCH = 50000
+t0 = time.time()
+for s in range(0, xb.shape[0], BATCH):
+    e = min(s + BATCH, xb.shape[0])
+    col.insert([ids[s:e].tolist(), xb[s:e].tolist()])
+col.flush()
+t1 = time.time()
+print(f"insert_time_s={t1 - t0:.2f}")
+
+# build index
+index_params = {
+    "index_type": "IVF_FLAT",
+    "metric_type": "L2",
+    "params": {"nlist": NLIST},
+}
+t0 = time.time()
+col.create_index(field_name="vec", index_params=index_params)
+t1 = time.time()
+print(f"index_build_time_s={t1 - t0:.2f}")
+
+col.load()
+
+print("\nMilvus IVF_FLAT results:")
+for nprobe in NPROBES:
+    search_params = {"metric_type": "L2", "params": {"nprobe": nprobe}}
+
+    # batch search for QPS
+    t0 = time.time()
+    res = col.search(
+        data=xq.tolist(),
+        anns_field="vec",
+        param=search_params,
+        limit=K,
+        output_fields=[],
+    )
+    t1 = time.time()
+
+    total = t1 - t0
+    qps = xq.shape[0] / total
+
+    # extract ids + recall
+    pred = np.array([[hit.id for hit in row] for row in res], dtype=np.int64)
+    r = recall_at_k(pred, gt, K)
+
+    # p99 latency (sampled)
+    sample_n = 500
+    lat_ms = []
+    for i in range(sample_n):
+        q = [xq[i].tolist()]
+        s0 = time.time()
+        _ = col.search(
+            data=q,
+            anns_field="vec",
+            param=search_params,
+            limit=K,
+            output_fields=[],
+        )
+        s1 = time.time()
+        lat_ms.append((s1 - s0) * 1000.0)
+    p99 = float(np.percentile(lat_ms, 99))
+
+    print(f"nprobe={nprobe:2d} qps={qps:8.1f} p99_ms={p99:7.2f} recall@{K}={r:.4f}")
+\end{verbatim}
+
+\end{document}
