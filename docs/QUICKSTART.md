@@ -67,6 +67,11 @@ Notes:
 
 - Uses local Milvus Lite file DB: `milvus_sift.db`
 - First insert/index can take time
+- For standalone Milvus server, pass URI explicitly:
+
+```bash
+python scripts/run_milvus_hdf5.py --uri "http://localhost:19530"
+```
 
 ## 7) Diagnose Milvus nprobe behavior
 
@@ -74,11 +79,28 @@ Notes:
 python scripts/investigate_milvus_nprobe.py
 ```
 
+Or against standalone Milvus:
+
+```bash
+python scripts/investigate_milvus_nprobe.py --uri "http://localhost:19530"
+```
+
 This script prints:
 
 - FAISS reference curve
 - Milvus curves
 - digest variability summary (whether `nprobe` changes returned neighbors)
+
+## 7.1) Optional: start standalone Milvus with Docker
+
+```bash
+docker run -d --name milvus-standalone \
+  -p 19530:19530 -p 9091:9091 \
+  milvusdb/milvus:v2.4.8 \
+  milvus run standalone
+```
+
+Then use `--uri "http://localhost:19530"` in Milvus scripts.
 
 ## 8) Common issues
 
@@ -89,6 +111,12 @@ Try `--no-proxy` (already used above). If still blocked, download on another mac
 ### Milvus insert error: message too large
 
 Reduce `INSERT_BATCH` in `scripts/run_milvus_hdf5.py` (e.g. `20000`).
+
+### Milvus Lite: recall@10 unchanged across nprobe
+
+If FAISS responds to `nprobe` but Milvus Lite shows identical recall and identical
+result digests across the full sweep, treat this as a Lite/API behavior issue and
+re-run diagnostics against standalone Milvus (`--uri http://localhost:19530`).
 
 ### Wrong directory
 

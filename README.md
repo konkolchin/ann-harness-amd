@@ -3,8 +3,8 @@
 Reproducible baseline scripts for ANN testing with ready-to-use vectors (`sift-128-euclidean.hdf5`):
 
 - `scripts/run_faiss_hdf5.py` — exact + ANN baseline in FAISS
-- `scripts/run_milvus_hdf5.py` — Milvus Lite baseline (QPS, p99, recall@10)
-- `scripts/investigate_milvus_nprobe.py` — diagnose whether `nprobe` is effective in Milvus
+- `scripts/run_milvus_hdf5.py` — Milvus baseline (Lite by default, supports `--uri`)
+- `scripts/investigate_milvus_nprobe.py` — diagnose whether `nprobe` is effective in Milvus (`--uri` supported)
 - `scripts/check_rocmds_gfx1030.sh` — environment/build check for hipRAFT + hipVS
 
 ## Documentation
@@ -31,3 +31,4 @@ python scripts/investigate_milvus_nprobe.py
 - Milvus script uses local Milvus Lite DB: `./milvus_sift.db`.
 - Insert is chunked to avoid gRPC max-message limit.
 - `nprobe` sweeps are included for both FAISS and Milvus.
+- If Milvus Lite shows no `nprobe` effect while FAISS does, verify on standalone Milvus via `--uri`.
