@@ -16,7 +16,7 @@
 
 \title{Reproducible ANN Testing Framework\\[0.3em]
 \large SIFT HDF5 Baseline on AMD Machine\\
-\large (FAISS + Milvus Lite)}
+\large (FAISS + Milvus Lite + Milvus Standalone)}
 \author{Konstantin Kolchin}
 \date{\today}
 
@@ -26,7 +26,8 @@
 \begin{abstract}
 This document records a reproducible baseline workflow for ANN testing on an AMD machine,
 using ready-to-use vectors (SIFT HDF5) instead of an embedding stage.
-It includes setup steps, scripts to run, and measured results for FAISS and Milvus Lite.
+It includes setup steps, scripts to run, and measured results for FAISS, Milvus Lite,
+and Milvus Standalone.
 The goal is to provide a repeatable harness that any engineer can run before moving to
 Milvus GPU porting work.
 \end{abstract}
@@ -118,6 +119,18 @@ for s in range(0, xb.shape[0], BATCH):
 col.flush()
 \end{verbatim}
 
+\subsection{Milvus Standalone baseline script}
+\label{sec:milvus-standalone-script}
+
+Run against a Docker Compose standalone server (see \texttt{docs/QUICKSTART.md}):
+\begin{verbatim}
+python scripts/run_milvus_hdf5.py --uri "http://127.0.0.1:19530"
+\end{verbatim}
+
+On CPUs with SSE4.2 only (no AVX/AVX2), use Milvus v2.5.x and set
+\texttt{knowhere.simdType: sse4\_2} in \texttt{user.yaml}; otherwise index build may
+exit with code 132 (\texttt{SIGILL}).
+
 \section{Measured Results}
 
 \subsection{FAISS results}
@@ -162,13 +175,69 @@ IVF, nprobe=32   & 2785.5  & 0.9761 \\
 \end{tabular}
 \end{table}
 
+\subsection{Milvus Lite re-run (WSL2, 2026-06-26)}
+
+Host: Intel Celeron N5095 (SSE4.2 only), Ubuntu 22.04 / WSL2,
+\texttt{pymilvus 3.0.0}, \texttt{milvus-lite 3.0}.
+
+\begin{itemize}[leftmargin=*]
+  \item Insert time: 323.03 s
+  \item Index build time (IVF\_FLAT): 146.56 s
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Milvus Lite IVF\_FLAT re-run (\texttt{k=10}, WSL2)}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} \\
+\midrule
+1  &  262.0 & 1884.93 & 0.8942 \\
+4  &  249.8 & 1679.66 & 0.8942 \\
+8  &  289.0 & 1789.14 & 0.8942 \\
+16 &  287.4 & 1741.21 & 0.8942 \\
+32 &  279.0 & 1837.31 & 0.8942 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Milvus Standalone results (WSL2, 2026-06-26)}
+
+Host: same WSL2 machine as above; Milvus \texttt{v2.5.4} via Docker Compose
+(etcd + MinIO + standalone), URI \texttt{http://127.0.0.1:19530},
+\texttt{knowhere.simdType: sse4\_2}.
+
+\begin{itemize}[leftmargin=*]
+  \item Insert time: 99.95 s
+  \item Index build time (IVF\_FLAT): 457.45 s
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Milvus Standalone IVF\_FLAT results (\texttt{k=10}, WSL2)}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} \\
+\midrule
+1  & 1237.2 &  27.29 & 0.3908 \\
+4  &  610.7 &  33.34 & 0.7149 \\
+8  &  419.6 &  47.43 & 0.8463 \\
+16 &  290.2 &  34.24 & 0.9353 \\
+32 &  137.7 &  57.66 & 0.9805 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \section{Observations}
 
 \begin{itemize}[leftmargin=*]
   \item FAISS behaves as expected: recall increases with \texttt{nprobe} while QPS decreases.
   \item Milvus Lite baseline is operational and provides stable benchmark output.
-  \item In this specific run, Milvus recall and QPS were nearly invariant across \texttt{nprobe}.
-        This should be rechecked with an additional parameter sweep and index verification.
+  \item Milvus Lite recall and QPS were nearly invariant across \texttt{nprobe} on both the
+        AMD host and the WSL2 re-run; treat Lite as a smoke test, not an ANN tuning baseline.
+  \item Milvus Standalone on the same WSL2 host shows the expected recall/QPS trade-off
+        (recall@10 from 0.39 at \texttt{nprobe=1} to 0.98 at \texttt{nprobe=32}), aligned
+        with FAISS trends on the AMD reference run.
 \end{itemize}
 
 \section{Re-run Checklist}
@@ -178,6 +247,8 @@ IVF, nprobe=32   & 2785.5  & 0.9761 \\
   \item Ensure \texttt{sift-128-euclidean.hdf5} is present in \texttt{data/}.
   \item Run \verb|python run_faiss_hdf5.py| and save console output.
   \item Run \verb|python run_milvus_hdf5.py| and save console output.
+  \item Optionally run \verb|python run_milvus_hdf5.py --uri "http://127.0.0.1:19530"| against
+        standalone Milvus and save console output.
   \item If insert fails with message-size error, reduce insert batch size.
   \item Archive script versions and outputs with timestamp for traceability.
 \end{enumerate}
@@ -188,7 +259,7 @@ IVF, nprobe=32   & 2785.5  & 0.9761 \\
   \item Repeat the same harness on the upcoming RX 9070 machine.
   \item Validate hipRAFT/hipVS and Milvus GPU path on ROCm 7.x there.
   \item Extend benchmark matrix to include GIST/Deep subsets.
-  \item Add Milvus standalone server run (beyond Lite) for closer production parity.
+  \item Repeat Milvus Standalone baseline on AMD / RX 9070 hosts for cross-machine parity.
 \end{itemize}
 
 \appendix
