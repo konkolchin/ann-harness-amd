@@ -131,6 +131,79 @@ On CPUs with SSE4.2 only (no AVX/AVX2), use Milvus v2.5.x and set
 \texttt{knowhere.simdType: sse4\_2} in \texttt{user.yaml}; otherwise index build may
 exit with code 132 (\texttt{SIGILL}).
 
+\subsection{Long runs and SSH}
+\label{sec:long-runs-ssh}
+
+Milvus benchmarks over SIFT-1M are \textbf{long-running} (often tens of minutes to
+over an hour on slower hosts). If you start them over SSH without a persistent session,
+a dropped connection typically \textbf{kills the job} and leaves partial or no console
+output---which is easy to misread as a hang or a silent failure.
+
+\subsubsection*{Recommended launch (copy-paste)}
+
+\begin{verbatim}
+tmux new -s milvus
+cd ann-harness-amd
+source .venv/bin/activate
+LOG=logs/run_milvus_$(date -u +%Y%m%d_%H%M%S).log
+mkdir -p logs
+PYTHONUNBUFFERED=1 python scripts/run_milvus_hdf5.py 2>&1 | tee "$LOG"
+# Detach: Ctrl+B, then D  (SSH can disconnect safely)
+# Reattach later: tmux attach -t milvus
+\end{verbatim}
+
+For standalone Milvus, start Docker Compose first (\texttt{milvus-docker/}), then add
+\texttt{--uri "http://127.0.0.1:19530"} to the Python command. Prefer
+\texttt{127.0.0.1} over \texttt{localhost} on WSL2 to avoid IPv6 client issues.
+
+Use \texttt{PYTHONUNBUFFERED=1} (or \texttt{python -u}) so progress lines appear
+immediately. Without it, stdout may be buffered when not attached to a TTY and the
+run can look idle for long stretches.
+
+\subsubsection*{Expected phases}
+
+\begin{table}[h]
+\centering
+\caption{Typical Milvus harness phases (order of execution)}
+\begin{tabular}{@{}p{0.22\textwidth}p{0.38\textwidth}p{0.28\textwidth}@{}}
+\toprule
+\textbf{Phase} & \textbf{What happens} & \textbf{Rough duration} \\
+\midrule
+Load HDF5 & Read \texttt{train/test/neighbors} & seconds \\
+Insert 1M vectors & Chunked \texttt{col.insert}; Lite writes \texttt{milvus\_sift.db} & $\approx$1--5 min (AMD); longer on weak CPUs \\
+Build IVF\_FLAT index & \texttt{create\_index} + wait & seconds--minutes (standalone often slower) \\
+Load collection & \texttt{col.load()} & seconds \\
+Search sweeps & Five full passes over 10k queries + p99 sampling & often the longest phase \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The script prints \texttt{insert\_time\_s=} and \texttt{index\_build\_time\_s=} only
+\textbf{after} each phase completes; there is no progress bar during insert or search.
+
+\subsubsection*{Monitoring while a run is active}
+
+From a second terminal (or after \texttt{tmux attach}):
+\begin{verbatim}
+tail -f logs/run_milvus_*.log
+ps -o etime,pcpu,cmd -C python          # high CPU usually means still working
+du -sh milvus_sift.db                  # Lite: DB size grows during insert
+docker ps --filter name=milvus         # standalone stack health
+curl -sf http://127.0.0.1:9091/healthz && echo OK   # Milvus health
+\end{verbatim}
+
+\subsubsection*{Common misreadings}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{No new log lines for 30+ minutes:} often still inserting, indexing, or
+        searching; check CPU and log tail before killing the process.
+  \item \textbf{Same recall@10 for every \texttt{nprobe} (Milvus Lite):} the run may
+        have \emph{finished successfully} while \texttt{nprobe} had no effect---not
+        evidence of a crash. Use standalone Milvus for tuning sweeps.
+  \item \textbf{SSH session closed:} unless the job was in \texttt{tmux}/\texttt{screen},
+        assume it stopped; re-run inside a persistent session and archive the log file.
+\end{itemize}
+
 \section{Measured Results}
 
 \subsection{FAISS results}
@@ -342,10 +415,12 @@ FAISS strengths visible in this harness:
 \begin{enumerate}[label=\textbf{R\arabic*.}, leftmargin=*]
   \item Activate environment and verify package versions.
   \item Ensure \texttt{sift-128-euclidean.hdf5} is present in \texttt{data/}.
-  \item Run \verb|python run_faiss_hdf5.py| and save console output.
-  \item Run \verb|python run_milvus_hdf5.py| and save console output.
-  \item Optionally run \verb|python run_milvus_hdf5.py --uri "http://127.0.0.1:19530"| against
-        standalone Milvus and save console output.
+  \item For remote hosts, start a \texttt{tmux} session (Section~\ref{sec:long-runs-ssh})
+        before any Milvus run; log output with \texttt{tee}.
+  \item Run \verb|python scripts/run_faiss_hdf5.py| and save console output.
+  \item Run \verb|python scripts/run_milvus_hdf5.py| and save console output.
+  \item Optionally run \verb|python scripts/run_milvus_hdf5.py --uri "http://127.0.0.1:19530"|
+        against standalone Milvus and save console output.
   \item If insert fails with message-size error, reduce insert batch size.
   \item Archive script versions and outputs with timestamp for traceability.
 \end{enumerate}
