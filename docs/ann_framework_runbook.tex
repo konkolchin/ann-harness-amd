@@ -230,14 +230,111 @@ Host: same WSL2 machine as above; Milvus \texttt{v2.5.4} via Docker Compose
 
 \section{Observations}
 
+\subsection{Per-table summary}
+
+The four measured-result tables answer different questions; they should not be read as a
+single apples-to-apples shootout:
 \begin{itemize}[leftmargin=*]
-  \item FAISS behaves as expected: recall increases with \texttt{nprobe} while QPS decreases.
-  \item Milvus Lite baseline is operational and provides stable benchmark output.
-  \item Milvus Lite recall and QPS were nearly invariant across \texttt{nprobe} on both the
-        AMD host and the WSL2 re-run; treat Lite as a smoke test, not an ANN tuning baseline.
-  \item Milvus Standalone on the same WSL2 host shows the expected recall/QPS trade-off
-        (recall@10 from 0.39 at \texttt{nprobe=1} to 0.98 at \texttt{nprobe=32}), aligned
-        with FAISS trends on the AMD reference run.
+  \item \textbf{Table 1 (FAISS, AMD host):} Reference ANN behavior. Recall rises with
+        \texttt{nprobe} while QPS falls. At \texttt{nprobe=32}, recall@10 $\approx 0.98$
+        at $\approx$2{,}786 QPS.
+  \item \textbf{Table 2 (Milvus Lite, AMD host):} Operational smoke test only. Recall is
+        stuck at $\approx 0.89$ regardless of \texttt{nprobe}; QPS $\approx$1{,}500 with
+        high p99 latency ($\approx$470 ms).
+  \item \textbf{Table 3 (Milvus Lite, WSL2 re-run):} Confirms the Lite \texttt{nprobe} issue
+        on a second host. Same flat recall ($\approx 0.89$), much lower QPS
+        ($\approx$260--290) and higher p99 ($\approx$1.7--1.9 s).
+  \item \textbf{Table 4 (Milvus Standalone, WSL2):} Correct ANN curve---recall@10 from 0.39
+        at \texttt{nprobe=1} to 0.98 at \texttt{nprobe=32}---but search QPS is far below
+        FAISS at comparable recall levels (see below).
+\end{itemize}
+
+\subsection{FAISS vs Milvus Standalone at similar recall}
+
+Pairing approximate recall targets across Table~1 and Table~4 (different hosts; see caveats):
+\begin{table}[h]
+\centering
+\caption{FAISS (AMD) vs Milvus Standalone (WSL2) at comparable recall@10}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Target recall@10} & \textbf{FAISS QPS} & \textbf{FAISS nprobe}
+  & \textbf{Milvus QPS} & \textbf{Milvus nprobe} \\
+\midrule
+$\approx 0.37$ & 76{,}650 & 1  & 1{,}237 & 1 \\
+$\approx 0.83$--$0.85$ & 10{,}420 & 8  & 420 & 8 \\
+$\approx 0.93$ & 4{,}996 & 16 & 290 & 16 \\
+$\approx 0.98$ & 2{,}786 & 32 & 138 & 32 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On raw search throughput alone, \textbf{FAISS wins decisively} in these numbers.
+
+\subsection{Does Milvus show an advantage here?}
+
+\textbf{Not for this specific harness.} These tables do \emph{not} demonstrate a Milvus
+speed advantage over FAISS for single-node CPU IVF search. That is expected given what
+each run actually measures:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{FAISS:} in-process library with minimal overhead; AMD reference host.
+  \item \textbf{Milvus:} database server with network I/O, persistence (etcd/MinIO on
+        standalone), Python client overhead (\texttt{.tolist()} conversion), and---for
+        Tables~3--4---a WSL2 host with SSE4.2-only CPU.
+\end{itemize}
+
+Milvus Lite (Tables~2--3) is additionally misleading for ANN tuning: flat recall across
+\texttt{nprobe} means sweeps cannot be trusted. The suspiciously high Lite recall
+($\approx 0.89$ vs FAISS $\approx 0.37$ at \texttt{nprobe=1}) suggests \texttt{nprobe}
+is not being applied as intended.
+
+\subsection{Where Milvus \emph{would} matter (not covered by these tables)}
+
+These four tables intentionally omit Milvus strengths that FAISS does not provide out of
+the box:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Serving layer:} REST/gRPC APIs, concurrent clients, collections, metadata
+        filtering.
+  \item \textbf{Persistence and operations:} data survives restarts, replication, backups,
+        monitoring.
+  \item \textbf{Scale-out:} sharding across nodes (FAISS is single-process unless built
+        separately).
+  \item \textbf{GPU path:} the stated next step for this project---hipVS / Milvus on
+        ROCm---where Milvus is the integration target, not FAISS-in-a-script.
+  \item \textbf{Production features:} RBAC, hybrid search, incremental ingest, etc.
+\end{itemize}
+
+FAISS strengths visible in this harness:
+\begin{itemize}[leftmargin=*]
+  \item Much higher QPS for the same IVF/recall trade-off on the reference AMD run.
+  \item Simpler stack (no Docker, no server process).
+  \item Trustworthy \texttt{nprobe} behavior in-process.
+\end{itemize}
+
+\subsection{Methodology caveats}
+
+\begin{itemize}[leftmargin=*]
+  \item Table~1 (FAISS) and Tables~3--4 (Milvus on WSL2) run on \textbf{different hardware};
+        raw QPS numbers must not be compared without a same-host re-run.
+  \item The harness uses \texttt{IVF\_FLAT} with \texttt{nlist=1024} for both engines; other
+        index types (HNSW, IVF\_PQ) may shift the picture.
+  \item Milvus client code converts NumPy arrays to Python lists before search; this adds
+        overhead not present in the FAISS baseline.
+\end{itemize}
+
+\subsection{Bottom line}
+
+\begin{itemize}[leftmargin=*]
+  \item Tables~1--4 do \textbf{not} show Milvus outperforming FAISS on search QPS; for
+        single-node CPU IVF, FAISS is ahead.
+  \item Milvus Lite is useful as a connectivity/ingest smoke test, not as an ANN tuning
+        baseline.
+  \item Milvus Standalone confirms proper \texttt{nprobe} behavior but is slower and
+        heavier than in-process FAISS in this setup.
+  \item The harness goal is a \textbf{reproducible baseline before AMD GPU work}, not to
+        declare a winner on raw QPS.
+  \item A fairer engine comparison requires FAISS and Milvus Standalone on the
+        \textbf{same machine} (ideally the AMD host), with identical \texttt{nlist/nprobe}
+        and, where possible, reduced Python serialization overhead.
 \end{itemize}
 
 \section{Re-run Checklist}
