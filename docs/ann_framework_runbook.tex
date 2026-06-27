@@ -432,7 +432,155 @@ FAISS strengths visible in this harness:
   \item Validate hipRAFT/hipVS and Milvus GPU path on ROCm 7.x there.
   \item Extend benchmark matrix to include GIST/Deep subsets.
   \item Repeat Milvus Standalone baseline on AMD / RX 9070 hosts for cross-machine parity.
+  \item Optionally run VectorDBBench against the same standalone URI (Section~\ref{sec:vectordbbench})
+        for Zilliz-style benchmark reports.
 \end{itemize}
+
+\section{VectorDBBench (optional external benchmark)}
+\label{sec:vectordbbench}
+
+Zilliz publishes \textbf{VectorDBBench} (VDBBench), a maintained framework for comparing
+vector databases: \url{https://github.com/zilliztech/vectordbbench}.
+It complements---but does not replace---this harness.
+
+\subsection{How it compares to ann-harness-amd}
+
+\begin{table}[h]
+\centering
+\caption{ann-harness-amd vs VectorDBBench}
+\begin{tabular}{@{}p{0.22\textwidth}p{0.34\textwidth}p{0.34\textwidth}@{}}
+\toprule
+\textbf{Aspect} & \textbf{ann-harness-amd} & \textbf{VectorDBBench} \\
+\midrule
+Purpose & Team lab notebook; AMD/Milvus bring-up & Multi-DB product benchmark + UI \\
+Backends & FAISS + Milvus (Lite/Standalone) & 20+ DBs (Milvus, Qdrant, pgvector, \ldots) \\
+Dataset & SIFT-1M HDF5 only & SIFT, GIST, Cohere, OpenAI, custom cases \\
+Index & IVF\_FLAT, fixed \texttt{nlist/nprobe} & Per-DB (Milvus CLI: AutoIndex, FTS) \\
+Best for & \texttt{nprobe} diagnostics, runbook, ROCm checks & Vendor comparison, concurrent QPS, leaderboard \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}[leftmargin=*]
+  \item Keep \textbf{ann-harness-amd} for same-host FAISS vs Milvus IVF tuning and debugging
+        (e.g.\ Milvus Lite \texttt{nprobe} issues).
+  \item Add \textbf{VectorDBBench} when you need official Milvus numbers, concurrent search,
+        or comparison to other vector DBs (see Zilliz leaderboard:
+        \url{https://zilliz.com/benchmark}).
+\end{itemize}
+
+\subsection{Recommended workflow}
+
+Prefer a \textbf{CLI dry-run first}, then a \textbf{serial-only} run inside \texttt{tmux}
+(Section~\ref{sec:long-runs-ssh}). Skip the default concurrent search sweep on hosts with
+unstable SSH.
+
+VectorDBBench requires \textbf{Python $\geq$ 3.11} (separate venv from this harness if
+needed). Install with Milvus client support:
+\begin{verbatim}
+python3.11 -m venv ~/vdbbench-venv
+source ~/vdbbench-venv/bin/activate
+pip install -U pip vectordb-bench
+vectordbbench --help
+vectordbbench milvusautoinindex --help
+\end{verbatim}
+
+Milvus Standalone must already be healthy:
+\begin{verbatim}
+cd milvus-docker && docker-compose ps
+curl -sf http://127.0.0.1:9091/healthz && echo OK
+\end{verbatim}
+
+\subsection{Minimal command line (local Milvus Standalone)}
+
+VectorDBBench exposes \texttt{milvusautoinindex} and \texttt{milvusfts} for Milvus;
+there is no \texttt{milvusivfflat} CLI command. AutoIndex is the closest official path
+but does \textbf{not} mirror our fixed IVF\_FLAT{} + \texttt{nprobe} sweep.
+
+\textbf{Step 1: dry-run} (validates URI and case without loading data):
+\begin{verbatim}
+vectordbbench milvusautoinindex \
+  --uri "http://127.0.0.1:19530" \
+  --case-type CapacityDim128 \
+  --k 10 \
+  --drop-old \
+  --load \
+  --search-serial \
+  --skip-search-concurrent \
+  --db-label "local-standalone" \
+  --dry-run
+\end{verbatim}
+
+\texttt{CapacityDim128} is the nearest built-in case to 128-dimensional SIFT-scale vectors.
+Use \texttt{127.0.0.1} rather than \texttt{localhost} on WSL2 (IPv6 client issues).
+
+\textbf{Step 2: real run} (after dry-run output looks correct):
+\begin{verbatim}
+tmux new -s vdbbench
+LOG=logs/vdbbench_$(date -u +%Y%m%d_%H%M%S).log
+mkdir -p logs
+PYTHONUNBUFFERED=1 vectordbbench milvusautoinindex \
+  --uri "http://127.0.0.1:19530" \
+  --case-type CapacityDim128 \
+  --k 10 \
+  --drop-old \
+  --load \
+  --search-serial \
+  --skip-search-concurrent \
+  --db-label "local-standalone" \
+  2>&1 | tee "$LOG"
+# Ctrl+B, then D  (detach early if SSH is unstable)
+\end{verbatim}
+
+Results are written under VectorDBBench's local results directory (path shown in dry-run
+output; typically under \texttt{vectordb\_bench/results/}).
+
+\subsection{Optional: custom SIFT-1M case}
+
+To approximate our harness dimensions (still AutoIndex, not IVF\_FLAT):
+\begin{verbatim}
+vectordbbench milvusautoinindex \
+  --uri "http://127.0.0.1:19530" \
+  --custom-case-name "SIFT1M-L2" \
+  --custom-dataset-name "SIFT" \
+  --custom-dataset-dim 128 \
+  --custom-dataset-size 1000000 \
+  --custom-dataset-metric-type L2 \
+  --k 10 \
+  --drop-old --load --search-serial --skip-search-concurrent \
+  --dry-run
+\end{verbatim}
+
+VectorDBBench usually downloads datasets in its own layout; confirm
+\texttt{--custom-dataset-dir} and format requirements via \texttt{--help} before relying
+on a local \texttt{data/sift-128-euclidean.hdf5} file.
+
+\subsection{What not to use for this harness comparison}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{\texttt{milvusfts}} --- full-text (BM25), not vector ANN.
+  \item \textbf{\texttt{init\_bench} Web UI alone} --- fine for exploration, harder to
+        archive in the runbook; prefer CLI + \texttt{tee} for traceability.
+  \item \textbf{Default concurrent search} --- much longer; does not match our serial
+        QPS/recall scripts.
+\end{itemize}
+
+\subsection{Interpreting results vs Tables 1--4}
+
+\begin{table}[h]
+\centering
+\caption{Expectations when comparing VectorDBBench to ann-harness-amd}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Topic} & \textbf{Expectation} \\
+\midrule
+Index type & Harness: IVF\_FLAT; VDBBench Milvus CLI: AutoIndex \\
+Search mode & Harness: serial batch + p99 sample; VDBBench: framework serial protocol \\
+QPS / recall & Same URI does \emph{not} imply matching numbers \\
+Primary use & Harness = debug/tune; VDBBench = external / multi-DB reporting \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \appendix
 \section{Teammate Run Template}
