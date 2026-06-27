@@ -41,9 +41,9 @@ The workflow validates the first part of the demo pipeline with \textbf{ready ve
 and avoids text chunking/embedding complexity in early iterations.
 The concrete objectives are:
 \begin{itemize}[leftmargin=*]
-  \item Verify dataset ingest and search benchmarking on AMD host.
-  \item Establish reference metrics: QPS, recall@$k$, p99 latency.
-  \item Keep execution fully reproducible through explicit scripts and commands.
+  \item We verify dataset ingest and search benchmarking on AMD host.
+  \item We establish reference metrics: QPS, recall@$k$, p99 latency.
+  \item We keep execution fully reproducible through explicit scripts and commands.
 \end{itemize}
 
 \section{Environment}
@@ -74,7 +74,7 @@ cd ~/ann-demo/data
 wget --no-proxy https://ann-benchmarks.com/sift-128-euclidean.hdf5
 \end{verbatim}
 
-Dataset content check:
+Dataset content check we use:
 \begin{verbatim}
 ['distances', 'neighbors', 'test', 'train']
 distances (10000, 100) float32
@@ -88,7 +88,7 @@ train   (1000000, 128) float32
 \subsection{FAISS baseline script}
 \label{sec:faiss-script}
 
-Run:
+We run:
 \begin{verbatim}
 python run_faiss_hdf5.py
 \end{verbatim}
@@ -102,15 +102,15 @@ The script loads \texttt{train/test/neighbors} from HDF5 and runs:
 \subsection{Milvus Lite baseline script}
 \label{sec:milvus-script}
 
-Run:
+We run:
 \begin{verbatim}
 python run_milvus_hdf5.py
 \end{verbatim}
 
-Important implementation note: insertion is chunked to avoid gRPC message limit
+Important implementation note: we chunk insertion to avoid gRPC message limit
 (\texttt{RESOURCE\_EXHAUSTED} at 256 MB per message).
 
-Recommended insert pattern:
+Insert pattern we recommend:
 \begin{verbatim}
 BATCH = 50000
 for s in range(0, xb.shape[0], BATCH):
@@ -122,12 +122,12 @@ col.flush()
 \subsection{Milvus Standalone baseline script}
 \label{sec:milvus-standalone-script}
 
-Run against a Docker Compose standalone server (see \texttt{docs/QUICKSTART.md}):
+We run against a Docker Compose standalone server (see \texttt{docs/QUICKSTART.md}):
 \begin{verbatim}
 python scripts/run_milvus_hdf5.py --uri "http://127.0.0.1:19530"
 \end{verbatim}
 
-On CPUs with SSE4.2 only (no AVX/AVX2), use Milvus v2.5.x and set
+On CPUs with SSE4.2 only (no AVX/AVX2), we use Milvus v2.5.x and set
 \texttt{knowhere.simdType: sse4\_2} in \texttt{user.yaml}; otherwise index build may
 exit with code 132 (\texttt{SIGILL}).
 
@@ -135,11 +135,11 @@ exit with code 132 (\texttt{SIGILL}).
 \label{sec:long-runs-ssh}
 
 Milvus benchmarks over SIFT-1M are \textbf{long-running} (often tens of minutes to
-over an hour on slower hosts). If you start them over SSH without a persistent session,
+over an hour on slower hosts). If we start them over SSH without a persistent session,
 a dropped connection typically \textbf{kills the job} and leaves partial or no console
 output---which is easy to misread as a hang or a silent failure.
 
-\subsubsection*{Recommended launch (copy-paste)}
+\subsubsection*{Launch pattern we recommend (copy-paste)}
 
 \begin{verbatim}
 tmux new -s milvus
@@ -152,11 +152,11 @@ PYTHONUNBUFFERED=1 python scripts/run_milvus_hdf5.py 2>&1 | tee "$LOG"
 # Reattach later: tmux attach -t milvus
 \end{verbatim}
 
-For standalone Milvus, start Docker Compose first (\texttt{milvus-docker/}), then add
-\texttt{--uri "http://127.0.0.1:19530"} to the Python command. Prefer
+For standalone Milvus, we start Docker Compose first (\texttt{milvus-docker/}), then add
+\texttt{--uri "http://127.0.0.1:19530"} to the Python command. We prefer
 \texttt{127.0.0.1} over \texttt{localhost} on WSL2 to avoid IPv6 client issues.
 
-Use \texttt{PYTHONUNBUFFERED=1} (or \texttt{python -u}) so progress lines appear
+We use \texttt{PYTHONUNBUFFERED=1} (or \texttt{python -u}) so progress lines appear
 immediately. Without it, stdout may be buffered when not attached to a TTY and the
 run can look idle for long stretches.
 
@@ -183,7 +183,7 @@ The script prints \texttt{insert\_time\_s=} and \texttt{index\_build\_time\_s=} 
 
 \subsubsection*{Monitoring while a run is active}
 
-From a second terminal (or after \texttt{tmux attach}):
+From a second terminal (or after \texttt{tmux attach}), we monitor with:
 \begin{verbatim}
 tail -f logs/run_milvus_*.log
 ps -o etime,pcpu,cmd -C python          # high CPU usually means still working
@@ -195,13 +195,13 @@ curl -sf http://127.0.0.1:9091/healthz && echo OK   # Milvus health
 \subsubsection*{Common misreadings}
 
 \begin{itemize}[leftmargin=*]
-  \item \textbf{No new log lines for 30+ minutes:} often still inserting, indexing, or
-        searching; check CPU and log tail before killing the process.
+  \item \textbf{No new log lines for 30+ minutes:} we are often still inserting, indexing, or
+        searching; we check CPU and log tail before killing the process.
   \item \textbf{Same recall@10 for every \texttt{nprobe} (Milvus Lite):} the run may
         have \emph{finished successfully} while \texttt{nprobe} had no effect---not
-        evidence of a crash. Use standalone Milvus for tuning sweeps.
+        evidence of a crash. We use standalone Milvus for tuning sweeps.
   \item \textbf{SSH session closed:} unless the job was in \texttt{tmux}/\texttt{screen},
-        assume it stopped; re-run inside a persistent session and archive the log file.
+        we assume it stopped; we re-run inside a persistent session and archive the log file.
 \end{itemize}
 
 \section{Measured Results}
@@ -305,14 +305,14 @@ Host: same WSL2 machine as above; Milvus \texttt{v2.5.4} via Docker Compose
 
 \subsection{Per-table summary}
 
-The four measured-result tables answer different questions; they should not be read as a
+The four measured-result tables answer different questions; we should not read them as a
 single apples-to-apples shootout:
 \begin{itemize}[leftmargin=*]
   \item \textbf{Table 1 (FAISS, AMD host):} Reference ANN behavior. Recall rises with
         \texttt{nprobe} while QPS falls. At \texttt{nprobe=32}, recall@10 $\approx 0.98$
         at $\approx$2{,}786 QPS.
-  \item \textbf{Table 2 (Milvus Lite, AMD host):} Operational smoke test only. Recall is
-        stuck at $\approx 0.89$ regardless of \texttt{nprobe}; QPS $\approx$1{,}500 with
+  \item \textbf{Table 2 (Milvus Lite, AMD host):} We treat this as an operational smoke test
+        only. Recall is stuck at $\approx 0.89$ regardless of \texttt{nprobe}; QPS $\approx$1{,}500 with
         high p99 latency ($\approx$470 ms).
   \item \textbf{Table 3 (Milvus Lite, WSL2 re-run):} Confirms the Lite \texttt{nprobe} issue
         on a second host. Same flat recall ($\approx 0.89$), much lower QPS
@@ -356,7 +356,7 @@ each run actually measures:
 \end{itemize}
 
 Milvus Lite (Tables~2--3) is additionally misleading for ANN tuning: flat recall across
-\texttt{nprobe} means sweeps cannot be trusted. The suspiciously high Lite recall
+\texttt{nprobe} means we cannot trust sweeps. The suspiciously high Lite recall
 ($\approx 0.89$ vs FAISS $\approx 0.37$ at \texttt{nprobe=1}) suggests \texttt{nprobe}
 is not being applied as intended.
 
@@ -387,7 +387,7 @@ FAISS strengths visible in this harness:
 
 \begin{itemize}[leftmargin=*]
   \item Table~1 (FAISS) and Tables~3--4 (Milvus on WSL2) run on \textbf{different hardware};
-        raw QPS numbers must not be compared without a same-host re-run.
+        we do not compare raw QPS numbers without a same-host re-run.
   \item The harness uses \texttt{IVF\_FLAT} with \texttt{nlist=1024} for both engines; other
         index types (HNSW, IVF\_PQ) may shift the picture.
   \item Milvus client code converts NumPy arrays to Python lists before search; this adds
@@ -399,15 +399,15 @@ FAISS strengths visible in this harness:
 \begin{itemize}[leftmargin=*]
   \item Tables~1--4 do \textbf{not} show Milvus outperforming FAISS on search QPS; for
         single-node CPU IVF, FAISS is ahead.
-  \item Milvus Lite is useful as a connectivity/ingest smoke test, not as an ANN tuning
+  \item Milvus Lite is useful as a connectivity/ingest smoke test; we do not use it as an ANN tuning
         baseline.
   \item Milvus Standalone confirms proper \texttt{nprobe} behavior but is slower and
         heavier than in-process FAISS in this setup.
   \item The harness goal is a \textbf{reproducible baseline before AMD GPU work}, not to
         declare a winner on raw QPS.
-  \item A fairer engine comparison requires FAISS and Milvus Standalone on the
-        \textbf{same machine} (ideally the AMD host), with identical \texttt{nlist/nprobe}
-        and, where possible, reduced Python serialization overhead.
+  \item We require a fairer engine comparison on the \textbf{same machine} (ideally the AMD
+        host), with identical \texttt{nlist/nprobe} and, where possible, reduced Python
+        serialization overhead.
 \end{itemize}
 
 \section{Re-run Checklist}
@@ -462,21 +462,21 @@ Best for & \texttt{nprobe} diagnostics, runbook, ROCm checks & Vendor comparison
 \end{table}
 
 \begin{itemize}[leftmargin=*]
-  \item Keep \textbf{ann-harness-amd} for same-host FAISS vs Milvus IVF tuning and debugging
+  \item We keep \textbf{ann-harness-amd} for same-host FAISS vs Milvus IVF tuning and debugging
         (e.g.\ Milvus Lite \texttt{nprobe} issues).
-  \item Add \textbf{VectorDBBench} when you need official Milvus numbers, concurrent search,
+  \item We add \textbf{VectorDBBench} when we need official Milvus numbers, concurrent search,
         or comparison to other vector DBs (see Zilliz leaderboard:
         \url{https://zilliz.com/benchmark}).
 \end{itemize}
 
-\subsection{Recommended workflow}
+\subsection{Workflow we recommend}
 
-Prefer a \textbf{CLI dry-run first}, then a \textbf{serial-only} run inside \texttt{tmux}
-(Section~\ref{sec:long-runs-ssh}). Skip the default concurrent search sweep on hosts with
+We prefer a \textbf{CLI dry-run first}, then a \textbf{serial-only} run inside \texttt{tmux}
+(Section~\ref{sec:long-runs-ssh}). We skip the default concurrent search sweep on hosts with
 unstable SSH.
 
-VectorDBBench requires \textbf{Python $\geq$ 3.11} (separate venv from this harness if
-needed). Install with Milvus client support:
+VectorDBBench requires \textbf{Python $\geq$ 3.11} (a separate venv from this harness if
+needed). We install it with Milvus client support:
 \begin{verbatim}
 python3.11 -m venv ~/vdbbench-venv
 source ~/vdbbench-venv/bin/activate
@@ -485,7 +485,7 @@ vectordbbench --help
 vectordbbench milvusautoinindex --help
 \end{verbatim}
 
-Milvus Standalone must already be healthy:
+We ensure Milvus Standalone is healthy before starting:
 \begin{verbatim}
 cd milvus-docker && docker-compose ps
 curl -sf http://127.0.0.1:9091/healthz && echo OK
@@ -497,7 +497,7 @@ VectorDBBench exposes \texttt{milvusautoinindex} and \texttt{milvusfts} for Milv
 there is no \texttt{milvusivfflat} CLI command. AutoIndex is the closest official path
 but does \textbf{not} mirror our fixed IVF\_FLAT{} + \texttt{nprobe} sweep.
 
-\textbf{Step 1: dry-run} (validates URI and case without loading data):
+\textbf{Step 1: dry-run} (we validate URI and case without loading data):
 \begin{verbatim}
 vectordbbench milvusautoinindex \
   --uri "http://127.0.0.1:19530" \
@@ -512,9 +512,9 @@ vectordbbench milvusautoinindex \
 \end{verbatim}
 
 \texttt{CapacityDim128} is the nearest built-in case to 128-dimensional SIFT-scale vectors.
-Use \texttt{127.0.0.1} rather than \texttt{localhost} on WSL2 (IPv6 client issues).
+We use \texttt{127.0.0.1} rather than \texttt{localhost} on WSL2 (IPv6 client issues).
 
-\textbf{Step 2: real run} (after dry-run output looks correct):
+\textbf{Step 2: real run} (after dry-run output looks correct to us):
 \begin{verbatim}
 tmux new -s vdbbench
 LOG=logs/vdbbench_$(date -u +%Y%m%d_%H%M%S).log
@@ -551,7 +551,7 @@ vectordbbench milvusautoinindex \
   --dry-run
 \end{verbatim}
 
-VectorDBBench usually downloads datasets in its own layout; confirm
+VectorDBBench usually downloads datasets in its own layout; we confirm
 \texttt{--custom-dataset-dir} and format requirements via \texttt{--help} before relying
 on a local \texttt{data/sift-128-euclidean.hdf5} file.
 
@@ -559,8 +559,8 @@ on a local \texttt{data/sift-128-euclidean.hdf5} file.
 
 \begin{itemize}[leftmargin=*]
   \item \textbf{\texttt{milvusfts}} --- full-text (BM25), not vector ANN.
-  \item \textbf{\texttt{init\_bench} Web UI alone} --- fine for exploration, harder to
-        archive in the runbook; prefer CLI + \texttt{tee} for traceability.
+  \item \textbf{\texttt{init\_bench} Web UI alone} --- we find it fine for exploration, but harder to
+        archive in the runbook; we prefer CLI + \texttt{tee} for traceability.
   \item \textbf{Default concurrent search} --- much longer; does not match our serial
         QPS/recall scripts.
 \end{itemize}
@@ -587,7 +587,7 @@ Primary use & Harness = debug/tune; VDBBench = external / multi-DB reporting \\
 \label{app:teammate-template}
 
 This appendix provides a copy-paste template for additional benchmark runs.
-One filled block per run is recommended.
+We recommend one filled block per run.
 
 \subsection*{Run Metadata}
 \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.32\textwidth}X@{}}
