@@ -404,30 +404,34 @@ $\approx 0.98$ & 2{,}786 & 32 & 138 & 32 \\
 
 On raw search throughput alone, \textbf{FAISS wins decisively} in these numbers.
 
-\subsection{FAISS vs VectorDBBench Milvus on same host (7900 XTX)}
+\subsection{FAISS vs Milvus Standalone on same host (7900 XTX)}
 
-Tables~5 and~6 run on \texttt{amd-rx7900xtx} with the same SIFT-1M L2 dataset and IVF\_FLAT
-\texttt{nlist/nprobe} ladder; this is our cleanest FAISS-vs-Milvus CPU comparison to date:
+Tables~5 and~6 run on \texttt{amd-rx7900xtx} with the same SIFT-1M L2 dataset, IVF\_FLAT,
+\texttt{nlist=1024}, and \texttt{nprobe} sweep ($1,4,8,16,32$). Because recall@10 tracks
+FAISS within rounding at each \texttt{nprobe}, we can compare QPS and recall side by side
+row-by-row (Milvus via VectorDBBench \texttt{milvusivfflat} on Standalone Docker CPU):
 \begin{table}[h]
 \centering
-\caption{FAISS vs VectorDBBench Milvus (7900 XTX, comparable recall@10)}
+\caption{FAISS vs Milvus Standalone (7900 XTX): IVF \texttt{nprobe} sweep (\texttt{k=10})}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
-\textbf{Target recall@10} & \textbf{FAISS QPS} & \textbf{FAISS nprobe}
-  & \textbf{Milvus QPS} & \textbf{Milvus nprobe} \\
+\textbf{nprobe} & \textbf{FAISS QPS} & \textbf{FAISS recall@10}
+  & \textbf{Milvus QPS} & \textbf{Milvus recall@10} \\
 \midrule
-$\approx 0.37$ & 89{,}993 & 1  & 1{,}589 & 1 \\
-$\approx 0.70$ & 24{,}485 & 4  & 1{,}219 & 4 \\
-$\approx 0.83$--$0.84$ & 12{,}511 & 8  & 937 & 8 \\
-$\approx 0.93$ & 6{,}409 & 16 & 630 & 16 \\
-$\approx 0.98$ & 3{,}299 & 32 & 376 & 32 \\
+1  & 89{,}993.4 & 0.3711 & 1{,}589.0 & 0.3704 \\
+4  & 24{,}484.8 & 0.6983 & 1{,}219.4 & 0.7017 \\
+8  & 12{,}510.7 & 0.8337 &   937.4 & 0.8390 \\
+16 &  6{,}408.9 & 0.9273 &   630.1 & 0.9312 \\
+32 &  3{,}298.5 & 0.9760 &   375.9 & 0.9790 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-FAISS remains ahead on QPS at every matched recall point, but the gap on this host is
-smaller than Table~1 vs Table~4 (cross-host). VectorDBBench adds optimize/compact overhead
-on the first load; p99 latencies in Table~6 are sub-millisecond to a few ms (serial protocol).
+FAISS FlatL2 (exact search) on this host: QPS $=$ 2{,}340.8, recall@10 $=$ 1.0000 (no Milvus
+row---VectorDBBench run used IVF\_FLAT only). FAISS remains ahead on QPS at every
+\texttt{nprobe}, but the gap on this host is smaller than Table~1 vs Table~4 (cross-host).
+VectorDBBench adds optimize/compact overhead on the first load; p99 latencies in Table~6 are
+sub-millisecond to a few ms (serial protocol).
 
 \subsection{Does Milvus show an advantage here?}
 
@@ -516,14 +520,18 @@ FAISS strengths visible in this harness:
 \section{Next Steps}
 
 \begin{itemize}[leftmargin=*]
-  \item Repeat the same harness on the upcoming RX 9070 machine.
-  \item Validate hipRAFT/hipVS and Milvus GPU path on ROCm 7.x there.
-  \item Extend benchmark matrix to include GIST/Deep subsets.
-  \item Repeat Milvus Standalone baseline on AMD / RX 9070 hosts for cross-machine parity.
-  \item Optionally run VectorDBBench against the same standalone URI (Section~\ref{sec:vectordbbench})
-        for Zilliz-style benchmark reports.
-  \item For an \texttt{nprobe} sweep comparable to FAISS via VectorDBBench, use
-        Section~\ref{sec:vectordbbench-ivf-nprobe} (\texttt{milvusivfflat}, not AutoIndex).
+  \item \textbf{Completed on 7900 XTX lab host} (\texttt{amd-rx7900xtx}, 2026-06-30): in-repo FAISS
+        harness (Table~5), Milvus Standalone Docker CPU (\texttt{v2.5.4}), and VectorDBBench
+        \texttt{milvusivfflat} IVF \texttt{nprobe} sweep (Table~6;
+        Section~\ref{sec:vectordbbench-ivf-nprobe}).
+  \item Install ROCm on the 7900 XTX host and verify GPU compute
+        (\texttt{/opt/rocm/bin/rocminfo}); then validate hipRAFT/hipVS and Milvus GPU path on
+        ROCm~7.x.
+  \item Optionally run \texttt{run\_milvus\_hdf5.py} on the same host for harness metrics
+        comparable to WSL2 Table~4 (Insert/Search/\texttt{search\_with\_expr}).
+  \item Extend benchmark matrix to GIST/Deep subsets (harness and/or VectorDBBench).
+  \item After hipVS lands in Knowhere/Milvus GPU builds, repeat the Table~5/6 methodology on AMD
+        GPU and compare against the CPU baselines already captured on this host.
 \end{itemize}
 
 \section{VectorDBBench (optional external benchmark)}
