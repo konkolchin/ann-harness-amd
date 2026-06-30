@@ -430,46 +430,64 @@ On this host FAISS search QPS is $\approx$9--57$\times$ higher than Milvus at th
 \texttt{nprobe=32}). FAISS FlatL2 (exact search): QPS $=$ 2{,}341, recall@10 $=$ 1.000
 (VectorDBBench run used IVF\_FLAT only).
 
-\paragraph{Why use Milvus if FAISS is faster?}
-This table measures \textbf{single-client, serial IVF search} only. FAISS (Facebook AI
-Similarity Search) is an in-process library with minimal overhead; Milvus is a vector
-\textbf{database} with gRPC, persistence (etcd/MinIO), collection lifecycle, and client
-marshalling. For that narrow micro-benchmark, FAISS \emph{should} win---and it does.
+\paragraph{How to read this gap (no sales pitch).}
+Tables~5 and~6 run on the \textbf{same} host with the \textbf{same} IVF recipe. FAISS winning
+by an order of magnitude (or more) is a \textbf{real} outcome---not explained away by WSL2,
+SSE4.2, or ``different hardware.''
 
-Choose Milvus when the product needs what a library does not ship as one package:
+If the question is ``what should my startup use for CPU vector search?'', these numbers
+point to \textbf{FAISS (or similar in-process ANN) plus the wrappers you actually need}:
+a thin API service, index files on disk or object storage, metadata in Postgres, auth,
+batch reindex jobs---built to your scope, without etcd/MinIO/gRPC on every query. That
+architecture will stay closer to Table~5 QPS than Table~6 unless your bottleneck is
+something other than search throughput (org already standardized on Milvus, multi-tenant
+isolation requirements, etc.).
+
+Listing Milvus features (filtering, RBAC, replication) does \emph{not} answer why you
+should accept 9--57$\times$ lower QPS on this workload. Feature checklists are not a
+substitute for the table above.
+
+\paragraph{Why we benchmark Milvus anyway in this repo.}
 \begin{itemize}[leftmargin=*]
-  \item \textbf{Serving:} concurrent clients, REST/gRPC APIs, collections, metadata filtering.
-  \item \textbf{Durability and ops:} data survives restarts, backups, replication, monitoring.
-  \item \textbf{Scale-out:} sharded indexes across nodes (FAISS is single-process unless you
-        build that layer yourself).
-  \item \textbf{Integration target for this project:} AMD GPU search via hipVS/Knowhere in
-        Milvus---not FAISS-in-a-script.
-  \item \textbf{Production features:} RBAC, hybrid search, incremental ingest, etc.
+  \item \textbf{AMD GPU goal:} hipVS/Knowhere integration targets \textbf{Milvus}, not
+        \texttt{run\_faiss\_hdf5.py}. Stock FAISS CPU scripts do not exercise that path.
+  \item \textbf{Cost baseline:} before GPU work, we measure what the Milvus/Knowhere \emph{CPU}
+        stack adds on top of the same IVF algorithm.
+  \item \textbf{External parity:} VectorDBBench and published vector-DB comparisons use
+        Milvus; we need controlled CPU numbers on our hardware.
 \end{itemize}
-The harness goal is a \textbf{reproducible CPU baseline before GPU work}, not to pick the
-fastest raw search library. VectorDBBench adds optimize/compact overhead on first load; p99
-latencies in Table~6 are sub-millisecond to a few ms (serial protocol).
+This harness does \textbf{not} argue that Milvus Standalone is the rational choice for
+single-node CPU IVF search when raw QPS matters. VectorDBBench adds optimize/compact overhead
+on first load; p99 latencies in Table~6 are sub-millisecond to a few ms (serial protocol).
 
 \subsection{Does Milvus show an advantage here?}
 
-\textbf{Not on raw search QPS in this harness.} Section above explains when Milvus still
-makes sense despite FAISS being faster. The gap is expected given what each run measures:
-\begin{itemize}[leftmargin=*]
-  \item \textbf{FAISS:} in-process library with minimal overhead.
-  \item \textbf{Milvus:} database server with network I/O, persistence (etcd/MinIO on
-        standalone), Python client overhead (\texttt{.tolist()} conversion), and---for
-        Tables~3--4---a WSL2 host with SSE4.2-only CPU.
-\end{itemize}
+\textbf{No---not on search QPS, including the same-host 7900 XTX comparison.} Milvus
+Standalone confirms correct \texttt{nprobe} behavior (unlike Milvus Lite below) but is
+much slower than in-process FAISS for this protocol. gRPC, persistence, and client
+marshalling account for \emph{some} overhead; they do not make a 9--57$\times$ gap
+``expected and fine'' for a team that could embed FAISS in the serving process instead.
 
 Milvus Lite (Tables~2--3) is additionally misleading for ANN tuning: flat recall across
 \texttt{nprobe} means we cannot trust sweeps. The suspiciously high Lite recall
 ($\approx 0.89$ vs FAISS $\approx 0.37$ at \texttt{nprobe=1}) suggests \texttt{nprobe}
 is not being applied as intended.
 
-\subsection{Where Milvus \emph{would} matter (not covered by these tables)}
+\subsection{When a full vector DB still wins over FAISS + DIY}
 
-See ``Why use Milvus if FAISS is faster?'' above. These CPU tables additionally omit index
-types beyond IVF\_FLAT (HNSW, IVF\_PQ), concurrent load, and multi-node sharding benchmarks.
+Honest cases---not generic feature marketing:
+\begin{itemize}[leftmargin=*]
+  \item You \textbf{already need} multi-node sharding, replication, and ops tooling at
+        current scale (not ``someday'').
+  \item Your org or product line is committed to the Milvus/Zilliz ecosystem (support,
+        managed cloud, existing integrations).
+  \item You are validating \textbf{GPU search inside Milvus} on AMD (this repo's Layer~3--4
+        goal)---FAISS CPU is the recall reference, not the integration target.
+  \item Benchmarking and compliance require matching industry Milvus baselines, not
+        fastest possible in-process search.
+\end{itemize}
+Otherwise, ``wrap FAISS yourself'' is a defensible founder decision given Table~5 vs
+Table~6. These CPU tables omit concurrent load, HNSW/IVF\_PQ, and cluster scale-out.
 
 FAISS strengths visible in this harness:
 \begin{itemize}[leftmargin=*]
@@ -494,17 +512,22 @@ FAISS strengths visible in this harness:
 \subsection{Bottom line}
 
 \begin{itemize}[leftmargin=*]
-  \item Tables~1--6 do \textbf{not} show Milvus outperforming FAISS on search QPS; for
-        single-node CPU IVF, FAISS is ahead (same-host proof: Table~5 vs Table~6 on 7900 XTX).
+  \item Tables~1--6 do \textbf{not} show Milvus outperforming FAISS on search QPS; same-host
+        proof: Table~5 vs Table~6 on 7900 XTX ($\approx$9--57$\times$ gap).
+  \item For a startup optimizing CPU search latency/cost, \textbf{FAISS + minimal custom
+        wrapping} is often the rational reading of these numbers---not Milvus Standalone for
+        this IVF workload.
+  \item We still run Milvus here as a \textbf{Knowhere/hipVS integration baseline} and for
+        VectorDBBench parity, not because CPU Milvus wins on QPS.
   \item Milvus Lite is useful as a connectivity/ingest smoke test; we do not use it as an ANN tuning
         baseline.
-  \item Milvus Standalone confirms proper \texttt{nprobe} behavior but is slower and
-        heavier than in-process FAISS; on 7900 XTX, VectorDBBench Milvus reaches
-        $\approx$376 QPS at recall@10 $\approx 0.98$ vs $\approx$138 on WSL2 harness (Table~4).
+  \item Milvus Standalone confirms proper \texttt{nprobe} behavior but is much slower than
+        in-process FAISS on 7900 XTX ($\approx$376 QPS at recall@10 $\approx 0.98$ vs
+        $\approx$3{,}299 FAISS; WSL2 harness Milvus $\approx$138 in Table~4).
   \item The harness goal is a \textbf{reproducible baseline before AMD GPU work}, not to
-        declare a winner on raw QPS.
-  \item Table~5 vs Table~6 (7900 XTX, 2026-06-30) satisfies the same-host CPU comparison;
-        next step is GPU Milvus (hipVS) on the same machine once ROCm is installed.
+        declare Milvus the better engine for single-node CPU search.
+  \item Table~5 vs Table~6 satisfies the same-host CPU comparison; next step is GPU Milvus
+        (hipVS) on the same machine (Layer~1+ in \texttt{porting\_milvus\_gpu\_to\_amd.tex}).
 \end{itemize}
 
 \section{Re-run Checklist}
