@@ -49,7 +49,8 @@ The concrete objectives are:
 \section{Environment}
 
 \begin{itemize}[leftmargin=*]
-  \item Host: AMD machine (tested with Radeon RX 6800 XT / \texttt{gfx1030}).
+  \item Hosts: AMD machines (Hong Kong: RX 6800 XT / \texttt{gfx1030};
+        7900 XTX / \texttt{gfx1100}, 2026-06-30).
   \item Working directory: \texttt{\~/ann-demo}.
   \item Python virtual environment: \texttt{.venv}.
 \end{itemize}
@@ -210,7 +211,7 @@ curl -sf http://127.0.0.1:9091/healthz && echo OK   # Milvus health
 
 \begin{table}[h]
 \centering
-\caption{FAISS SIFT1M baseline (\texttt{k=10})}
+\caption{FAISS SIFT1M baseline (\texttt{k=10}, Hong Kong AMD host, RX 6800 XT)}
 \begin{tabular}{@{}lrr@{}}
 \toprule
 \textbf{Configuration} & \textbf{QPS} & \textbf{recall@10} \\
@@ -301,14 +302,67 @@ Host: same WSL2 machine as above; Milvus \texttt{v2.5.4} via Docker Compose
 \end{tabular}
 \end{table}
 
+\subsection{FAISS results (7900 XTX host, 2026-06-30)}
+
+Host: \texttt{amd-rx7900xtx}, Ubuntu 22.04, \texttt{faiss-cpu} via harness \texttt{.venv},
+SIFT-1M HDF5 (\texttt{data/sift-128-euclidean.hdf5}), \texttt{nlist=1024}.
+
+\begin{table}[h]
+\centering
+\caption{FAISS SIFT1M baseline (\texttt{k=10}, RX 7900 XTX host)}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{QPS} & \textbf{recall@10} \\
+\midrule
+FlatL2 (exact)   & 2340.8  & 1.0000 \\
+IVF, nprobe=1    & 89993.4 & 0.3711 \\
+IVF, nprobe=4    & 24484.8 & 0.6983 \\
+IVF, nprobe=8    & 12510.7 & 0.8337 \\
+IVF, nprobe=16   &  6408.9 & 0.9273 \\
+IVF, nprobe=32   &  3298.5 & 0.9760 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Recall matches Table~1 (Hong Kong) within rounding; QPS is higher on this CPU.
+
+\subsection{Milvus Standalone via VectorDBBench (7900 XTX, 2026-06-30)}
+
+Host: same \texttt{amd-rx7900xtx} machine; Milvus \texttt{v2.5.4} Docker Compose,
+URI \texttt{http://127.0.0.1:19530}, \texttt{knowhere.simdType: sse4\_2}.
+Tool: VectorDBBench \texttt{milvusivfflat}, \texttt{PerformanceCustomDataset},
+SIFT-1M L2 parquet (\texttt{\textasciitilde{}vdbbench-sift1m}), \texttt{--lists 1024}.
+Load + optimize ran once (\texttt{nprobe=1}); \texttt{nprobe=4..32} reused the collection
+(\texttt{--skip-load}). QPS $=$ \texttt{queries}/\texttt{cost} from serial search log
+(\texttt{queries=10000}).
+
+\begin{table}[h]
+\centering
+\caption{VectorDBBench \texttt{milvusivfflat} SIFT-1M (\texttt{k=10}, RX 7900 XTX)}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} & \textbf{search s} \\
+\midrule
+1  & 1589.0 &  0.8 & 0.3704 &  6.29 \\
+4  & 1219.4 &  1.1 & 0.7017 &  8.20 \\
+8  &  937.4 &  1.4 & 0.8390 & 10.67 \\
+16 &  630.1 &  2.1 & 0.9312 & 15.87 \\
+32 &  375.9 &  3.4 & 0.9790 & 26.60 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Correct ANN curve (recall rises with \texttt{nprobe}). Search QPS is far below FAISS
+(Table~5) at every step, but much higher than Milvus harness Standalone on WSL2 (Table~4).
+
 \section{Observations}
 
 \subsection{Per-table summary}
 
-The four measured-result tables answer different questions; we should not read them as a
+The measured-result tables answer different questions; we should not read them as a
 single apples-to-apples shootout:
 \begin{itemize}[leftmargin=*]
-  \item \textbf{Table 1 (FAISS, AMD host):} Reference ANN behavior. Recall rises with
+  \item \textbf{Table 1 (FAISS, Hong Kong / RX 6800 XT):} Reference ANN behavior. Recall rises with
         \texttt{nprobe} while QPS falls. At \texttt{nprobe=32}, recall@10 $\approx 0.98$
         at $\approx$2{,}786 QPS.
   \item \textbf{Table 2 (Milvus Lite, AMD host):} We treat this as an operational smoke test
@@ -317,9 +371,16 @@ single apples-to-apples shootout:
   \item \textbf{Table 3 (Milvus Lite, WSL2 re-run):} Confirms the Lite \texttt{nprobe} issue
         on a second host. Same flat recall ($\approx 0.89$), much lower QPS
         ($\approx$260--290) and higher p99 ($\approx$1.7--1.9 s).
-  \item \textbf{Table 4 (Milvus Standalone, WSL2):} Correct ANN curve---recall@10 from 0.39
+  \item \textbf{Table 4 (Milvus Standalone harness, WSL2):} Correct ANN curve---recall@10 from 0.39
         at \texttt{nprobe=1} to 0.98 at \texttt{nprobe=32}---but search QPS is far below
         FAISS at comparable recall levels (see below).
+  \item \textbf{Table 5 (FAISS, RX 7900 XTX):} Same recall ladder as Table~1 on a faster CPU;
+        IVF QPS $\approx$1.18$\times$ Hong Kong at \texttt{nprobe=1} ($\approx$90k vs $\approx$77k).
+  \item \textbf{Table 6 (VectorDBBench \texttt{milvusivfflat}, RX 7900 XTX):} First same-host
+        Milvus IVF sweep comparable to Table~5. Recall tracks FAISS; Milvus QPS is
+        $\approx$57$\times$ lower at \texttt{nprobe=1} ($\approx$1{,}589 vs $\approx$90k) but
+        $\approx$3--9$\times$ higher than Table~4 at similar recall (e.g.\ $\approx$376 vs
+        $\approx$138 at \texttt{nprobe=32}).
 \end{itemize}
 
 \subsection{FAISS vs Milvus Standalone at similar recall}
@@ -343,6 +404,31 @@ $\approx 0.98$ & 2{,}786 & 32 & 138 & 32 \\
 
 On raw search throughput alone, \textbf{FAISS wins decisively} in these numbers.
 
+\subsection{FAISS vs VectorDBBench Milvus on same host (7900 XTX)}
+
+Tables~5 and~6 run on \texttt{amd-rx7900xtx} with the same SIFT-1M L2 dataset and IVF\_FLAT
+\texttt{nlist/nprobe} ladder; this is our cleanest FAISS-vs-Milvus CPU comparison to date:
+\begin{table}[h]
+\centering
+\caption{FAISS vs VectorDBBench Milvus (7900 XTX, comparable recall@10)}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Target recall@10} & \textbf{FAISS QPS} & \textbf{FAISS nprobe}
+  & \textbf{Milvus QPS} & \textbf{Milvus nprobe} \\
+\midrule
+$\approx 0.37$ & 89{,}993 & 1  & 1{,}589 & 1 \\
+$\approx 0.70$ & 24{,}485 & 4  & 1{,}219 & 4 \\
+$\approx 0.83$--$0.84$ & 12{,}511 & 8  & 937 & 8 \\
+$\approx 0.93$ & 6{,}409 & 16 & 630 & 16 \\
+$\approx 0.98$ & 3{,}299 & 32 & 376 & 32 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+FAISS remains ahead on QPS at every matched recall point, but the gap on this host is
+smaller than Table~1 vs Table~4 (cross-host). VectorDBBench adds optimize/compact overhead
+on the first load; p99 latencies in Table~6 are sub-millisecond to a few ms (serial protocol).
+
 \subsection{Does Milvus show an advantage here?}
 
 \textbf{Not for this specific harness.} These tables do \emph{not} demonstrate a Milvus
@@ -362,7 +448,7 @@ is not being applied as intended.
 
 \subsection{Where Milvus \emph{would} matter (not covered by these tables)}
 
-These four tables intentionally omit Milvus strengths that FAISS does not provide out of
+These measured CPU tables intentionally omit Milvus strengths that FAISS does not provide out of
 the box:
 \begin{itemize}[leftmargin=*]
   \item \textbf{Serving layer:} REST/gRPC APIs, concurrent clients, collections, metadata
@@ -386,8 +472,10 @@ FAISS strengths visible in this harness:
 \subsection{Methodology caveats}
 
 \begin{itemize}[leftmargin=*]
-  \item Table~1 (FAISS) and Tables~3--4 (Milvus on WSL2) run on \textbf{different hardware};
-        we do not compare raw QPS numbers without a same-host re-run.
+  \item Table~1 (FAISS, Hong Kong) and Tables~3--4 (Milvus harness, WSL2) run on \textbf{different hardware};
+        prefer Table~5 vs Table~6 for same-host QPS comparison (7900 XTX, 2026-06-30).
+  \item Table~6 uses VectorDBBench serial search (\texttt{queries=10000}); the harness uses
+        the same test count but a different timing protocol and reports a p99 sample.
   \item The harness uses \texttt{IVF\_FLAT} with \texttt{nlist=1024} for both engines; other
         index types (HNSW, IVF\_PQ) may shift the picture.
   \item Milvus client code converts NumPy arrays to Python lists before search; this adds
@@ -397,17 +485,17 @@ FAISS strengths visible in this harness:
 \subsection{Bottom line}
 
 \begin{itemize}[leftmargin=*]
-  \item Tables~1--4 do \textbf{not} show Milvus outperforming FAISS on search QPS; for
-        single-node CPU IVF, FAISS is ahead.
+  \item Tables~1--6 do \textbf{not} show Milvus outperforming FAISS on search QPS; for
+        single-node CPU IVF, FAISS is ahead (same-host proof: Table~5 vs Table~6 on 7900 XTX).
   \item Milvus Lite is useful as a connectivity/ingest smoke test; we do not use it as an ANN tuning
         baseline.
   \item Milvus Standalone confirms proper \texttt{nprobe} behavior but is slower and
-        heavier than in-process FAISS in this setup.
+        heavier than in-process FAISS; on 7900 XTX, VectorDBBench Milvus reaches
+        $\approx$376 QPS at recall@10 $\approx 0.98$ vs $\approx$138 on WSL2 harness (Table~4).
   \item The harness goal is a \textbf{reproducible baseline before AMD GPU work}, not to
         declare a winner on raw QPS.
-  \item We require a fairer engine comparison on the \textbf{same machine} (ideally the AMD
-        host), with identical \texttt{nlist/nprobe} and, where possible, reduced Python
-        serialization overhead.
+  \item Table~5 vs Table~6 (7900 XTX, 2026-06-30) satisfies the same-host CPU comparison;
+        next step is GPU Milvus (hipVS) on the same machine once ROCm is installed.
 \end{itemize}
 
 \section{Re-run Checklist}
@@ -434,6 +522,8 @@ FAISS strengths visible in this harness:
   \item Repeat Milvus Standalone baseline on AMD / RX 9070 hosts for cross-machine parity.
   \item Optionally run VectorDBBench against the same standalone URI (Section~\ref{sec:vectordbbench})
         for Zilliz-style benchmark reports.
+  \item For an \texttt{nprobe} sweep comparable to FAISS via VectorDBBench, use
+        Section~\ref{sec:vectordbbench-ivf-nprobe} (\texttt{milvusivfflat}, not AutoIndex).
 \end{itemize}
 
 \section{VectorDBBench (optional external benchmark)}
@@ -476,30 +566,51 @@ We prefer a \textbf{CLI dry-run first}, then a \textbf{serial-only} run inside \
 unstable SSH.
 
 VectorDBBench requires \textbf{Python $\geq$ 3.11} (a separate venv from this harness if
-needed). We install it with Milvus client support:
+needed). Ubuntu~22.04 ships Python~3.10 only; if \texttt{python3.11} is missing, install it
+first (deadsnakes PPA), then create the venv:
 \begin{verbatim}
+python3 --version                    # expect 3.10.x on Ubuntu 22.04
+sudo apt install -y software-properties-common
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3.11-dev
+python3.11 --version                 # must show 3.11.x before continuing
+
 python3.11 -m venv ~/vdbbench-venv
 source ~/vdbbench-venv/bin/activate
+python --version                     # inside venv: 3.11.x
 pip install -U pip vectordb-bench
 vectordbbench --help
-vectordbbench milvusautoinindex --help
+vectordbbench milvusautoindex --help
 \end{verbatim}
 
-We ensure Milvus Standalone is healthy before starting:
+If \texttt{pip install vectordb-bench} fails with ``No matching distribution'', the usual
+cause is running pip under Python~3.10 (venv not activated or never created). Re-check
+\texttt{python --version} inside the activated venv.
+
+We ensure Milvus Standalone is healthy before starting. On a new host, clone this
+repository first (the \texttt{milvus-docker/} stack lives inside it):
 \begin{verbatim}
-cd milvus-docker && docker-compose ps
+git clone https://github.com/konkolchin/ann-harness-amd.git
+cd ann-harness-amd/milvus-docker
+docker-compose up -d
+docker-compose ps
 curl -sf http://127.0.0.1:9091/healthz && echo OK
 \end{verbatim}
 
+On AMD hosts with SSE4.2 only, keep \texttt{user.yaml} as shipped
+(\texttt{knowhere.simdType: sse4\_2}); Milvus v2.4.x may crash with \texttt{SIGILL}
+without it.
+
 \subsection{Minimal command line (local Milvus Standalone)}
 
-VectorDBBench exposes \texttt{milvusautoinindex} and \texttt{milvusfts} for Milvus;
+VectorDBBench exposes \texttt{milvusautoindex} and \texttt{milvusfts} for Milvus;
 there is no \texttt{milvusivfflat} CLI command. AutoIndex is the closest official path
 but does \textbf{not} mirror our fixed IVF\_FLAT{} + \texttt{nprobe} sweep.
 
 \textbf{Step 1: dry-run} (we validate URI and case without loading data):
 \begin{verbatim}
-vectordbbench milvusautoinindex \
+vectordbbench milvusautoindex \
   --uri "http://127.0.0.1:19530" \
   --case-type CapacityDim128 \
   --k 10 \
@@ -519,7 +630,7 @@ We use \texttt{127.0.0.1} rather than \texttt{localhost} on WSL2 (IPv6 client is
 tmux new -s vdbbench
 LOG=logs/vdbbench_$(date -u +%Y%m%d_%H%M%S).log
 mkdir -p logs
-PYTHONUNBUFFERED=1 vectordbbench milvusautoinindex \
+PYTHONUNBUFFERED=1 vectordbbench milvusautoindex \
   --uri "http://127.0.0.1:19530" \
   --case-type CapacityDim128 \
   --k 10 \
@@ -539,7 +650,7 @@ output; typically under \texttt{vectordb\_bench/results/}).
 
 To approximate our harness dimensions (still AutoIndex, not IVF\_FLAT):
 \begin{verbatim}
-vectordbbench milvusautoinindex \
+vectordbbench milvusautoindex \
   --uri "http://127.0.0.1:19530" \
   --custom-case-name "SIFT1M-L2" \
   --custom-dataset-name "SIFT" \
@@ -581,6 +692,219 @@ Primary use & Harness = debug/tune; VDBBench = external / multi-DB reporting \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\section{VectorDBBench IVF\_FLAT nprobe sweep (FAISS-comparable)}
+\label{sec:vectordbbench-ivf-nprobe}
+
+Section~\ref{sec:vectordbbench} covers VectorDBBench smoke tests (\texttt{milvusautoindex},
+\texttt{CapacityDim128}, AutoIndex). \textbf{This section is separate:} we use
+\texttt{milvusivfflat} to approximate the harness IVF\_FLAT{} + \texttt{nprobe} sweep
+(Section~\ref{sec:milvus-script}, Tables~1--6) so we can compare recall and effective QPS
+against FAISS on the same host.
+
+\subsection{When to use this chapter}
+
+\begin{itemize}[leftmargin=*]
+  \item We want Milvus numbers from VectorDBBench (CLI logs, JSON under
+        \texttt{vectordb\_bench/results/}) \emph{and} an \texttt{nprobe} ladder comparable
+        to FAISS.
+  \item We postpone or skip the harness \texttt{.venv} on that host but still have
+        \texttt{vdbbench-venv} (Section~\ref{sec:vectordbbench}).
+  \item We do \textbf{not} use this for capacity stress tests---see warnings below.
+\end{itemize}
+
+\subsection{Commands and cases (do not confuse)}
+
+\begin{table}[h]
+\centering
+\caption{VectorDBBench Milvus CLI paths}
+\begin{tabular}{@{}p{0.22\textwidth}p{0.36\textwidth}p{0.30\textwidth}@{}}
+\toprule
+\textbf{CLI} & \textbf{Index / case} & \textbf{Use for} \\
+\midrule
+\texttt{milvusautoindex} & AutoIndex; e.g.\ \texttt{CapacityDim128} & Smoke / Zilliz-style load; \textbf{not} \texttt{nprobe} sweep \\
+\texttt{milvusivfflat} & IVF\_FLAT; \texttt{--lists}, \texttt{--probes} & \textbf{This chapter} --- \texttt{nprobe} sweep vs FAISS \\
+\texttt{milvusfts} & BM25 sparse & Full-text only \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{CapacityDim128} repeatedly inserts SIFT batches until Milvus fails; it can fill disk
+(we observed \texttt{Exit~134} and full \texttt{/} on Hong Kong). For FAISS comparison we use
+\texttt{PerformanceCustomDataset} with fixed SIFT-1M parquet instead.
+
+\subsection{Prerequisites}
+
+Same as Section~\ref{sec:vectordbbench}: Python~$\geq$~3.11 venv, Milvus Standalone healthy
+(\texttt{curl -sf http://127.0.0.1:9091/healthz}), \texttt{milvus-docker/user.yaml} with
+\texttt{sse4\_2} on AMD hosts. We keep \textbf{$\geq$20--30\,GB free} on \texttt{/} before
+load (insert + MinIO segments + dataset cache).
+
+\subsection{Step 1: SIFT-1M parquet for \texttt{PerformanceCustomDataset}}
+
+VectorDBBench has no built-in \emph{performance} case for SIFT-1M L2 (only SIFT 500K / 5M in
+other case types). We convert the same ann-benchmarks HDF5 as the harness:
+
+\begin{verbatim}
+source ~/vdbbench-venv/bin/activate
+pip install h5py pandas pyarrow
+
+mkdir -p ~/ann-harness-amd/data ~/vdbbench-sift1m
+wget --no-proxy -c https://ann-benchmarks.com/sift-128-euclidean.hdf5 \
+  -O ~/ann-harness-amd/data/sift-128-euclidean.hdf5
+
+python3 <<'PY'
+import h5py, pandas as pd, numpy as np
+from pathlib import Path
+h5 = Path.home() / "ann-harness-amd/data/sift-128-euclidean.hdf5"
+out = Path.home() / "vdbbench-sift1m"
+out.mkdir(parents=True, exist_ok=True)
+with h5py.File(h5, "r") as f:
+    train, test, neighbors = f["train"][:], f["test"][:], f["neighbors"][:]
+pd.DataFrame({"id": np.arange(len(train)), "emb": list(train)}).to_parquet(out / "train.parquet")
+pd.DataFrame({"id": np.arange(len(test)), "emb": list(test)}).to_parquet(out / "test.parquet")
+pd.DataFrame({"neighbors_id": [row.tolist() for row in neighbors]}).to_parquet(out / "neighbors.parquet")
+print("wrote", out)
+PY
+\end{verbatim}
+
+Dry-run one \texttt{nprobe} before a long sweep:
+
+\begin{verbatim}
+vectordbbench milvusivfflat \
+  --uri "http://127.0.0.1:19530" \
+  --case-type PerformanceCustomDataset \
+  --custom-case-name "SIFT1M-IVF" \
+  --custom-dataset-name "SIFT1M" \
+  --custom-dataset-dir "$HOME/vdbbench-sift1m" \
+  --custom-dataset-size 1000000 \
+  --custom-dataset-dim 128 \
+  --custom-dataset-metric-type L2 \
+  --custom-dataset-file-count 1 \
+  --lists 1024 --probes 1 --k 10 \
+  --search-serial --skip-search-concurrent \
+  --db-label "hk-standalone-ivf" \
+  --dry-run
+\end{verbatim}
+
+\subsection{Step 2: \texttt{nprobe} sweep (load once, search five times)}
+
+VectorDBBench accepts \textbf{one} \texttt{--probes} value per invocation (mapped to
+\texttt{nprobe}). We match the harness ladder $1,4,8,16,32$ with \texttt{--lists 1024}.
+First run loads data; later runs skip load and only change search params:
+
+\begin{verbatim}
+tmux new -s vdbivf
+source ~/vdbbench-venv/bin/activate
+cd ~/ann-harness-amd
+mkdir -p logs
+URI="http://127.0.0.1:19530"
+LOG=logs/vdb_ivf_nprobe_$(date -u +%Y%m%d_%H%M%S).log
+
+for NPROBE in 1 4 8 16 32; do
+  echo "======== nprobe=$NPROBE ========" | tee -a "$LOG"
+  if [ "$NPROBE" = "1" ]; then EXTRA="--drop-old --load"
+  else EXTRA="--skip-drop-old --skip-load"; fi
+  PYTHONUNBUFFERED=1 vectordbbench milvusivfflat \
+    --uri "$URI" \
+    --case-type PerformanceCustomDataset \
+    --custom-case-name "SIFT1M-IVF" \
+    --custom-dataset-name "SIFT1M" \
+    --custom-dataset-dir "$HOME/vdbbench-sift1m" \
+    --custom-dataset-size 1000000 \
+    --custom-dataset-dim 128 \
+    --custom-dataset-metric-type L2 \
+    --custom-dataset-file-count 1 \
+    --lists 1024 --probes "$NPROBE" --k 10 \
+    --search-serial --skip-search-concurrent \
+    --db-label "hk-standalone-ivf" \
+    $EXTRA 2>&1 | tee -a "$LOG"
+done
+# Ctrl+B, then D
+\end{verbatim}
+
+\subsection{Step 3: QPS and recall from logs}
+
+Serial search does \textbf{not} populate the summary \texttt{qps} field (often \texttt{0.0}).
+We take QPS from the log line \texttt{search entire test\_data}:
+
+\begin{verbatim}
+search entire test_data: cost=1.8934s, queries=1000, avg_recall=0.8924, ...
+\end{verbatim}
+
+\textbf{Effective QPS} $= \texttt{queries} / \texttt{cost}$. Recall is \texttt{avg\_recall}
+(recall@k for the case's \texttt{--k}).
+
+\begin{verbatim}
+grep -E "nprobe=|search entire test_data" logs/vdb_ivf_nprobe_*.log
+\end{verbatim}
+
+JSON results also land under
+\texttt{~/vdbbench-venv/lib/python3.11/site-packages/vectordb\_bench/results/Milvus/}.
+
+\subsection{Interpreting vs FAISS (Table~1)}
+
+\begin{table}[h]
+\centering
+\caption{VDBBench IVF sweep vs harness FAISS (same host, SIFT-1M L2, \texttt{k=10})}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Topic} & \textbf{Expectation} \\
+\midrule
+Index & Both IVF\_FLAT; VDBBench uses \texttt{--lists 1024} to mirror harness \texttt{nlist} \\
+\texttt{nprobe} & Same ladder; VDBBench = five CLI runs, harness = one script \\
+QPS & Same formula idea; VDBBench query count may differ from harness 10k test set \\
+Latency & Harness reports p99 sample; VDBBench serial log gives avg/p95/p99 \\
+Load path & VDBBench adds flush/compact/optimize (often tens of seconds on standalone) \\
+Milvus path & Docker + gRPC vs in-process FAISS --- Milvus QPS usually lower \\
+Recall curve & Should rise with \texttt{nprobe}; flat curve suggests misconfiguration \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Reference FAISS IVF numbers (7900 XTX host, Table~5): at \texttt{nprobe=1} recall@10
+$\approx 0.37$ and QPS $\approx 9.0\times 10^4$; at \texttt{nprobe=32} recall@10
+$\approx 0.98$ and QPS $\approx 3.3\times 10^3$. Measured Milvus results on the same host
+are in Table~6.
+
+\subsection{Measured results (7900 XTX, 2026-06-30)}
+
+See Table~6 in Section ``Measured Results''; log:
+\texttt{logs/vdb\_ivf\_nprobe\_*.log}.
+
+\subsection{Results template (copy from log)}
+
+\begin{table}[h]
+\centering
+\caption{VectorDBBench \texttt{milvusivfflat} SIFT-1M (template for new hosts)}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{QPS} & \textbf{recall@10} & \textbf{queries} \\
+\midrule
+1  &  &  & 10000 \\
+4  &  &  & 10000 \\
+8  &  &  & 10000 \\
+16 &  &  & 10000 \\
+32 &  &  & 10000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Filled example (7900 XTX): QPS $=$ \texttt{10000}/\texttt{cost};
+\texttt{nprobe=1} $\rightarrow$ 1589 QPS, recall 0.3704; \texttt{nprobe=32} $\rightarrow$
+376 QPS, recall 0.9790.
+
+\subsection{Operational notes (Hong Kong)}
+
+\begin{itemize}[leftmargin=*]
+  \item If Milvus hangs on \texttt{waiting for Milvus...}, check \texttt{docker-compose ps};
+        \texttt{milvus-etcd} \texttt{Exit~1} or \texttt{milvus-standalone} \texttt{Exit~134}
+        often means corrupted \texttt{volumes/} after a full disk---wipe
+        \texttt{volumes/etcd}, \texttt{volumes/minio}, \texttt{volumes/milvus} together and
+        \texttt{docker-compose up -d}.
+  \item After a failed \texttt{CapacityDim128} run, reset volumes before IVF sweep.
+  \item Keep \texttt{tmux} (\texttt{vdbivf}) for long load + five search passes over SSH.
+\end{itemize}
 
 \appendix
 \section{Teammate Run Template}
