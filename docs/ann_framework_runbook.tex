@@ -389,15 +389,14 @@ Pairing approximate recall targets across Table~1 and Table~4 (different hosts; 
 \begin{table}[h]
 \centering
 \caption{FAISS (AMD) vs Milvus Standalone (WSL2) at comparable recall@10}
-\begin{tabular}{@{}lrrrr@{}}
+\begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{Target recall@10} & \textbf{FAISS QPS} & \textbf{FAISS nprobe}
-  & \textbf{Milvus QPS} & \textbf{Milvus nprobe} \\
+\textbf{Target recall@10} & \textbf{nprobe} & \textbf{FAISS QPS} & \textbf{Milvus QPS} \\
 \midrule
-$\approx 0.37$ & 76{,}650 & 1  & 1{,}237 & 1 \\
-$\approx 0.83$--$0.85$ & 10{,}420 & 8  & 420 & 8 \\
-$\approx 0.93$ & 4{,}996 & 16 & 290 & 16 \\
-$\approx 0.98$ & 2{,}786 & 32 & 138 & 32 \\
+$\approx 0.37$ & 1  & 76{,}650 & 1{,}237 \\
+$\approx 0.83$--$0.85$ & 8  & 10{,}420 & 420 \\
+$\approx 0.93$ & 16 & 4{,}996 & 290 \\
+$\approx 0.98$ & 32 & 2{,}786 & 138 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -407,39 +406,56 @@ On raw search throughput alone, \textbf{FAISS wins decisively} in these numbers.
 \subsection{FAISS vs Milvus Standalone on same host (7900 XTX)}
 
 Tables~5 and~6 run on \texttt{amd-rx7900xtx} with the same SIFT-1M L2 dataset, IVF\_FLAT,
-\texttt{nlist=1024}, and \texttt{nprobe} sweep ($1,4,8,16,32$). Because recall@10 tracks
-FAISS within rounding at each \texttt{nprobe}, we can compare QPS and recall side by side
-row-by-row (Milvus via VectorDBBench \texttt{milvusivfflat} on Standalone Docker CPU):
+\texttt{nlist=1024}, and \texttt{nprobe} sweep ($1,4,8,16,32$). Recall@10 agrees within
+rounding for both engines at each \texttt{nprobe} (Milvus via VectorDBBench
+\texttt{milvusivfflat} on Standalone Docker CPU):
 \begin{table}[h]
 \centering
 \caption{FAISS vs Milvus Standalone (7900 XTX): IVF \texttt{nprobe} sweep (\texttt{k=10})}
-\begin{tabular}{@{}lrrrr@{}}
+\begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{FAISS QPS} & \textbf{FAISS recall@10}
-  & \textbf{Milvus QPS} & \textbf{Milvus recall@10} \\
+\textbf{nprobe} & \textbf{recall@10} & \textbf{FAISS QPS} & \textbf{Milvus QPS} \\
 \midrule
-1  & 89{,}993.4 & 0.3711 & 1{,}589.0 & 0.3704 \\
-4  & 24{,}484.8 & 0.6983 & 1{,}219.4 & 0.7017 \\
-8  & 12{,}510.7 & 0.8337 &   937.4 & 0.8390 \\
-16 &  6{,}408.9 & 0.9273 &   630.1 & 0.9312 \\
-32 &  3{,}298.5 & 0.9760 &   375.9 & 0.9790 \\
+1  & 0.371 & 89{,}993 & 1{,}589 \\
+4  & 0.698 & 24{,}485 & 1{,}219 \\
+8  & 0.834 & 12{,}511 &   937 \\
+16 & 0.927 &  6{,}409 &   630 \\
+32 & 0.976 &  3{,}299 &   376 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-FAISS FlatL2 (exact search) on this host: QPS $=$ 2{,}340.8, recall@10 $=$ 1.0000 (no Milvus
-row---VectorDBBench run used IVF\_FLAT only). FAISS remains ahead on QPS at every
-\texttt{nprobe}, but the gap on this host is smaller than Table~1 vs Table~4 (cross-host).
-VectorDBBench adds optimize/compact overhead on the first load; p99 latencies in Table~6 are
-sub-millisecond to a few ms (serial protocol).
+On this host FAISS search QPS is $\approx$9--57$\times$ higher than Milvus at the same
+\texttt{nprobe} (roughly $\approx$57$\times$ at \texttt{nprobe=1}, $\approx$9$\times$ at
+\texttt{nprobe=32}). FAISS FlatL2 (exact search): QPS $=$ 2{,}341, recall@10 $=$ 1.000
+(VectorDBBench run used IVF\_FLAT only).
+
+\paragraph{Why use Milvus if FAISS is faster?}
+This table measures \textbf{single-client, serial IVF search} only. FAISS (Facebook AI
+Similarity Search) is an in-process library with minimal overhead; Milvus is a vector
+\textbf{database} with gRPC, persistence (etcd/MinIO), collection lifecycle, and client
+marshalling. For that narrow micro-benchmark, FAISS \emph{should} win---and it does.
+
+Choose Milvus when the product needs what a library does not ship as one package:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Serving:} concurrent clients, REST/gRPC APIs, collections, metadata filtering.
+  \item \textbf{Durability and ops:} data survives restarts, backups, replication, monitoring.
+  \item \textbf{Scale-out:} sharded indexes across nodes (FAISS is single-process unless you
+        build that layer yourself).
+  \item \textbf{Integration target for this project:} AMD GPU search via hipVS/Knowhere in
+        Milvus---not FAISS-in-a-script.
+  \item \textbf{Production features:} RBAC, hybrid search, incremental ingest, etc.
+\end{itemize}
+The harness goal is a \textbf{reproducible CPU baseline before GPU work}, not to pick the
+fastest raw search library. VectorDBBench adds optimize/compact overhead on first load; p99
+latencies in Table~6 are sub-millisecond to a few ms (serial protocol).
 
 \subsection{Does Milvus show an advantage here?}
 
-\textbf{Not for this specific harness.} These tables do \emph{not} demonstrate a Milvus
-speed advantage over FAISS for single-node CPU IVF search. That is expected given what
-each run actually measures:
+\textbf{Not on raw search QPS in this harness.} Section above explains when Milvus still
+makes sense despite FAISS being faster. The gap is expected given what each run measures:
 \begin{itemize}[leftmargin=*]
-  \item \textbf{FAISS:} in-process library with minimal overhead; AMD reference host.
+  \item \textbf{FAISS:} in-process library with minimal overhead.
   \item \textbf{Milvus:} database server with network I/O, persistence (etcd/MinIO on
         standalone), Python client overhead (\texttt{.tolist()} conversion), and---for
         Tables~3--4---a WSL2 host with SSE4.2-only CPU.
@@ -452,19 +468,8 @@ is not being applied as intended.
 
 \subsection{Where Milvus \emph{would} matter (not covered by these tables)}
 
-These measured CPU tables intentionally omit Milvus strengths that FAISS does not provide out of
-the box:
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Serving layer:} REST/gRPC APIs, concurrent clients, collections, metadata
-        filtering.
-  \item \textbf{Persistence and operations:} data survives restarts, replication, backups,
-        monitoring.
-  \item \textbf{Scale-out:} sharding across nodes (FAISS is single-process unless built
-        separately).
-  \item \textbf{GPU path:} the stated next step for this project---hipVS / Milvus on
-        ROCm---where Milvus is the integration target, not FAISS-in-a-script.
-  \item \textbf{Production features:} RBAC, hybrid search, incremental ingest, etc.
-\end{itemize}
+See ``Why use Milvus if FAISS is faster?'' above. These CPU tables additionally omit index
+types beyond IVF\_FLAT (HNSW, IVF\_PQ), concurrent load, and multi-node sharding benchmarks.
 
 FAISS strengths visible in this harness:
 \begin{itemize}[leftmargin=*]
