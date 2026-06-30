@@ -1,0 +1,424 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{longtable}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue
+}
+
+\title{Porting Milvus GPU Vector Search to AMD\\[0.3em]
+\large hipVS / hipRAFT Layer Plan (ROCm)}
+\author{Konstantin Kolchin}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document describes a layered experiment plan for replacing NVIDIA cuVS/cuRAFT with
+AMD hipVS/hipRAFT in the Milvus/Knowhere GPU path. It complements the CPU baseline runbook
+(\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU results on
+\texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
+through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+\section{Background}
+
+Milvus does not call cuVS directly from Python. The stack is:
+
+\begin{verbatim}
+pymilvus / VectorDBBench
+        |
+   Milvus server
+        |
+   Knowhere  (vector engine: CPU + GPU indexes)
+        |
+   GPU path: GPU_IVF_FLAT, GPU_IVF_PQ, GPU_CAGRA, GPU_BRUTE_FORCE
+        |
+   NVIDIA: RAFT / cuVS
+   AMD goal: hipRAFT + hipVS (ROCm-DS ports)
+\end{verbatim}
+
+\textbf{hipVS} is an AMD port of cuVS
+(\url{https://github.com/ROCm-DS/hipVS},
+\url{https://rocm.docs.amd.com/projects/hipVS/en/latest/}) with API compatibility as an
+explicit goal. \textbf{hipRAFT} is the matching primitives layer (RAFT/cuRAFT analogue on
+ROCm).
+
+The stock \textbf{Milvus v2.5.4 CPU Docker image} used for CPU baselines does \emph{not}
+exercise the GPU/HIP path. GPU experiments require \textbf{source builds} (or a custom GPU
+image you build yourself). NVIDIA Milvus GPU images will not run on AMD.
+
+\section{Prerequisites (CPU control)}
+
+Before starting GPU layers, the following should be in place on the target AMD host
+(see the main runbook for commands and measured tables):
+
+\begin{itemize}[leftmargin=*]
+  \item SIFT-1M HDF5 dataset and in-repo FAISS harness (\texttt{run\_faiss\_hdf5.py}).
+  \item Milvus Standalone Docker CPU (\texttt{milvus-docker/}, \texttt{user.yaml}
+        \texttt{knowhere.simdType: sse4\_2}).
+  \item Optional but recommended: VectorDBBench \texttt{milvusivfflat} IVF \texttt{nprobe}
+        sweep for same-host FAISS vs Milvus CPU comparison.
+\end{itemize}
+
+On \texttt{amd-rx7900xtx} (7900 XTX / \texttt{gfx1100}), CPU baselines and the IVF sweep
+were captured 2026-06-30. GPU work does not replace those numbers; it adds a new backend
+to compare against them.
+
+\section{Layered strategy}
+
+Do not attempt to ``replace cuVS in Milvus'' in one step. Use \textbf{five layers}
+(Layer~0 through Layer~4), each with explicit pass/fail criteria. Only advance when the
+current layer passes.
+
+\begin{table}[h]
+\centering
+\caption{Layer overview}
+\begin{tabular}{@{}clp{0.52\textwidth}@{}}
+\toprule
+\textbf{Layer} & \textbf{Name} & \textbf{Pass criterion (summary)} \\
+\midrule
+0 & ROCm + host sanity & GPU visible in \texttt{rocminfo}; Milvus CPU stack healthy \\
+1 & hipRAFT / hipVS alone & Libraries build; upstream tests/benchmarks run on GPU \\
+2 & Knowhere + HIP & Knowhere unit tests for one GPU index (e.g.\ \texttt{GPU\_IVF\_FLAT}) \\
+3 & Milvus source + GPU & Standalone \texttt{create\_index}/\texttt{search} on GPU index type \\
+4 & Harness benchmarks & Same SIFT-1M / \texttt{nprobe} grid: recall + QPS vs CPU baselines \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Layer 0 --- Machine, ROCm, and CPU Milvus sanity}
+
+\subsection{Goal}
+
+Confirm that the AMD GPU stack and the existing CPU Milvus environment work \emph{before}
+touching hipVS, Knowhere forks, or Milvus source builds.
+
+\subsection{Target host (lab)}
+
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.28\textwidth}X@{}}
+\toprule
+\textbf{Field} & \textbf{Value (7900 XTX lab)} \\
+\midrule
+Hostname & \texttt{amd-rx7900xtx} \\
+CPU & AMD Ryzen 7 7700X \\
+GPU & Radeon RX 7900 XTX (\texttt{gfx1100}) \\
+iGPU & \texttt{gfx1036} (ignore for GPU benchmarks) \\
+OS & Ubuntu 22.04 (Jammy) \\
+ROCm & \texttt{6.4.4} from \url{https://repo.radeon.com/rocm/apt/6.4.4} \\
+AMDGPU user-space & \texttt{amdgpu-lib}, \texttt{amdgpu-lib32} \texttt{6.4.60404} \\
+AMDGPU DKMS & \texttt{amdgpu-dkms} \texttt{6.12.12.60404} \\
+Milvus & Standalone \texttt{v2.5.4} via \texttt{docker-compose} in \texttt{milvus-docker/} \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Install and verify ROCm}
+
+Use the \textbf{official} AMDGPU + ROCm packages, not unrelated tools (e.g.\ \texttt{snap
+install rocminfo}).
+
+\begin{verbatim}
+# Repos (example for ROCm 6.4.4 on Jammy)
+# https://repo.radeon.com/amdgpu/6.4.4/ubuntu jammy
+# https://repo.radeon.com/rocm/apt/6.4.4 jammy
+
+sudo apt update
+sudo apt install rocm amdgpu-dkms amdgpu-lib
+
+# Reboot after first DKMS install if the driver was not loaded before
+sudo reboot
+\end{verbatim}
+
+\textbf{Sanity commands} (record output in the teammate run template):
+
+\begin{verbatim}
+/opt/rocm/bin/rocminfo | grep -E 'Name:|Marketing|gfx'
+/opt/rocm/bin/hipcc --version
+/opt/rocm/bin/rocm-smi
+groups | grep -E 'render|video'
+uname -r
+lspci | grep -i vga
+lsmod | grep amdgpu
+\end{verbatim}
+
+\textbf{Pass:}
+\begin{itemize}[leftmargin=*]
+  \item \texttt{rocminfo} lists \texttt{Marketing Name: Radeon RX 7900 XTX} and agent
+        \texttt{gfx1100}.
+  \item No HIP runtime errors from \texttt{hipcc --version}.
+  \item User is in \texttt{render} and/or \texttt{video} groups (or runs GPU jobs with
+        appropriate device permissions).
+\end{itemize}
+
+\textbf{Measured on lab host (Layer~0 pass):}
+\begin{verbatim}
+rocminfo: gfx1100 / Radeon RX 7900 XTX visible
+CPU agent: AMD Ryzen 7 7700X
+ROCm packages: rocm 6.4.4 already installed (apt)
+\end{verbatim}
+
+Match hipVS/hipRAFT branch and build flags to the \textbf{installed} ROCm version (6.4.4 on
+this host), not an arbitrary newer release unless you upgrade ROCm first.
+
+\subsection{Verify CPU Milvus (control stack)}
+
+This host uses classic \texttt{docker-compose} (hyphen), not the Compose V2 plugin
+\texttt{docker compose}.
+
+\begin{verbatim}
+cd ~/ann-harness-amd/milvus-docker
+docker-compose up -d
+sleep 15
+docker-compose ps
+curl -sf http://127.0.0.1:9091/healthz && echo OK
+\end{verbatim}
+
+\textbf{Pass:} \texttt{milvus-standalone} reports \texttt{Up (healthy)}; health endpoint
+returns OK.
+
+\subsection{Long runs over SSH}
+
+Use \texttt{tmux} for any Layer~1+ build or benchmark. Detach with \textbf{Ctrl+B, D} before
+closing SSH. An empty \texttt{tmux ls} after reboot is normal---start a new session
+(\texttt{tmux new -s rocm-check}).
+
+\subsection{Layer~0 status}
+
+\begin{table}[h]
+\centering
+\caption{Layer~0 checklist (\texttt{amd-rx7900xtx})}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Item} & \textbf{Status} \\
+\midrule
+ROCm installed (\texttt{6.4.4}) & Done \\
+\texttt{rocminfo} shows \texttt{gfx1100} / 7900 XTX & Done \\
+Milvus Standalone Docker healthy & Done \\
+CPU FAISS + VDBBench IVF baselines (runbook Tables~5--6) & Done \\
+hipVS / hipRAFT built & Not started \\
+Knowhere HIP fork & Not started \\
+Milvus GPU source build & Not started \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Layer 1 --- hipRAFT and hipVS in isolation}
+
+\subsection{Goal}
+
+Prove AMD libraries work on the GPU \textbf{before} Knowhere or Milvus.
+
+\subsection{Steps}
+
+\begin{enumerate}[leftmargin=*]
+  \item Clone \textbf{hipRAFT} and \textbf{hipVS} from ROCm-DS; pin versions compatible with
+        installed ROCm (6.4.4 on the lab host).
+  \item Build with the correct GPU architecture:
+        \texttt{--gpu-arch=gfx1100} for RX 7900 XTX (not \texttt{gfx1030} used on the
+        Hong Kong 6800 XT script).
+  \item Run upstream hipVS tests and benchmarks (IVF, brute-force; CAGRA if available in
+        your hipVS version).
+  \item On a tiny subset (1k--10k vectors), compare recall@$k$ to CPU FAISS for sanity.
+\end{enumerate}
+
+The repo includes a starting script for Hong Kong (\texttt{gfx1030}); adapt for the lab host:
+
+\begin{verbatim}
+# Adapt scripts/check_rocmds_gfx1030.sh:
+ARCH=gfx1100
+WORKDIR=~/rocmds_check_gfx1100
+# clone hipRaft, hipVS; ./build.sh with --gpu-arch='gfx1100'
+\end{verbatim}
+
+Repositories:
+\begin{itemize}[leftmargin=*]
+  \item \url{https://github.com/ROCm-DS/hipRaft}
+  \item \url{https://github.com/ROCm-DS/hipVS}
+\end{itemize}
+
+\textbf{Pass:} build succeeds; index build + search completes; recall@$k$ reasonable on a
+small known dataset.
+
+\textbf{Fail fast if:} hipVS version lacks an algorithm required for your first Milvus GPU
+index type (start with \texttt{GPU\_IVF\_FLAT} or GPU brute force).
+
+\section{Layer 2 --- Knowhere with HIP backend}
+
+\subsection{Goal}
+
+Substitute the library link at the Knowhere layer, still without full Milvus.
+
+\subsection{Steps}
+
+\begin{enumerate}[leftmargin=*]
+  \item Clone \textbf{milvus-io/knowhere} pinned to your Milvus release (e.g.\ v2.5.x).
+  \item Study CMake options for GPU / cuVS / RAFT in the NVIDIA build docs.
+  \item Fork or patch: link \texttt{hipVS} / \texttt{hipRAFT} instead of \texttt{cuvs} /
+        \texttt{raft}; add backend flag (e.g.\ \texttt{KNOWHERE\_WITH\_HIP} vs
+        \texttt{KNOWHERE\_WITH\_CUVS}).
+  \item Run Knowhere unit tests for one index, e.g.\ \texttt{GPU\_IVF\_FLAT}:
+        build on GPU, search with \texttt{nprobe} sweep, compare recall curve to CPU
+        \texttt{IVF\_FLAT} on the same data.
+\end{enumerate}
+
+\textbf{Pass:} Knowhere tests green; recall vs \texttt{nprobe} rises like CPU IVF (not
+necessarily bit-identical).
+
+This is where ``replace cuVS/cuRAFT'' actually happens---in Knowhere's build and GPU index
+wrappers, not in \texttt{run\_milvus\_hdf5.py}.
+
+\section{Layer 3 --- Milvus from source (end-to-end)}
+
+\subsection{Goal}
+
+Milvus server uses the HIP-enabled Knowhere build on AMD GPU.
+
+\subsection{Steps}
+
+\begin{enumerate}[leftmargin=*]
+  \item Build Milvus with GPU/HIP-enabled Knowhere (custom Dockerfile or bare-metal build).
+  \item Run Standalone with GPU devices visible (example):
+\begin{verbatim}
+docker run --device=/dev/kfd --device=/dev/dri --group-add video ...
+\end{verbatim}
+  \item Create a collection with a GPU index, e.g.\ \texttt{GPU\_IVF\_FLAT} (closest to the
+        CPU harness).
+  \item Use Milvus GPU index params (\texttt{cache\_dataset\_on\_device}, etc.; see Milvus
+        GPU index docs for your version).
+\end{enumerate}
+
+\textbf{Pass:} \texttt{create\_index}, \texttt{load}, and \texttt{search} succeed; logs show
+GPU index path (not CPU SSE-only Knowhere).
+
+\section{Layer 4 --- Harness benchmarks (comparison science)}
+
+\subsection{Goal}
+
+Answer the same questions as the CPU runbook, now with CPU vs GPU Milvus vs FAISS.
+
+\begin{table}[h]
+\centering
+\caption{Layer~4 experiments}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Experiment} & \textbf{Tool} & \textbf{What you learn} \\
+\midrule
+CPU reference & \texttt{run\_faiss\_hdf5.py} & Recall ladder + QPS ceiling \\
+CPU Milvus & \texttt{run\_milvus\_hdf5.py} or VDBBench \texttt{milvusivfflat} & Server overhead vs FAISS \\
+GPU Milvus & Extended harness or VDBBench GPU cases & hipVS path throughput/recall \\
+External report & VectorDBBench \texttt{milvusgpu*} & Zilliz-style reporting \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Extend the harness minimally:
+\begin{itemize}[leftmargin=*]
+  \item Add \texttt{--index-type GPU\_IVF\_FLAT} and GPU search params (\texttt{nprobe},
+        device cache flags).
+  \item Keep the same SIFT-1M, same \texttt{nprobe} grid ($1,4,8,16,32$), same $k=10$.
+  \item Log: index build time, GPU memory (\texttt{rocm-smi}), recall@10, QPS.
+\end{itemize}
+
+\textbf{Compare:}
+\begin{enumerate}[leftmargin=*]
+  \item Recall vs \texttt{nprobe} must rise like FAISS (correctness).
+  \item QPS vs \texttt{nprobe}---GPU should beat CPU Milvus at some operating points
+        (performance).
+  \item Index build time---often where GPU wins first.
+\end{enumerate}
+
+\section{Metrics matrix}
+
+For each backend (FAISS CPU, Milvus CPU IVF, Milvus GPU IVF), record:
+
+\begin{table}[h]
+\centering
+\caption{Minimum metrics per experiment}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Metric} & \textbf{Why} \\
+\midrule
+Index build time & GPU port often breaks here first \\
+Load / cache time & \texttt{cache\_dataset\_on\_device} behavior \\
+recall@10 vs \texttt{nprobe} & Correctness \\
+QPS (serial 10k queries) & Same protocol as CPU harness \\
+p99 latency & Serving angle \\
+GPU memory peak & \texttt{rocm-smi} during build/search \\
+Logs / stack traces & SIGILL, OOM, HIP errors \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Use one filled teammate run block per experiment (template in the main runbook appendix).
+
+\section{Engineering workflow}
+
+Recommended flow:
+
+\begin{enumerate}[leftmargin=*]
+  \item Layer~0: ROCm + Milvus CPU healthy on \texttt{amd-rx7900xtx}.
+  \item Layer~1: hipVS/hipRAFT standalone on \texttt{gfx1100}.
+  \item Layer~2: Knowhere fork + HIP link; one index type.
+  \item Layer~3: Milvus source build; Standalone GPU search smoke test.
+  \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Tables~5--6.
+  \item If recall OK and GPU faster at target points: widen index types + VectorDBBench GPU
+        cases.
+  \item If not: debug numerics, params, device cache before advancing.
+\end{enumerate}
+
+\textbf{Branching:} maintain a \texttt{milvus-amd-gpu} fork (Knowhere submodule + CMake
+patches). Pin versions: Milvus tag $\leftrightarrow$ Knowhere tag $\leftrightarrow$ hipVS
+release $\leftrightarrow$ ROCm version in a single compatibility table per experiment.
+
+\textbf{CI/local:} small dataset on every commit; full SIFT-1M nightly on the lab host in
+\texttt{tmux}.
+
+\section{Scope and realism}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{hipVS is early} (e.g.\ v0.1.x)---expect gaps vs cuVS; start with
+        \texttt{GPU\_IVF\_FLAT} or GPU brute force, not every index at once.
+  \item \textbf{API compatibility $\neq$ drop-in binary}---Milvus/Knowhere still need
+        build-system and wrapper changes.
+  \item \textbf{CPU baseline stays essential}---GPU work asks whether the hipVS path improves
+        the recall--QPS trade-off vs CPU Milvus/FAISS on the same host, not whether Milvus
+        beats FAISS on raw in-process QPS.
+  \item \textbf{Stock Docker Milvus} remains the CPU control; GPU porting is source-build +
+        fork work, not a config toggle.
+\end{itemize}
+
+\section{Immediate next steps (lab host)}
+
+\begin{enumerate}[leftmargin=*]
+  \item Layer~0: complete (ROCm 6.4.4, \texttt{gfx1100}, Milvus healthy).
+  \item Layer~1: adapt \texttt{scripts/check\_rocmds\_gfx1030.sh} for \texttt{gfx1100}; build
+        hipRAFT + hipVS; run upstream tests in \texttt{tmux}.
+  \item Layer~2: spike Knowhere \texttt{GPU\_IVF\_FLAT} via test binary before Milvus.
+  \item Layer~3--4: Milvus GPU Standalone, then harness \texttt{nprobe} sweep vs runbook
+        Tables~5--6.
+\end{enumerate}
+
+\section{References}
+
+\begin{itemize}[leftmargin=*]
+  \item Main CPU runbook: \texttt{docs/ann\_framework\_runbook.tex}
+  \item Milvus Knowhere: \url{https://milvus.io/docs/knowhere.md}
+  \item RAPIDS cuVS $\leftrightarrow$ Milvus: \url{https://docs.rapids.ai/api/cuvs/stable/integrations/milvus/}
+  \item hipVS docs: \url{https://rocm.docs.amd.com/projects/hipVS/en/latest/}
+  \item hipVS repo: \url{https://github.com/ROCm-DS/hipVS}
+  \item hipRAFT repo: \url{https://github.com/ROCm-DS/hipRaft}
+\end{itemize}
+
+\end{document}

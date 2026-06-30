@@ -529,14 +529,11 @@ FAISS strengths visible in this harness:
         harness (Table~5), Milvus Standalone Docker CPU (\texttt{v2.5.4}), and VectorDBBench
         \texttt{milvusivfflat} IVF \texttt{nprobe} sweep (Table~6;
         Section~\ref{sec:vectordbbench-ivf-nprobe}).
-  \item Install ROCm on the 7900 XTX host and verify GPU compute
-        (\texttt{/opt/rocm/bin/rocminfo}); then validate hipRAFT/hipVS and Milvus GPU path on
-        ROCm~7.x.
-  \item Optionally run \texttt{run\_milvus\_hdf5.py} on the same host for harness metrics
-        comparable to WSL2 Table~4 (Insert/Search/\texttt{search\_with\_expr}).
-  \item Extend benchmark matrix to GIST/Deep subsets (harness and/or VectorDBBench).
-  \item After hipVS lands in Knowhere/Milvus GPU builds, repeat the Table~5/6 methodology on AMD
-        GPU and compare against the CPU baselines already captured on this host.
+  \item \textbf{Layer~0 complete} on 7900 XTX lab host: ROCm \texttt{6.4.4},
+        \texttt{rocminfo} shows \texttt{gfx1100}; Milvus Standalone Docker healthy
+        (see \texttt{docs/porting\_milvus\_gpu\_to\_amd.tex}).
+  \item \textbf{Layers~1--4} (hipRAFT/hipVS, Knowhere HIP fork, Milvus GPU build, harness GPU
+        benchmarks): follow \texttt{docs/porting\_milvus\_gpu\_to\_amd.tex}.
 \end{itemize}
 
 \section{VectorDBBench (optional external benchmark)}
