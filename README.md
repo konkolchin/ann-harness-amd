@@ -9,8 +9,9 @@ Reproducible baseline scripts for ANN testing with ready-to-use vectors (`sift-1
 
 ## Documentation
 
-- Runbook (PDF): [`docs/ANN_Testing_Framework (1).pdf`](docs/ANN_Testing_Framework%20(1).pdf)
-- Runbook source (LaTeX): [`docs/ann_framework_runbook.tex`](docs/ann_framework_runbook.tex)
+- **Benchmarking runbook** (LaTeX): [`docs/ann_framework_runbook.tex`](docs/ann_framework_runbook.tex) — FAISS vs Milvus experiments, VectorDBBench, measured tables
+- AMD GPU porting plan: [`docs/porting_milvus_gpu_to_amd.tex`](docs/porting_milvus_gpu_to_amd.tex)
+- Runbook PDF (if compiled locally): [`docs/ANN_Testing_Framework (1).pdf`](docs/ANN_Testing_Framework%20(1).pdf)
 - Quickstart (copy-paste): [`docs/QUICKSTART.md`](docs/QUICKSTART.md)
 
 ## Quick start

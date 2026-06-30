@@ -14,9 +14,8 @@
     urlcolor=blue
 }
 
-\title{Reproducible ANN Testing Framework\\[0.3em]
-\large SIFT HDF5 Baseline on AMD Machine\\
-\large (FAISS + Milvus Lite + Milvus Standalone)}
+\title{AMD Vector Search Benchmarking Runbook\\[0.3em]
+\large FAISS, Milvus, VectorDBBench, and Measured Experiments}
 \author{Konstantin Kolchin}
 \date{\today}
 
@@ -24,12 +23,13 @@
 \maketitle
 
 \begin{abstract}
-This document records a reproducible baseline workflow for ANN testing on an AMD machine,
-using ready-to-use vectors (SIFT HDF5) instead of an embedding stage.
-It includes setup steps, scripts to run, and measured results for FAISS, Milvus Lite,
-and Milvus Standalone.
-The goal is to provide a repeatable harness that any engineer can run before moving to
-Milvus GPU porting work.
+This runbook records reproducible vector-search \textbf{benchmarking experiments} on AMD
+hosts: harness scripts, VectorDBBench workflows, measured QPS/recall tables, and honest
+interpretation (including when FAISS + custom wrapping beats Milvus on CPU).
+We use ready-made vectors (SIFT-1M HDF5) instead of an embedding stage.
+Backends covered: FAISS, Milvus Lite, Milvus Standalone, and optional VectorDBBench cases.
+The measured CPU baselines support the separate AMD GPU porting plan
+(\texttt{porting\_milvus\_gpu\_to\_amd.tex}).
 \end{abstract}
 
 \tableofcontents
@@ -37,8 +37,9 @@ Milvus GPU porting work.
 
 \section{Scope and Goal}
 
-The workflow validates the first part of the demo pipeline with \textbf{ready vectors}
-and avoids text chunking/embedding complexity in early iterations.
+This runbook is a \textbf{benchmarking lab notebook}: scripts to run, tables we filled, and
+experiments still worth trying. It validates the first part of the demo pipeline with
+\textbf{ready vectors} and avoids text chunking/embedding complexity in early iterations.
 The concrete objectives are:
 \begin{itemize}[leftmargin=*]
   \item We verify dataset ingest and search benchmarking on AMD host.
@@ -487,7 +488,98 @@ Honest cases---not generic feature marketing:
         fastest possible in-process search.
 \end{itemize}
 Otherwise, ``wrap FAISS yourself'' is a defensible founder decision given Table~5 vs
-Table~6. These CPU tables omit concurrent load, HNSW/IVF\_PQ, and cluster scale-out.
+Table~6. Section~\ref{sec:milvus-faiss-qps-experiments} lists follow-up benchmark modes that
+might \emph{narrow} the gap---none of them have been run on the 7900 XTX lab host yet.
+
+\subsection{Experiments that may improve the Milvus/FAISS QPS ratio}
+\label{sec:milvus-faiss-qps-experiments}
+
+Tables~5 and~6 use \textbf{IVF\_FLAT}, \textbf{serial} search, and (on Milvus) Docker
+\texttt{user.yaml} with \texttt{knowhere.simdType: sse4\_2}. That combination is close to
+the worst case for Milvus looking good:
+\begin{itemize}[leftmargin=*]
+  \item Knowhere embeds \textbf{Faiss} for several CPU index types---Milvus IVF is largely
+        Faiss plus server overhead (gRPC, persistence, client marshalling), not a different
+        ANN algorithm.
+  \item \texttt{sse4\_2} was required on older SSE-only hosts; the 7900 XTX lab CPU (Ryzen
+        7700X) supports AVX2. Knowhere can use wider SIMD (AVX512 may add $\approx$20--30\%
+        over AVX2 per upstream docs). Our Milvus CPU numbers may be \textbf{artificially low}.
+  \item Serial \texttt{queries=10000}, one client, matches the harness but not high-concurrency
+        serving.
+\end{itemize}
+
+We do \textbf{not} expect these experiments to reverse Table~5 vs Table~6 on single-client
+CPU IVF (FAISS in-process should still win). They answer: ``Is there \emph{any} Milvus mode
+where the ratio becomes acceptable for our product?'' Ranked by plausibility:
+
+\begin{table}[h]
+\centering
+\caption{Follow-up benchmark modes (mostly untested on 7900 XTX)}
+\begin{tabular}{@{}p{0.22\textwidth}p{0.38\textwidth}p{0.28\textwidth}@{}}
+\toprule
+\textbf{Mode} & \textbf{Why try it} & \textbf{Tool / knob} \\
+\midrule
+Fair CPU SIMD & May raise Milvus QPS without changing index & Remove or raise \texttt{simdType} in \texttt{user.yaml}; restart stack \\
+HNSW & Different recall--QPS curve; common in production & VectorDBBench \texttt{milvushnsw}; tune \texttt{ef} to match recall \\
+IVF\_PQ / SQ8 & Smaller index; bandwidth-bound search & Milvus index params or VDBBench case \\
+Concurrent search & Aggregate QPS is Milvus's designed strength & Drop \texttt{--skip-search-concurrent}; sweep concurrency \\
+Batch queries (\texttt{nq$>$1}) & GPU/batch paths favor batched search & Milvus \texttt{search()} batch size \\
+GPU indexes & Different league (GPU vs CPU FAISS) & \texttt{GPU\_IVF\_FLAT}, \texttt{GPU\_CAGRA}; AMD needs hipVS (porting doc) \\
+Cluster scale-out & Zilliz reports 10k--30k+ QPS with replicas & Multi QueryNode; not Standalone \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Experiment A --- fair SIMD on 7900 XTX (IVF\_FLAT rerun).}
+On the lab host only, try auto-detected SIMD or \texttt{avx2} instead of \texttt{sse4\_2},
+then repeat the Section~\ref{sec:vectordbbench-ivf-nprobe} sweep unchanged:
+
+\begin{verbatim}
+# milvus-docker/user.yaml — lab host only; keep sse4_2 on SSE-only machines
+knowhere:
+  simdType: avx2   # or remove simdType line to let Knowhere auto-detect
+
+cd ~/ann-harness-amd/milvus-docker
+docker-compose down
+docker-compose up -d
+# re-run milvusivfflat nprobe sweep (Section IVF nprobe)
+\end{verbatim}
+
+\paragraph{Experiment B --- HNSW at matched recall.}
+Compare graph search instead of IVF (still serial unless noted):
+
+\begin{verbatim}
+vectordbbench milvushnsw \
+  --uri "http://127.0.0.1:19530" \
+  --case-type PerformanceCustomDataset \
+  --custom-case-name "SIFT1M-HNSW" \
+  --custom-dataset-name "SIFT1M" \
+  --custom-dataset-dir "$HOME/vdbbench-sift1m" \
+  --custom-dataset-size 1000000 --custom-dataset-dim 128 \
+  --custom-dataset-metric-type L2 --custom-dataset-file-count 1 \
+  --m 16 --ef-construction 256 --ef-search 128 --k 10 \
+  --search-serial --skip-search-concurrent \
+  --drop-old --load --db-label "7900xtx-hnsw"
+\end{verbatim}
+
+Sweep \texttt{--ef-search} until recall@10 $\approx 0.98$, then compare QPS to FAISS
+\texttt{IndexHNSWFlat} on the same host (harness extension or one-off script).
+
+\paragraph{Experiment C --- concurrent aggregate QPS.}
+Remove \texttt{--skip-search-concurrent} and use VectorDBBench's concurrency sweep (see
+\texttt{--num-concurrency}). Compare \textbf{total} QPS vs concurrency, not single-client
+latency. A fair startup baseline is FAISS behind multiple worker processes, not
+\texttt{run\_faiss\_hdf5.py} alone.
+
+\paragraph{Experiment D --- GPU (after AMD port).}
+On NVIDIA, Milvus \texttt{GPU\_CAGRA} / \texttt{GPU\_IVF\_FLAT} vs Faiss GPU is the
+throughput story. On 7900 XTX, wait until Layers~3--4 in
+\texttt{porting\_milvus\_gpu\_to\_amd.tex}; stock CPU Docker will not show this.
+
+\paragraph{Founder read.}
+If Experiments A--C still leave Milvus far behind FAISS at your target recall, the data
+support \textbf{FAISS + minimal wrapping} for CPU search. Milvus remains relevant here as
+hipVS integration target and VectorDBBench parity---not as the faster single-node CPU engine.
 
 FAISS strengths visible in this harness:
 \begin{itemize}[leftmargin=*]
@@ -504,7 +596,8 @@ FAISS strengths visible in this harness:
   \item Table~6 uses VectorDBBench serial search (\texttt{queries=10000}); the harness uses
         the same test count but a different timing protocol and reports a p99 sample.
   \item The harness uses \texttt{IVF\_FLAT} with \texttt{nlist=1024} for both engines; other
-        index types (HNSW, IVF\_PQ) may shift the picture.
+        modes (HNSW, concurrent load, fair SIMD) are in
+        Section~\ref{sec:milvus-faiss-qps-experiments}.
   \item Milvus client code converts NumPy arrays to Python lists before search; this adds
         overhead not present in the FAISS baseline.
 \end{itemize}
@@ -557,6 +650,8 @@ FAISS strengths visible in this harness:
         (see \texttt{docs/porting\_milvus\_gpu\_to\_amd.tex}).
   \item \textbf{Layers~1--4} (hipRAFT/hipVS, Knowhere HIP fork, Milvus GPU build, harness GPU
         benchmarks): follow \texttt{docs/porting\_milvus\_gpu\_to\_amd.tex}.
+  \item \textbf{CPU follow-ups} on 7900 XTX (Section~\ref{sec:milvus-faiss-qps-experiments}):
+        fair SIMD IVF rerun, \texttt{milvushnsw}, optional concurrent QPS sweep.
 \end{itemize}
 
 \section{VectorDBBench (optional external benchmark)}
