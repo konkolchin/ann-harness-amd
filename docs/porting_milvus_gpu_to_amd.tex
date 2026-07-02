@@ -215,44 +215,275 @@ Milvus GPU source build & Not started \\
 \end{table}
 
 \section{Layer 1 --- hipRAFT and hipVS in isolation}
+\label{sec:layer1-hipvs-hipraft}
 
 \subsection{Goal}
 
-Prove AMD libraries work on the GPU \textbf{before} Knowhere or Milvus.
+Prove AMD libraries work on the GPU \textbf{before} Knowhere or Milvus. Layer~1 success means:
+\texttt{libcuvs.so} builds for \texttt{gfx1100}, hipVS tests run on GPU, and IVF/brute-force search
+returns sensible neighbors.
 
-\subsection{Steps}
+\subsection{Reality check (7900 XTX / RDNA3)}
 
-\begin{enumerate}[leftmargin=*]
-  \item Clone \textbf{hipRAFT} and \textbf{hipVS} from ROCm-DS; pin versions compatible with
-        installed ROCm (6.4.4 on the lab host).
-  \item Build with the correct GPU architecture:
-        \texttt{--gpu-arch=gfx1100} for RX 7900 XTX (not \texttt{gfx1030} used on the
-        Hong Kong 6800 XT script).
-  \item Run upstream hipVS tests and benchmarks (IVF, brute-force; CAGRA if available in
-        your hipVS version).
-  \item On a tiny subset (1k--10k vectors), compare recall@$k$ to CPU FAISS for sanity.
-\end{enumerate}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{RDNA3 / \texttt{gfx1100} requires warp size 32.} hipCollections (cuco) defaults to
+        CDNA-style warp size 64; without \texttt{USE\_WARPSIZE\_32=ON} configure fails with
+        \texttt{not supported with warp size 64 (gfx1100)}. This path is \textbf{experimental}
+        in upstream cuco.
+  \item Official build docs ask for \textbf{ROCm~$\geq$7.0.2} and \textbf{cmake~$\geq$3.31}. The lab
+        host has ROCm~\texttt{6.4.4} today---try Layer~1 as-is; if configure fails on missing
+        packages, upgrade ROCm to the newest \texttt{6.4.x}/\texttt{7.x} line AMD documents for
+        hipVS branch \texttt{release/rocmds-25.10}, then rebuild.
+  \item First build downloads dependencies via ROCmDS-cmake and can take \textbf{1--3+ hours} and
+        \textbf{10--30\,GB} disk under \texttt{\textasciitilde{}rocmds\_check\_gfx1100/}.
+\end{itemize}
 
-The repo includes a starting script for Hong Kong (\texttt{gfx1030}); adapt for the lab host:
+\subsection{Step 1 --- Host packages (once)}
+
+On \texttt{amd-rx7900xtx}, inside \texttt{tmux}:
 
 \begin{verbatim}
-# Adapt scripts/check_rocmds_gfx1030.sh:
-ARCH=gfx1100
-WORKDIR=~/rocmds_check_gfx1100
-# clone hipRaft, hipVS; ./build.sh with --gpu-arch='gfx1100'
+sudo apt update
+sudo apt install -y git ninja-build ccache \
+  build-essential pkg-config \
+  libopenblas-dev libblas-dev liblapack-dev libsuitesparse-dev
+
+# Ubuntu 22.04 ships cmake 3.22; hipVS wants >= 3.31
+python3 -m pip install --user 'cmake>=3.31'
+export PATH="$HOME/.local/bin:$PATH"
+cmake --version   # must show >= 3.31
+
+# ROCm tools on PATH
+export PATH=/opt/rocm/bin:$PATH
+export ROCM_PATH=/opt/rocm
+hipcc --version
+/opt/rocm/bin/rocminfo | grep -E 'gfx1100|7900'
 \end{verbatim}
+
+Optional: add user to GPU groups if builds/tests fail with permission errors:
+
+\begin{verbatim}
+sudo usermod -aG render,video "$USER"
+# log out and back in
+\end{verbatim}
+
+\subsection{Step 2 --- Clone pinned sources}
+
+Use branch \texttt{release/rocmds-25.10} for both repos (matched pair):
+
+\begin{verbatim}
+export WORKDIR=~/rocmds_check_gfx1100
+export INSTALL_PREFIX=$WORKDIR/install
+mkdir -p "$WORKDIR" "$INSTALL_PREFIX"
+
+cd "$WORKDIR"
+git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipRaft.git
+git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipVS.git
+\end{verbatim}
+
+\subsection{Step 2b --- Patch rocThrust version for ROCm 6.4.x}
+
+hipRaft branch \texttt{release/rocmds-25.10} overrides rocThrust to \textbf{4.0.0} (ROCm~7+).
+ROCm~6.4.4 apt ships \textbf{3.3.x}. Without this patch, CMake tries to download rocThrust and
+may hit a broken URL (\texttt{https://github.com//rocThrust/}).
+
+\begin{verbatim}
+python3 <<'PY'
+import json
+from pathlib import Path
+p = Path.home() / "rocmds_check_gfx1100/hipRaft/versions.json"
+data = json.loads(p.read_text())
+data.setdefault("packages", {}).setdefault("rocthrust", {})["version"] = "3.3.0"
+p.write_text(json.dumps(data, indent=2) + "\n")
+print("patched", p)
+PY
+\end{verbatim}
+
+\subsection{Step 3 --- Environment for builds}
+
+\begin{verbatim}
+export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
+export ROCM_PATH=/opt/rocm-6.4.4
+export WORKDIR=~/rocmds_check_gfx1100
+export INSTALL_PREFIX=$WORKDIR/install
+export PARALLEL_LEVEL=$(nproc)
+
+export CMAKE_PREFIX_PATH=$ROCM_PATH:$ROCM_PATH/lib/cmake:$INSTALL_PREFIX/lib/cmake
+export HIP_DIR=$ROCM_PATH/lib/cmake/hip
+export rocthrust_DIR=$ROCM_PATH/lib/cmake/rocthrust
+export rocprim_DIR=$ROCM_PATH/lib/cmake/rocprim
+export hipcub_DIR=$ROCM_PATH/lib/cmake/hipcub
+export RAPIDS_CMAKE_ROCTHRUST_USE_LOCAL=ON
+export RAPIDS_CMAKE_ROCM_ORG=ROCm
+export RAPIDS_CMAKE_ROCM_DS_ORG=ROCm-DS
+\end{verbatim}
+
+Do \textbf{not} pass \texttt{--cmake-args=-D...} (bash strips the inner quotes; \texttt{build.sh}
+then fails \texttt{Invalid option}). For \texttt{gfx1100}, wrap the \textbf{entire} flag in single
+quotes so literal \texttt{"..."} reach \texttt{build.sh} (Step~4).
+
+\subsection{Step 4 --- Build hipRAFT first}
+
+hipVS depends on hipRAFT. Install both into \texttt{\$INSTALL\_PREFIX}:
+
+\begin{verbatim}
+cd $WORKDIR/hipRaft
+./build.sh clean && rm -rf cpp/build _deps
+# --gpu-arch MUST be last. Single-quote the whole --cmake-args flag (bash quote trap).
+INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libraft tests --compile-lib \
+  --cache-tool=ccache \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
+  --gpu-arch="gfx1100"
+\end{verbatim}
+
+\textbf{Pass:} exit code~0; libraries under \texttt{\$INSTALL\_PREFIX/lib} (e.g.\ \texttt{libraft.so}).
+
+If configure complains about missing \texttt{hipblas}/\texttt{hipsparse}/\texttt{rocthrust}, install ROCm dev packages and export the \texttt{*_DIR} variables from Step~3 (do not pass them via \texttt{--cmake-args}):
+
+\begin{verbatim}
+sudo apt install -y rocm-dev rocm-hip-sdk rocthrust-dev rocprim-dev hipcub-dev
+
+# verify system rocThrust (must exist before hipRAFT configure)
+ls /opt/rocm/lib/cmake/rocthrust/rocthrust-config.cmake \
+   /opt/rocm-6.4.4/lib/cmake/rocthrust/rocthrust-config.cmake 2>/dev/null
+
+export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
+export ROCM_PATH=/opt/rocm-6.4.4   # or /opt/rocm if configs live there
+export CMAKE_PREFIX_PATH=$ROCM_PATH:$ROCM_PATH/lib/cmake:$INSTALL_PREFIX/lib/cmake
+export rocthrust_DIR=$ROCM_PATH/lib/cmake/rocthrust
+export rocprim_DIR=$ROCM_PATH/lib/cmake/rocprim
+export hipcub_DIR=$ROCM_PATH/lib/cmake/hipcub
+export RAPIDS_CMAKE_ROCTHRUST_USE_LOCAL=ON
+export RAPIDS_CMAKE_ROCM_ORG=ROCm
+
+cd $WORKDIR/hipRaft
+./build.sh clean && rm -rf cpp/build _deps
+INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libraft tests --compile-lib \
+  --cache-tool=ccache \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
+  --gpu-arch="gfx1100"
+\end{verbatim}
+
+If you still see \texttt{Build step for rocthrust failed} or \texttt{github.com//rocThrust/},
+patch \texttt{versions.json} (Step~2b), confirm \texttt{ls \$rocthrust\_DIR} succeeds, then wipe \texttt{cpp/build \_deps} and retry.
+
+\subsection{Step 5 --- Build hipVS (libcuvs + focused tests)}
+
+Start with a \textbf{small test subset} before compiling all gtests:
+
+\begin{verbatim}
+cd $WORKDIR/hipVS
+./build.sh clean
+INSTALL_PREFIX=$INSTALL_PREFIX CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH \
+  ./build.sh libcuvs tests --cache-tool=ccache \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
+  --gpu-arch="gfx1100" \
+  --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST;BRUTEFORCE_C_TEST"
+\end{verbatim}
+
+Full test suite (much longer):
+
+\begin{verbatim}
+INSTALL_PREFIX=$INSTALL_PREFIX CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH \
+  ./build.sh libcuvs tests \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
+  --gpu-arch="gfx1100"
+cd $WORKDIR/hipVS/cpp/build
+ctest --test-dir ./tests --output-on-failure
+\end{verbatim}
+
+\textbf{Pass:} \texttt{libcuvs.so} installed; \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} and/or
+\texttt{BRUTEFORCE\_C\_TEST} exit~0.
+
+\subsection{Step 6 --- Run tests manually}
+
+\begin{verbatim}
+export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
+GTEST=$WORKDIR/hipVS/cpp/build/gtests
+
+$GTEST/BRUTEFORCE_C_TEST
+$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST
+
+# watch GPU during tests (second terminal)
+watch -n1 rocm-smi
+\end{verbatim}
+
+Logs from the repo helper script: \texttt{scripts/check\_rocmds\_gfx1100.sh} writes
+\texttt{\$WORKDIR/logs/} and \texttt{SUMMARY.txt}.
+
+\subsection{Step 7 --- One-shot script (recommended)}
+
+From a fresh clone of \texttt{ann-harness-amd} on the lab host:
+
+\begin{verbatim}
+tmux new -s layer1
+cd ~/ann-harness-amd
+chmod +x scripts/check_rocmds_gfx1100.sh
+# ensure cmake >= 3.31 and rocm on PATH (Step 1)
+bash scripts/check_rocmds_gfx1100.sh 2>&1 | tee ~/rocmds_check_gfx1100/layer1_run.log
+# Ctrl+B, D
+\end{verbatim}
+
+\subsection{Step 8 --- Optional Python API smoke test}
+
+Only after C++ Layer~1 passes. Upstream recommends a \textbf{micromamba/conda} env; this is
+optional for Milvus/Knowhere integration (C++ path is enough for Layer~2):
+
+\begin{verbatim}
+# See hipVS docs: conda/environments/all_rocm_arch-x86_64.yaml
+# Build hipRAFT into env, then:
+#   cd hipVS && ./build.sh libcuvs python
+#   python -c "import cuvs; print('ok')"
+\end{verbatim}
+
+\subsection{Step 9 --- Recall sanity vs FAISS (small data)}
+
+After tests pass, compare GPU hipVS IVF/brute-force on \textbf{10k vectors} cut from SIFT HDF5
+against CPU FAISS on the same slice (recall@10 need not be bit-identical; gross errors mean
+wrong metric/arch). Full SIFT-1M GPU benchmarks belong in Layer~4.
+
+\subsection{Troubleshooting}
+
+\begin{table}[h]
+\centering
+\caption{Common Layer~1 failures}
+\begin{tabular}{@{}p{0.32\textwidth}p{0.58\textwidth}@{}}
+\toprule
+\textbf{Symptom} & \textbf{What to try} \\
+\midrule
+cmake $<$ 3.31 & \texttt{pip install 'cmake>=3.31'}; verify \texttt{\textasciitilde{}/.local/bin/cmake} \\
+Missing hipBLAS/hipSPARSE & \texttt{sudo apt install rocm-dev rocm-hip-sdk} \\
+\texttt{github.com//rocThrust/} clone fail & Patch \texttt{hipRaft/versions.json} rocThrust to \texttt{3.3.0}; export \texttt{RAPIDS\_CMAKE\_ROCM\_ORG=ROCm}; use system \texttt{rocthrust-dev} \\
+\texttt{not supported with warp size 64 (gfx1100)} & Pass \texttt{'--cmake-args=\"-DUSE\_WARPSIZE\_32=ON\"'} before \texttt{--gpu-arch}; experimental RDNA3 path \\
+\texttt{Invalid option: --cmake-args=...} & Bash ate inner quotes; use \texttt{'--cmake-args=\"-DFOO=bar\"'} not \texttt{--cmake-args=\"-DFOO=bar\"} \\
+\texttt{Invalid option: --gpu-arch=...} & Put \texttt{--gpu-arch=\"gfx1100\"} \textbf{last}; do not omit it \\
+HIP arch error / no kernel for GPU & Explicit \texttt{--gpu-arch="gfx1100"}; avoid \texttt{--allgpuarch} first \\
+Segfault on RDNA3 & Reboot GPU (\texttt{sudo reboot}); retry; consider ROCm version pin per hipVS branch \\
+OOM during build & Lower \texttt{PARALLEL_LEVEL=8}; free disk; close Milvus if VRAM tight \\
+ROCm 6.4 vs docs 7.0.2 & Upgrade ROCm to match hipVS branch notes, or pass issue with build log \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Layer~1 pass criteria}
+
+\begin{itemize}[leftmargin=*]
+  \item hipRAFT \texttt{libraft} builds for \texttt{gfx1100}.
+  \item hipVS \texttt{libcuvs} builds; \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} or
+        \texttt{BRUTEFORCE\_C\_TEST} passes.
+  \item \texttt{rocm-smi} shows VRAM activity during tests.
+  \item Record commit hashes, ROCm version, and log paths in the runbook appendix template.
+\end{itemize}
 
 Repositories:
 \begin{itemize}[leftmargin=*]
-  \item \url{https://github.com/ROCm-DS/hipRaft}
-  \item \url{https://github.com/ROCm-DS/hipVS}
+  \item \url{https://github.com/ROCm-DS/hipRaft} (branch \texttt{release/rocmds-25.10})
+  \item \url{https://github.com/ROCm-DS/hipVS} (branch \texttt{release/rocmds-25.10})
+  \item Build docs: \url{https://rocm.docs.amd.com/projects/hipVS/en/latest/install/build.html}
 \end{itemize}
 
-\textbf{Pass:} build succeeds; index build + search completes; recall@$k$ reasonable on a
-small known dataset.
-
-\textbf{Fail fast if:} hipVS version lacks an algorithm required for your first Milvus GPU
-index type (start with \texttt{GPU\_IVF\_FLAT} or GPU brute force).
+\textbf{Fail fast if:} hipVS lacks \texttt{GPU\_IVF\_FLAT}/brute-force coverage needed for your
+first Knowhere target---check upstream before Layer~2 fork work.
 
 \section{Layer 2 --- Knowhere with HIP backend}
 
@@ -403,8 +634,7 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 
 \begin{enumerate}[leftmargin=*]
   \item Layer~0: complete (ROCm 6.4.4, \texttt{gfx1100}, Milvus healthy).
-  \item Layer~1: adapt \texttt{scripts/check\_rocmds\_gfx1030.sh} for \texttt{gfx1100}; build
-        hipRAFT + hipVS; run upstream tests in \texttt{tmux}.
+  \item Layer~1: adapt \texttt{scripts/check\_rocmds\_gfx1100.sh} (Section~\ref{sec:layer1-hipvs-hipraft}).
   \item Layer~2: spike Knowhere \texttt{GPU\_IVF\_FLAT} via test binary before Milvus.
   \item Layer~3--4: Milvus GPU Standalone, then harness \texttt{nprobe} sweep vs runbook
         Tables~5--6.
