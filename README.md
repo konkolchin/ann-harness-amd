@@ -8,6 +8,7 @@ Reproducible baseline scripts for ANN testing with ready-to-use vectors (`sift-1
 - `scripts/check_rocmds_gfx1030.sh` — Layer 1 build check for hipRAFT + hipVS (6800 XT / gfx1030)
 - `scripts/check_rocmds_gfx1100.sh` — Layer 1 build check for 7900 XTX / gfx1100 lab host
 - `scripts/apply_hipvs_packer_debug_patch.sh` — Layer 1.5 debug patch for IVF packer gtest failures
+- `scripts/check_ivf_packer_mismatch.sh` — check gtest log for `testPacker mask mismatch` lines
 
 ## Documentation
 
