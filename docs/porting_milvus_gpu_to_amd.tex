@@ -693,8 +693,13 @@ git commit -m "debug: print testPacker mask_true vs expected on gfx1100"
 \label{sec:layer15-step4-run}
 
 After applying the debug patch you \textbf{must rebuild}---edits to \texttt{ann\_ivf\_flat.cuh}
-are not picked up until \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} is recompiled. Use the Layer~1
-environment and a narrow test filter ($\sim$10--20 minutes, not a full hipVS test suite):
+are not picked up until \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} is recompiled.
+
+\textbf{Important:} wipe \texttt{cpp/build} before reconfigure. An old cache may still compile for
+Instinct (\texttt{gfx908}/\texttt{gfx90a}/\texttt{gfx942}) and hit \texttt{hnsw.cpp} errors
+(\texttt{AVX512Capable} with \texttt{-Werror}). IVF work does not need HNSW---disable it with
+\texttt{-DBUILD\_CAGRA\_HNSWLIB=OFF}. Do \textbf{not} rely on \texttt{ninja NEIGHBORS\_ANN\_IVF\_FLAT\_TEST}
+alone unless \texttt{CMakeCache.txt} already shows \texttt{gfx1100} only.
 
 \begin{verbatim}
 export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
@@ -709,13 +714,20 @@ export RAPIDS_CMAKE_ROCTHRUST_USE_LOCAL=ON
 export RAPIDS_CMAKE_ROCM_ORG=ROCm
 export HIP_VISIBLE_DEVICES=0
 
-# --- 4a. Rebuild libcuvs + IVF gtest (required after patch) ---
+# --- 4a. Clean + rebuild libcuvs + IVF gtest (required after patch) ---
+# --compile-lib is hipRAFT-only; hipVS build.sh rejects it.
 cd $WORKDIR/hipVS
+./build.sh clean
+rm -rf cpp/build
+
 INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
   --cache-tool=ccache \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF"' \
   --gpu-arch="gfx1100" \
   --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST"
+
+grep CMAKE_HIP_ARCHITECTURES cpp/build/CMakeCache.txt
+# expect: gfx1100 (not gfx908/gfx90a/gfx942)
 
 ls -la $WORKDIR/hipVS/cpp/build/gtests/NEIGHBORS_ANN_IVF_FLAT_TEST
 # Pass: build.sh exit 0 and binary exists
@@ -837,7 +849,7 @@ After each edit, rebuild and re-run \textbf{one} case:
 cd $WORKDIR/hipVS
 INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
   --cache-tool=ccache \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF"' \
   --gpu-arch="gfx1100" \
   --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST"
 
