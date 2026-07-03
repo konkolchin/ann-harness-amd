@@ -34,15 +34,15 @@ run_cmd ninja_version ninja --version || true
 
 export PATH="${HOME}/.local/bin:/opt/rocm/bin:${PATH}"
 
-# Resolve ROCm prefix (hipcc may live under /opt/rocm-6.4.4 while /opt/rocm is a symlink)
+# Resolve ROCm prefix (/opt/rocm is usually a symlink to /opt/rocm-7.0.2 or /opt/rocm-6.4.4)
 if [ -z "${ROCM_PATH:-}" ]; then
-  if [ -d /opt/rocm/lib/cmake/rocthrust ]; then
-    ROCM_PATH=/opt/rocm
-  elif [ -d /opt/rocm-6.4.4/lib/cmake/rocthrust ]; then
-    ROCM_PATH=/opt/rocm-6.4.4
-  else
-    ROCM_PATH=/opt/rocm
-  fi
+  for candidate in /opt/rocm /opt/rocm-7.0.2 /opt/rocm-6.4.4; do
+    if [ -d "${candidate}/lib/cmake/rocthrust" ]; then
+      ROCM_PATH="${candidate}"
+      break
+    fi
+  done
+  ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 fi
 export ROCM_PATH
 export CMAKE_PREFIX_PATH="${ROCM_PATH}:${ROCM_PATH}/lib/cmake:${INSTALL_PREFIX}/lib/cmake"
@@ -64,16 +64,30 @@ cd "$WORKDIR" || exit 1
 patch_hipraft_rocthrust_version() {
   local vf="${WORKDIR}/hipRaft/versions.json"
   [ -f "$vf" ] || return 0
+  # ROCm 7 ships rocthrust 4.0.0 — keep versions.json at 4.0.0.
+  # ROCm 6.4 apt ships 3.3.x; patch only then or find_package fails and CPM hits
+  # the sentinel git tag We-always-use-find_package-for-rocthrust.
+  case "${ROCM_PATH}" in
+    /opt/rocm-6.*|/opt/rocm/6.*) ;;
+    *)
+      if [[ "${ROCM_PATH}" == /opt/rocm ]] && [ -d /opt/rocm-6.4.4/lib/cmake/rocthrust ] \
+        && [ ! -d /opt/rocm-7.0.2/lib/cmake/rocthrust ]; then
+        : # /opt/rocm -> 6.4.x
+      else
+        log "ROCm 7+ detected (${ROCM_PATH}): leaving hipRaft rocthrust at 4.0.0"
+        return 0
+      fi
+      ;;
+  esac
   python3 <<'PY'
 import json
 from pathlib import Path
 p = Path("'"$vf"'")
 data = json.loads(p.read_text())
 pkg = data.setdefault("packages", {}).setdefault("rocthrust", {})
-# hipRaft release/rocmds-25.10 defaults to 4.0.0 (ROCm 7+). ROCm 6.4.4 apt ships 3.3.x.
 pkg["version"] = "3.3.0"
 p.write_text(json.dumps(data, indent=2) + "\n")
-print("Patched", p, "-> rocthrust version 3.3.0 for system rocThrust")
+print("Patched", p, "-> rocthrust version 3.3.0 for ROCm 6.4.x")
 PY
 }
 

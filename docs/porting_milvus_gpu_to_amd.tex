@@ -28,6 +28,8 @@ AMD hipVS/hipRAFT in the Milvus/Knowhere GPU path. It complements the CPU benchm
 runbook (\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU results on
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
+Layer~1 completed on the 7900 XTX lab host (ROCm~7.0.2, July~2026) with documented RDNA3 gtest
+caveats.
 \end{abstract}
 
 \tableofcontents
@@ -91,7 +93,7 @@ current layer passes.
 \textbf{Layer} & \textbf{Name} & \textbf{Pass criterion (summary)} \\
 \midrule
 0 & ROCm + host sanity & GPU visible in \texttt{rocminfo}; Milvus CPU stack healthy \\
-1 & hipRAFT / hipVS alone & Libraries build; upstream tests/benchmarks run on GPU \\
+1 & hipRAFT / hipVS alone & Libraries build; \texttt{BRUTEFORCE\_C\_TEST} on GPU; float IVF search recall OK on gfx1100 \\
 2 & Knowhere + HIP & Knowhere unit tests for one GPU index (e.g.\ \texttt{GPU\_IVF\_FLAT}) \\
 3 & Milvus source + GPU & Standalone \texttt{create\_index}/\texttt{search} on GPU index type \\
 4 & Harness benchmarks & Same SIFT-1M / \texttt{nprobe} grid: recall + QPS vs CPU baselines \\
@@ -117,9 +119,8 @@ CPU & AMD Ryzen 7 7700X \\
 GPU & Radeon RX 7900 XTX (\texttt{gfx1100}) \\
 iGPU & \texttt{gfx1036} (ignore for GPU benchmarks) \\
 OS & Ubuntu 22.04 (Jammy) \\
-ROCm & \texttt{6.4.4} from \url{https://repo.radeon.com/rocm/apt/6.4.4} \\
-AMDGPU user-space & \texttt{amdgpu-lib}, \texttt{amdgpu-lib32} \texttt{6.4.60404} \\
-AMDGPU DKMS & \texttt{amdgpu-dkms} \texttt{6.12.12.60404} \\
+ROCm & \texttt{7.0.2} (\url{https://repo.radeon.com/amdgpu-install/7.0.2/}); upgraded from \texttt{6.4.4} for Layer~1 \\
+AMDGPU DKMS & \texttt{amdgpu/6.14.14} via \texttt{amdgpu-install --usecase=graphics,rocm} \\
 Milvus & Standalone \texttt{v2.5.4} via \texttt{docker-compose} in \texttt{milvus-docker/} \\
 \bottomrule
 \end{tabularx}
@@ -162,15 +163,35 @@ lsmod | grep amdgpu
         appropriate device permissions).
 \end{itemize}
 
-\textbf{Measured on lab host (Layer~0 pass):}
+\textbf{Measured on lab host (Layer~0 pass, later upgraded for Layer~1):}
 \begin{verbatim}
 rocminfo: gfx1100 / Radeon RX 7900 XTX visible
 CPU agent: AMD Ryzen 7 7700X
-ROCm packages: rocm 6.4.4 already installed (apt)
+Layer 0: ROCm 6.4.4; Layer 1 build: upgraded to ROCm 7.0.2 (see ROCm 7 upgrade subsection)
 \end{verbatim}
 
-Match hipVS/hipRAFT branch and build flags to the \textbf{installed} ROCm version (6.4.4 on
-this host), not an arbitrary newer release unless you upgrade ROCm first.
+Match hipVS/hipRAFT branch \texttt{release/rocmds-25.10} to \textbf{ROCm~$\geq$7.0.2} on this
+host. ROCm~6.4.4 was insufficient for hipVS (missing hipCUB \texttt{DeviceFor}; see
+Section~\ref{sec:layer1-rocm7-upgrade}).
+
+\subsection{Upgrade to ROCm 7.0.2 (required for Layer~1 on gfx1100)}
+\label{sec:layer1-rocm7-upgrade}
+
+AMD does \textbf{not} support in-place ROCm upgrades. On Ubuntu~22.04 for Radeon + ROCm:
+
+\begin{enumerate}[leftmargin=*]
+  \item Install \texttt{dkms} and kernel headers if missing:
+        \texttt{sudo apt install dkms linux-headers-\$(uname -r)}.
+  \item Uninstall old stack: \texttt{sudo amdgpu-uninstall} (or \texttt{apt autoremove rocm*}).
+  \item Remove stale repo files under \texttt{/etc/apt/sources.list.d/}; \texttt{apt clean}.
+  \item Install \texttt{amdgpu-install} 7.0.2 \texttt{.deb} from AMD; run
+        \texttt{sudo amdgpu-install -y --usecase=graphics,rocm}.
+  \item Reboot; add user to \texttt{render,video}; verify \texttt{rocminfo}, \texttt{hipcc},
+        and \texttt{/opt/rocm/include/hipcub/device/device\_for.hpp} exists.
+\end{enumerate}
+
+Full command transcript: AMD Radeon install guide for ROCm~7.0.2 on Jammy
+(\url{https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.0.2/docs/install/installrad/native_linux/install-radeon.html}).
 
 \subsection{Verify CPU Milvus (control stack)}
 
@@ -203,11 +224,11 @@ closing SSH. An empty \texttt{tmux ls} after reboot is normal---start a new sess
 \toprule
 \textbf{Item} & \textbf{Status} \\
 \midrule
-ROCm installed (\texttt{6.4.4}) & Done \\
+ROCm installed (\texttt{7.0.2}) & Done \\
 \texttt{rocminfo} shows \texttt{gfx1100} / 7900 XTX & Done \\
 Milvus Standalone Docker healthy & Done \\
 CPU FAISS + VDBBench IVF baselines (runbook Tables~5--6) & Done \\
-hipVS / hipRAFT built & Not started \\
+hipVS / hipRAFT built (\texttt{release/rocmds-25.10}) & Done (2026-07-03) \\
 Knowhere HIP fork & Not started \\
 Milvus GPU source build & Not started \\
 \bottomrule
@@ -226,14 +247,15 @@ returns sensible neighbors.
 \subsection{Reality check (7900 XTX / RDNA3)}
 
 \begin{itemize}[leftmargin=*]
+  \item \textbf{ROCm~$\geq$7.0.2 is required} for \texttt{release/rocmds-25.10} on this branch.
+        ROCm~6.4.4 hipCUB lacks \texttt{cub::DeviceFor} (\texttt{device\_for.hpp}); hipVS
+        configure/compile fails with \texttt{no member named 'DeviceFor' in namespace 'hipcub'}.
   \item \textbf{RDNA3 / \texttt{gfx1100} requires warp size 32.} hipCollections (cuco) defaults to
         CDNA-style warp size 64; without \texttt{USE\_WARPSIZE\_32=ON} configure fails with
         \texttt{not supported with warp size 64 (gfx1100)}. This path is \textbf{experimental}
         in upstream cuco.
-  \item Official build docs ask for \textbf{ROCm~$\geq$7.0.2} and \textbf{cmake~$\geq$3.31}. The lab
-        host has ROCm~\texttt{6.4.4} today---try Layer~1 as-is; if configure fails on missing
-        packages, upgrade ROCm to the newest \texttt{6.4.x}/\texttt{7.x} line AMD documents for
-        hipVS branch \texttt{release/rocmds-25.10}, then rebuild.
+  \item Official hipVS docs list \textbf{Instinct GPUs only} (\texttt{gfx90a}/\texttt{gfx942});
+        \texttt{gfx1100} is community/experimental. Expect gtest gaps even when search works.
   \item First build downloads dependencies via ROCmDS-cmake and can take \textbf{1--3+ hours} and
         \textbf{10--30\,GB} disk under \texttt{\textasciitilde{}rocmds\_check\_gfx1100/}.
 \end{itemize}
@@ -277,15 +299,19 @@ export INSTALL_PREFIX=$WORKDIR/install
 mkdir -p "$WORKDIR" "$INSTALL_PREFIX"
 
 cd "$WORKDIR"
-git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipRaft.git
-git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipVS.git
+git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipRaft.git hipRaft
+git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipVS.git hipVS
+# If directories already exist, skip clone; use: git checkout release/rocmds-25.10
 \end{verbatim}
 
-\subsection{Step 2b --- Patch rocThrust version for ROCm 6.4.x}
+\subsection{Step 2b --- Patch rocThrust version for ROCm 6.4.x only}
 
-hipRaft branch \texttt{release/rocmds-25.10} overrides rocThrust to \textbf{4.0.0} (ROCm~7+).
-ROCm~6.4.4 apt ships \textbf{3.3.x}. Without this patch, CMake tries to download rocThrust and
-may hit a broken URL (\texttt{https://github.com//rocThrust/}).
+\textbf{Skip this step on ROCm~7.x} (system rocThrust is \textbf{4.0.0}; leave
+\texttt{versions.json} unchanged).
+
+On ROCm~6.4.4 only: hipRaft pins rocThrust \textbf{4.0.0} but apt ships \textbf{3.3.x}.
+Without the patch, \texttt{find\_package} fails and CPM tries the sentinel git tag
+\texttt{We-always-use-find\_package-for-rocthrust.} (which is not a real branch).
 
 \begin{verbatim}
 python3 <<'PY'
@@ -303,7 +329,7 @@ PY
 
 \begin{verbatim}
 export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
-export ROCM_PATH=/opt/rocm-6.4.4
+export ROCM_PATH=/opt/rocm-7.0.2
 export WORKDIR=~/rocmds_check_gfx1100
 export INSTALL_PREFIX=$WORKDIR/install
 export PARALLEL_LEVEL=$(nproc)
@@ -338,17 +364,17 @@ INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libraft tests --compile-lib \
 
 \textbf{Pass:} exit code~0; libraries under \texttt{\$INSTALL\_PREFIX/lib} (e.g.\ \texttt{libraft.so}).
 
-If configure complains about missing \texttt{hipblas}/\texttt{hipsparse}/\texttt{rocthrust}, install ROCm dev packages and export the \texttt{*_DIR} variables from Step~3 (do not pass them via \texttt{--cmake-args}):
+If configure complains about missing \texttt{hipblas}/\texttt{hipsparse}/\texttt{rocthrust}, install ROCm dev packages and export the \texttt{*\_DIR} variables from Step~3 (do not pass them via \texttt{--cmake-args}):
 
 \begin{verbatim}
 sudo apt install -y rocm-dev rocm-hip-sdk rocthrust-dev rocprim-dev hipcub-dev
 
 # verify system rocThrust (must exist before hipRAFT configure)
 ls /opt/rocm/lib/cmake/rocthrust/rocthrust-config.cmake \
-   /opt/rocm-6.4.4/lib/cmake/rocthrust/rocthrust-config.cmake 2>/dev/null
+   /opt/rocm-7.0.2/lib/cmake/rocthrust/rocthrust-config.cmake 2>/dev/null
 
 export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
-export ROCM_PATH=/opt/rocm-6.4.4   # or /opt/rocm if configs live there
+export ROCM_PATH=/opt/rocm-7.0.2
 export CMAKE_PREFIX_PATH=$ROCM_PATH:$ROCM_PATH/lib/cmake:$INSTALL_PREFIX/lib/cmake
 export rocthrust_DIR=$ROCM_PATH/lib/cmake/rocthrust
 export rocprim_DIR=$ROCM_PATH/lib/cmake/rocprim
@@ -392,17 +418,30 @@ cd $WORKDIR/hipVS/cpp/build
 ctest --test-dir ./tests --output-on-failure
 \end{verbatim}
 
-\textbf{Pass:} \texttt{libcuvs.so} installed; \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} and/or
-\texttt{BRUTEFORCE\_C\_TEST} exit~0.
+\textbf{Pass:} \texttt{libcuvs.so} installed under \texttt{\$INSTALL\_PREFIX/lib}; at least
+\texttt{BRUTEFORCE\_C\_TEST} exits~0 on \texttt{gfx1100}. Full
+\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} may fail on RDNA3 despite good recall (see
+Section~\ref{sec:ivf-gtest-decode}).
 
 \subsection{Step 6 --- Run tests manually}
 
 \begin{verbatim}
+export HIP_VISIBLE_DEVICES=0
 export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
 GTEST=$WORKDIR/hipVS/cpp/build/gtests
 
+# Layer 1 backstop (passed on lab host 2026-07-03)
 $GTEST/BRUTEFORCE_C_TEST
-$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST
+echo "BRUTEFORCE exit: $?"
+
+# IVF gtest — expect many FAIL on gfx1100; read log carefully (Section below)
+$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
+  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.*' \
+  2>&1 | tee $WORKDIR/ivf_flat_float_gtest.log
+
+# Optional: float-only diagnostic; closer to Milvus GPU_IVF_FLAT (float vectors)
+# Rebuild with --limit-tests="IVF_FLAT_C_TEST" first if not built
+# $GTEST/IVF_FLAT_C_TEST
 
 # watch GPU during tests (second terminal)
 watch -n1 rocm-smi
@@ -436,11 +475,81 @@ optional for Milvus/Knowhere integration (C++ path is enough for Layer~2):
 #   python -c "import cuvs; print('ok')"
 \end{verbatim}
 
-\subsection{Step 9 --- Recall sanity vs FAISS (small data)}
+\subsection{Step 9 --- Recall sanity vs FAISS (float, small data)}
 
-After tests pass, compare GPU hipVS IVF/brute-force on \textbf{10k vectors} cut from SIFT HDF5
-against CPU FAISS on the same slice (recall@10 need not be bit-identical; gross errors mean
-wrong metric/arch). Full SIFT-1M GPU benchmarks belong in Layer~4.
+After Layer~1 builds pass, validate \textbf{float} IVF (what SIFT and \texttt{GPU\_IVF\_FLAT}
+use---not \texttt{uint8} gtest dtypes) on a \textbf{10k-vector} slice from SIFT HDF5 vs CPU
+FAISS recall@10. Gross divergence means wrong metric/arch; exact match is not required. Full
+SIFT-1M GPU benchmarks belong in Layer~4.
+
+Stock Milvus Docker cannot run \texttt{GPU\_IVF\_FLAT}; this step uses hipVS directly until
+Layer~2--3. A harness script is not yet in-repo---use gtest recall lines as interim evidence,
+then add a small hipVS or \texttt{cuvs} Python script when pursuing Knowhere integration.
+
+\subsection{How to read \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} output}
+\label{sec:ivf-gtest-decode}
+
+Each gtest case (\texttt{AnnIVFFlat/NN}) runs three sub-tests in one \texttt{TEST\_P}:
+\texttt{testIVFFlat()} (search/recall), \texttt{testPacker()} (GPU list packing math),
+\texttt{testFilter()}. A single \texttt{[ FAILED ]} line does \textbf{not} mean IVF search is
+broken.
+
+\paragraph{Recall line (usually good news).}
+\begin{verbatim}
+[RAFT] [info] Recall = 1.000000 (10000/10000), ... below the threshold (eps = 0.001000).
+\end{verbatim}
+This checks \textbf{neighbor correctness}. Values near \textbf{1.0} mean GPU IVF search found
+the right neighbors. This is what matters for SIFT / \texttt{GPU\_IVF\_FLAT}. \textbf{Do not}
+try to fix failures by changing \texttt{eps}---recall often already passes.
+
+\paragraph{Packer failure at \texttt{ann\_ivf\_flat.cuh:376} (RDNA3 gap).}
+\begin{verbatim}
+Failure
+Value of: thrust::reduce(..., mask, ...) == list_size * ps.dim
+  Actual: false
+  Expected: true
+\end{verbatim}
+This is \textbf{not} a recall threshold. It counts \texttt{true} bits in an internal packing
+\texttt{mask} and expects \textbf{exactly} \texttt{list\_size $\times$ dim}. On \texttt{gfx1100}
+with \texttt{USE\_WARPSIZE\_32=ON}, this assert fails for \textbf{both float and uint8} suites
+even when recall is \textbf{1.0}. Upstream tests Instinct (\texttt{gfx90a}/\texttt{gfx942}) only.
+
+\paragraph{\texttt{GetParam()} decode.}
+Example: \texttt{\{ 1000, 10000, 16, 10, 512, 1024, 0, 0,0,0 \}} means
+\texttt{num\_queries=1000}, \texttt{num\_db\_vecs=10000}, \texttt{dim=16}, \texttt{k=10},
+\texttt{nprobe=512}, \texttt{nlist=1024}, \texttt{metric=L2}, plus three booleans. The index
+\texttt{/93} is just parameter set \#93, not an error code.
+
+\paragraph{Do not patch gtests to pass.} Lowering recall \texttt{eps} or commenting out the
+packer \texttt{ASSERT\_TRUE} hides a real layout bug on extend/packer paths. For Milvus work,
+use \textbf{float} vectors and application-level recall tests instead.
+
+\subsection{Layer~1 measured results (\texttt{amd-rx7900xtx}, 2026-07-03)}
+\label{sec:layer1-measured}
+
+\begin{table}[h]
+\centering
+\caption{Layer~1 outcomes on RX 7900 XTX after ROCm 7.0.2 upgrade}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Item} & \textbf{Result} \\
+\midrule
+ROCm & 7.0.2; \texttt{hipcc} 7.0.51831; \texttt{device\_for.hpp} present \\
+Branch & \texttt{release/rocmds-25.10} (hipRaft + hipVS) \\
+Prefix & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/install} \\
+Build flags & \texttt{USE\_WARPSIZE\_32=ON}, \texttt{--gpu-arch=gfx1100} \\
+\texttt{libraft.so} & Built and installed \\
+\texttt{libcuvs.so} & $\sim$254\,MB; links to ROCm~7 libs \\
+\texttt{BRUTEFORCE\_C\_TEST} & \textbf{PASS} (2/2; recall 1.0) \\
+\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} (float filter) & 97/98 \textbf{FAIL} on packer; recall often 1.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Pragmatic Layer~1 pass on gfx1100:} hipRAFT + hipVS build; \texttt{BRUTEFORCE\_C\_TEST}
+green; \texttt{rocm-smi} shows GPU activity; document IVF gtest packer gap. Proceed to
+Layer~2 with \textbf{float} \texttt{GPU\_IVF\_FLAT} and real-data recall checks before trusting
+Milvus GPU IVF at scale.
 
 \subsection{Troubleshooting}
 
@@ -453,13 +562,17 @@ wrong metric/arch). Full SIFT-1M GPU benchmarks belong in Layer~4.
 \midrule
 cmake $<$ 3.31 & \texttt{pip install 'cmake>=3.31'}; verify \texttt{\textasciitilde{}/.local/bin/cmake} \\
 Missing hipBLAS/hipSPARSE & \texttt{sudo apt install rocm-dev rocm-hip-sdk} \\
-\texttt{github.com//rocThrust/} clone fail & Patch \texttt{hipRaft/versions.json} rocThrust to \texttt{3.3.0}; export \texttt{RAPIDS\_CMAKE\_ROCM\_ORG=ROCm}; use system \texttt{rocthrust-dev} \\
+\texttt{no member named 'DeviceFor' in hipcub} & Upgrade to ROCm~$\geq$7.0.2; verify \texttt{device\_for.hpp} \\
+\texttt{amdgpu dkms failed} / \texttt{dkms: command not found} & \texttt{apt install dkms linux-headers-\$(uname -r)}; re-run \texttt{amdgpu-install} \\
+IVF gtest FAIL but Recall = 1.0 & Packer assert on gfx1100; not recall---see Section~\ref{sec:ivf-gtest-decode} \\
+\texttt{github.com//rocThrust/} clone fail (ROCm 6.4) & Patch \texttt{versions.json} rocThrust to \texttt{3.3.0}; export \texttt{RAPIDS\_CMAKE\_ROCM\_ORG=ROCm} \\
+\texttt{We-always-use-find\_package-for-rocthrust} & On ROCm~7: revert patch to \texttt{4.0.0}; install \texttt{rocthrust-dev}; set \texttt{rocthrust\_DIR}; wipe \texttt{\_deps} \\
 \texttt{not supported with warp size 64 (gfx1100)} & Pass \texttt{'--cmake-args=\"-DUSE\_WARPSIZE\_32=ON\"'} before \texttt{--gpu-arch}; experimental RDNA3 path \\
 \texttt{Invalid option: --cmake-args=...} & Bash ate inner quotes; use \texttt{'--cmake-args=\"-DFOO=bar\"'} not \texttt{--cmake-args=\"-DFOO=bar\"} \\
 \texttt{Invalid option: --gpu-arch=...} & Put \texttt{--gpu-arch=\"gfx1100\"} \textbf{last}; do not omit it \\
 HIP arch error / no kernel for GPU & Explicit \texttt{--gpu-arch="gfx1100"}; avoid \texttt{--allgpuarch} first \\
 Segfault on RDNA3 & Reboot GPU (\texttt{sudo reboot}); retry; consider ROCm version pin per hipVS branch \\
-OOM during build & Lower \texttt{PARALLEL_LEVEL=8}; free disk; close Milvus if VRAM tight \\
+OOM during build & Lower \texttt{PARALLEL\_LEVEL=8}; free disk; close Milvus if VRAM tight \\
 ROCm 6.4 vs docs 7.0.2 & Upgrade ROCm to match hipVS branch notes, or pass issue with build log \\
 \bottomrule
 \end{tabular}
@@ -467,12 +580,18 @@ ROCm 6.4 vs docs 7.0.2 & Upgrade ROCm to match hipVS branch notes, or pass issue
 
 \subsection{Layer~1 pass criteria}
 
+On \textbf{Instinct} (\texttt{gfx90a}/\texttt{gfx942}), upstream expects both gtests green. On
+\textbf{RDNA3} (\texttt{gfx1100}), use the pragmatic bar:
+
 \begin{itemize}[leftmargin=*]
-  \item hipRAFT \texttt{libraft} builds for \texttt{gfx1100}.
-  \item hipVS \texttt{libcuvs} builds; \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} or
-        \texttt{BRUTEFORCE\_C\_TEST} passes.
+  \item hipRAFT \texttt{libraft.so} and hipVS \texttt{libcuvs.so} build for \texttt{gfx1100}
+        with ROCm~$\geq$7.0.2.
+  \item \texttt{BRUTEFORCE\_C\_TEST} exits~0 (required on gfx1100).
+  \item \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST}: recall lines may show 1.0 even when gtest
+        fails packer asserts---document, do not patch tests.
   \item \texttt{rocm-smi} shows VRAM activity during tests.
-  \item Record commit hashes, ROCm version, and log paths in the runbook appendix template.
+  \item Record branch, ROCm version, build flags, log paths (Table in
+        Section~\ref{sec:layer1-measured}).
 \end{itemize}
 
 Repositories:
@@ -600,7 +719,7 @@ Recommended flow:
 
 \begin{enumerate}[leftmargin=*]
   \item Layer~0: ROCm + Milvus CPU healthy on \texttt{amd-rx7900xtx}.
-  \item Layer~1: hipVS/hipRAFT standalone on \texttt{gfx1100}.
+  \item Layer~1: hipVS/hipRAFT standalone on \texttt{gfx1100} (Section~\ref{sec:layer1-measured}).
   \item Layer~2: Knowhere fork + HIP link; one index type.
   \item Layer~3: Milvus source build; Standalone GPU search smoke test.
   \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Tables~5--6.
@@ -620,7 +739,10 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 
 \begin{itemize}[leftmargin=*]
   \item \textbf{hipVS is early} (e.g.\ v0.1.x)---expect gaps vs cuVS; start with
-        \texttt{GPU\_IVF\_FLAT} or GPU brute force, not every index at once.
+        \textbf{float} \texttt{GPU\_IVF\_FLAT} or GPU brute force, not every index at once.
+  \item \textbf{RDNA3 gtest gap}---\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} packer asserts fail on
+        \texttt{gfx1100} even at recall~1.0; use \texttt{BRUTEFORCE\_C\_TEST} + application recall
+        for sign-off (Section~\ref{sec:ivf-gtest-decode}).
   \item \textbf{API compatibility $\neq$ drop-in binary}---Milvus/Knowhere still need
         build-system and wrapper changes.
   \item \textbf{CPU baseline stays essential}---GPU work asks whether the hipVS path improves
@@ -633,9 +755,10 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 \section{Immediate next steps (lab host)}
 
 \begin{enumerate}[leftmargin=*]
-  \item Layer~0: complete (ROCm 6.4.4, \texttt{gfx1100}, Milvus healthy).
-  \item Layer~1: adapt \texttt{scripts/check\_rocmds\_gfx1100.sh} (Section~\ref{sec:layer1-hipvs-hipraft}).
-  \item Layer~2: spike Knowhere \texttt{GPU\_IVF\_FLAT} via test binary before Milvus.
+  \item Layer~0--1: complete on \texttt{amd-rx7900xtx} (ROCm~7.0.2, \texttt{libcuvs.so},
+        \texttt{BRUTEFORCE\_C\_TEST} pass; IVF gtest packer gap documented).
+  \item Layer~2: Knowhere \texttt{GPU\_IVF\_FLAT} + \textbf{float} vectors; recall vs CPU IVF
+        on 10k SIFT slice before Milvus.
   \item Layer~3--4: Milvus GPU Standalone, then harness \texttt{nprobe} sweep vs runbook
         Tables~5--6.
 \end{enumerate}
