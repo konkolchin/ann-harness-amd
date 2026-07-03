@@ -711,7 +711,7 @@ export HIP_VISIBLE_DEVICES=0
 
 # --- 4a. Rebuild libcuvs + IVF gtest (required after patch) ---
 cd $WORKDIR/hipVS
-INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests --compile-lib \
+INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
   --cache-tool=ccache \
   '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
   --gpu-arch="gfx1100" \
@@ -835,7 +835,7 @@ After each edit, rebuild and re-run \textbf{one} case:
 
 \begin{verbatim}
 cd $WORKDIR/hipVS
-INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests --compile-lib \
+INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
   --cache-tool=ccache \
   '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
   --gpu-arch="gfx1100" \
