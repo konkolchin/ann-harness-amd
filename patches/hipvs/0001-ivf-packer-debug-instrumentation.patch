@@ -1,0 +1,43 @@
+diff --git a/cpp/tests/neighbors/ann_ivf_flat.cuh b/cpp/tests/neighbors/ann_ivf_flat.cuh
+index 8b563c9..68248d9 100644
+--- a/cpp/tests/neighbors/ann_ivf_flat.cuh
++++ b/cpp/tests/neighbors/ann_ivf_flat.cuh
+@@ -43,6 +43,8 @@
+ #include <raft/stats/mean.cuh>
+ #include <thrust/reduce.h>
+ #include <thrust/sequence.h>
++#include <iostream>
++#include <sstream>
+ 
+ #include <raft/core/resource/cuda_stream_pool.hpp>
+ #include <raft/linalg/add.cuh>
+@@ -370,10 +372,25 @@ class AnnIVFFlatTest : public ::testing::TestWithParam<AnnIvfFlatInputs<IdxT>> {
+             });
+ 
+           // ensure that the correct number of indices are masked out
+-          ASSERT_TRUE(thrust::reduce(raft::resource::get_thrust_policy(handle_),
+-                                     mask.data_handle(),
+-                                     mask.data_handle() + n_elems,
+-                                     0) == list_size * ps.dim);
++          raft::resource::sync_stream(handle_);
++          const uint32_t mask_true_count = thrust::reduce(
++            raft::resource::get_thrust_policy(handle_),
++            mask.data_handle(),
++            mask.data_handle() + n_elems,
++            uint32_t{0});
++          const uint32_t expected_count = list_size * static_cast<uint32_t>(ps.dim);
++          if (mask_true_count != expected_count) {
++            std::ostringstream oss;
++            oss << "testPacker mask mismatch:"
++                << " label=" << label << " list_size=" << list_size
++                << " dim=" << idx.dim() << " veclen=" << idx.veclen()
++                << " kIndexGroupSize=" << kIndexGroupSize
++                << " padded_list_size=" << padded_list_size << " n_elems=" << n_elems
++                << " mask_true=" << mask_true_count << " expected=" << expected_count;
++            SCOPED_TRACE(oss.str());
++            std::cerr << oss.str() << std::endl;
++          }
++          ASSERT_EQ(mask_true_count, expected_count);
+ 
+           auto packed_list_data = raft::make_device_vector<DataT, uint32_t>(handle_, n_elems);
+ 
