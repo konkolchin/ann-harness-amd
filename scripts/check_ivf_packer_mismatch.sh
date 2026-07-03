@@ -66,15 +66,34 @@ fi
 
 PATTERN='testPacker mask mismatch'
 COUNT="$(grep -c "$PATTERN" "$LOG" 2>/dev/null || true)"
+LOG_LINES="$(wc -l < "$LOG" | tr -d ' ')"
+FAILED_COUNT="$(grep -c '\[  FAILED  \]' "$LOG" 2>/dev/null || true)"
+HIPVS_TEST="${WORKDIR}/hipVS/cpp/tests/neighbors/ann_ivf_flat.cuh"
 
 echo "Log: $LOG"
+echo "Log lines: ${LOG_LINES}"
 echo "Pattern: $PATTERN"
 echo "Count: ${COUNT}"
+echo "Gtest [  FAILED  ] count: ${FAILED_COUNT}"
 
 if [ "${COUNT}" -eq 0 ]; then
   echo "RESULT: NOT FOUND — no debug mismatch lines in log."
-  echo "If gtests failed without this line, apply the debug patch and rebuild:"
-  echo "  bash scripts/apply_hipvs_packer_debug_patch.sh ${WORKDIR}/hipVS"
+  if [ "${LOG_LINES}" -lt 5 ]; then
+    echo "Hint: log looks empty or stale — run Step 4b:"
+    echo "  bash scripts/check_ivf_packer_mismatch.sh --run"
+  fi
+  if [ -f "${HIPVS_TEST}" ]; then
+    if grep -q 'testPacker mask mismatch' "${HIPVS_TEST}"; then
+      echo "Hint: debug patch IS in source — rebuild + re-run gtest after patch."
+    else
+      echo "Hint: debug patch NOT in source — apply then clean-rebuild:"
+      echo "  bash scripts/apply_hipvs_packer_debug_patch.sh ${WORKDIR}/hipVS"
+    fi
+  fi
+  if [ "${FAILED_COUNT}" -gt 0 ]; then
+    echo "Hint: gtests failed but no debug lines — binary built without debug patch."
+    echo "  ./build.sh clean && rm -rf cpp/build  # then rebuild (see porting doc Step 4)"
+  fi
   exit 1
 fi
 
