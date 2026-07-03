@@ -648,69 +648,272 @@ Likely fix locations (in order):
         extend layout only on Instinct.
 \end{enumerate}
 
-\subsection{Step 1 --- Fork and apply debug instrumentation}
+\subsection{Step 1 --- Fork hipVS on GitHub and clone on the lab host}
 
-Fork \url{https://github.com/ROCm-DS/hipVS} from \texttt{release/rocmds-25.10}. On the lab host,
-apply the in-repo debug patch (prints \texttt{mask\_true} vs \texttt{expected} and cluster
-metadata on mismatch):
+\begin{enumerate}[leftmargin=*]
+  \item On GitHub, fork \url{https://github.com/ROCm-DS/hipVS} to your account (e.g.\
+        \url{https://github.com/konkolchin/hipVS}).
+  \item On \texttt{amd-rx7900xtx}, clone the fork (or repoint an existing tree):
+\end{enumerate}
 
 \begin{verbatim}
-cd ~/ann-harness-amd
-bash scripts/apply_hipvs_packer_debug_patch.sh ~/rocmds_check_gfx1100/hipVS
-# patch file: patches/hipvs/0001-ivf-packer-debug-instrumentation.patch
+export WORKDIR=~/rocmds_check_gfx1100
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+
+# fresh fork clone (recommended)
+git clone -b release/rocmds-25.10 https://github.com/konkolchin/hipVS.git hipVS
+cd hipVS
+git remote add upstream https://github.com/ROCm-DS/hipVS.git
+
+# create the Layer 1.5 working branch
+git checkout -b gfx1100-ivf-packer-fix
 \end{verbatim}
 
-Rebuild the IVF gtest target only (faster iteration):
+If you already built from \texttt{ROCm-DS/hipVS} under \texttt{hipVS/}, add your fork as
+\texttt{origin} and push the branch there instead of re-cloning.
+
+\subsection{Step 2 --- Apply debug patch from \texttt{ann-harness-amd}}
 
 \begin{verbatim}
+cd ~/ann-harness-amd && git pull
+bash scripts/apply_hipvs_packer_debug_patch.sh ~/rocmds_check_gfx1100/hipVS
+# patch: patches/hipvs/0001-ivf-packer-debug-instrumentation.patch
+\end{verbatim}
+
+Commit the debug instrumentation on your fork branch (optional but keeps the tree reproducible):
+
+\begin{verbatim}
+cd ~/rocmds_check_gfx1100/hipVS
+git add cpp/tests/neighbors/ann_ivf_flat.cuh
+git commit -m "debug: print testPacker mask_true vs expected on gfx1100"
+\end{verbatim}
+
+\subsection{Step 4 --- Rebuild, run gtest, and capture the first mismatch}
+\label{sec:layer15-step4-run}
+
+After applying the debug patch you \textbf{must rebuild}---edits to \texttt{ann\_ivf\_flat.cuh}
+are not picked up until \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} is recompiled. Use the Layer~1
+environment and a narrow test filter ($\sim$10--20 minutes, not a full hipVS test suite):
+
+\begin{verbatim}
+export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
 export ROCM_PATH=/opt/rocm-7.0.2
 export WORKDIR=~/rocmds_check_gfx1100
 export INSTALL_PREFIX=$WORKDIR/install
-export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
+export CMAKE_PREFIX_PATH=$ROCM_PATH:$ROCM_PATH/lib/cmake:$INSTALL_PREFIX/lib/cmake
+export rocthrust_DIR=$ROCM_PATH/lib/cmake/rocthrust
+export rocprim_DIR=$ROCM_PATH/lib/cmake/rocprim
+export hipcub_DIR=$ROCM_PATH/lib/cmake/hipcub
+export RAPIDS_CMAKE_ROCTHRUST_USE_LOCAL=ON
+export RAPIDS_CMAKE_ROCM_ORG=ROCm
 export HIP_VISIBLE_DEVICES=0
 
+# --- 4a. Rebuild libcuvs + IVF gtest (required after patch) ---
 cd $WORKDIR/hipVS
 INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests --compile-lib \
+  --cache-tool=ccache \
   '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
   --gpu-arch="gfx1100" \
   --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST"
 
+ls -la $WORKDIR/hipVS/cpp/build/gtests/NEIGHBORS_ANN_IVF_FLAT_TEST
+# Pass: build.sh exit 0 and binary exists
+
+# --- 4b. Run float suite (matches SIFT / GPU_IVF_FLAT) ---
+export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
 GTEST=$WORKDIR/hipVS/cpp/build/gtests
+
 $GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
   --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.*' \
   2>&1 | tee $WORKDIR/packer_debug_float.log
+
+echo "exit code: $?"
 \end{verbatim}
 
-\textbf{Read the first \texttt{testPacker mask mismatch} line.} Example fields:
-\texttt{label}, \texttt{list\_size}, \texttt{dim}, \texttt{veclen}, \texttt{kIndexGroupSize},
-\texttt{padded\_list\_size}, \texttt{n\_elems}, \texttt{mask\_true}, \texttt{expected}. If
-\texttt{mask\_true > expected}, the mask marks too many slots valid; if lower, too few.
+\textbf{Pass for Step~4:} rebuild succeeds; log contains at least one
+\texttt{testPacker mask mismatch} line (expected on stock \texttt{gfx1100} before the Step~5
+fix). You do \textbf{not} need 98/98 green yet.
 
-\subsection{Step 2 --- Fix in the fork (not by disabling asserts)}
+Extract the \textbf{first} debug line:
+
+\begin{verbatim}
+grep -m1 'testPacker mask mismatch' $WORKDIR/packer_debug_float.log
+\end{verbatim}
+
+Example line (yours will differ in \texttt{label} / sizes):
+
+\begin{verbatim}
+testPacker mask mismatch: label=17 list_size=142 dim=16 veclen=4
+  kIndexGroupSize=32 padded_list_size=160 n_elems=2560
+  mask_true=2288 expected=2272
+\end{verbatim}
+
+\paragraph{How to read the fields.}
+\begin{table}[h]
+\centering
+\caption{Debug line field meanings (\texttt{testPacker})}
+\begin{tabular}{@{}lp{0.62\textwidth}@{}}
+\toprule
+\textbf{Field} & \textbf{Meaning} \\
+\midrule
+\texttt{label} & IVF cluster (inverted list) index inside the built index \\
+\texttt{list\_size} & Vectors in that cluster \\
+\texttt{dim} & Vector dimension for this gtest case \\
+\texttt{veclen} & Interleaved chunk size (\texttt{dim \% veclen == 0}) \\
+\texttt{kIndexGroupSize} & Should be \textbf{32} on gfx1100 (\texttt{raft::warp\_size()}) \\
+\texttt{padded\_list\_size} & \texttt{roundUp(list\_size)} to group boundary \\
+\texttt{n\_elems} & \texttt{padded\_list\_size $\times$ dim} (buffer length) \\
+\texttt{mask\_true} & Count of \texttt{true} bits in the test's validity mask \\
+\texttt{expected} & \texttt{list\_size $\times$ dim} (must match for gtest pass) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Direction of the bug.}
+\begin{itemize}[leftmargin=*]
+  \item \texttt{mask\_true > expected} --- mask marks too many buffer slots as valid (tail-group
+        arithmetic in \texttt{ann\_ivf\_flat.cuh} is the prime suspect).
+  \item \texttt{mask\_true < expected} --- mask too strict; compare against
+        \texttt{pack\_1} indexing in \texttt{ivf\_flat\_helpers.cuh}.
+  \item \texttt{kIndexGroupSize $\neq$ 32} --- rebuild flags wrong; fix Layer~1 env before
+        editing source.
+\end{itemize}
+
+\paragraph{Map log line to a single gtest case.} Find the \texttt{[ FAILED ]} block nearest the
+first mismatch; the suffix \texttt{/NN} is the parameter index:
+
+\begin{verbatim}
+grep -B5 -m1 'testPacker mask mismatch' $WORKDIR/packer_debug_float.log
+# look for: [ FAILED ] AnnIVFFlatTest/AnnIVFFlatTestF_float.AnnIVFFlat/93
+#            where GetParam() = { 1000, 10000, 16, 10, ... }
+\end{verbatim}
+
+Re-run \textbf{one} failing case for fast iteration (replace \texttt{/93} with your index):
+
+\begin{verbatim}
+$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
+  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.AnnIVFFlat/93' \
+  2>&1 | tee $WORKDIR/packer_case_93.log
+\end{verbatim}
+
+Watch GPU activity in a second terminal: \texttt{watch -n1 rocm-smi}.
+
+\subsection{Step 5 --- Fix in the fork, verify, push, record}
+\label{sec:layer15-step5-fix}
+
+Work on branch \texttt{gfx1100-ivf-packer-fix}. \textbf{Do not} disable the assert or lower recall
+\texttt{eps}.
+
+\paragraph{5a. Compare test mask vs production packer.} Open these side by side for the failing
+\texttt{(list\_size, dim, veclen)} from Step~4:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{cpp/tests/neighbors/ann\_ivf\_flat.cuh} --- \texttt{testPacker()} mask lambda
+        (counts valid slots in the padded interleaved buffer).
+  \item \texttt{cpp/src/neighbors/ivf\_flat/ivf\_flat\_helpers.cuh} ---
+        \texttt{helpers::codepacker::pack\_1} / \texttt{unpack\_1} (production layout).
+\end{itemize}
+
+The test mask uses \texttt{surplus / chunk\_size} and \texttt{interleaved\_group::mod(...)};\
+\texttt{pack\_1} uses \texttt{interleaved\_group::mod(offset) * veclen}. On tail groups
+(\texttt{list\_size} not a multiple of \texttt{kIndexGroupSize}), those formulas must agree on
+which of the \texttt{n\_elems} slots hold real data.
+
+\paragraph{5b. Edit and rebuild loop.} Typical fix locations (try in order):
 
 \begin{enumerate}[leftmargin=*]
-  \item Pick one failing \texttt{(list\_size, dim, veclen)} from the debug log; reproduce under
-        \texttt{--gtest\_filter} for that parameter index if needed.
-  \item Compare mask lambda arithmetic (\texttt{interleaved\_group::roundDown/roundUp/mod}) with
-        \texttt{pack\_1} indexing in \texttt{ivf\_flat\_helpers.cuh} for the same tuple.
-  \item Patch the fork; rebuild \texttt{--limit-tests="NEIGHBORS\_ANN\_IVF\_FLAT\_TEST"}; confirm
-        \texttt{mask\_true == expected} and subsequent \texttt{devArrMatch} asserts pass.
-  \item Run full float filter (98 cases), then uint8 if Milvus paths need it.
-  \item Optional: open upstream PR to \texttt{ROCm-DS/hipVS} with repro + fix; keep fork pinned
-        until merged.
+  \item Correct the mask lambda in \texttt{ann\_ivf\_flat.cuh} if \texttt{pack\_1} and
+        \texttt{extend} already match on Instinct logic.
+  \item Correct \texttt{pack\_1}/\texttt{unpack\_1} in \texttt{ivf\_flat\_helpers.cuh} if the
+        production layout is wrong on warp-32 tail groups.
+  \item Inspect \texttt{ivf\_flat::extend} only if manual \texttt{codepacker::pack} matches the
+        fixed helper but \texttt{devArrMatch} against \texttt{extend\_index} still fails.
 \end{enumerate}
 
-\subsection{Step 3 --- Record the deliverable}
+After each edit, rebuild and re-run \textbf{one} case:
 
-Add to the experiment log (and this document's measured table when done):
+\begin{verbatim}
+cd $WORKDIR/hipVS
+INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests --compile-lib \
+  --cache-tool=ccache \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
+  --gpu-arch="gfx1100" \
+  --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST"
+
+export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
+$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
+  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.AnnIVFFlat/93'
+\end{verbatim}
+
+\textbf{Case pass:} no \texttt{testPacker mask mismatch} line; no failure at
+\texttt{ann\_ivf\_flat.cuh:376}; optional second assert (\texttt{devArrMatch} packed vs extend)
+also passes.
+
+\paragraph{5c. Full float suite, then uint8.}
+
+\begin{verbatim}
+$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
+  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.*' \
+  2>&1 | tee $WORKDIR/packer_float_fixed.log
+grep -c '\[  FAILED  \]' $WORKDIR/packer_float_fixed.log || true
+# target: 0 failures, exit code 0
+
+# optional (Milvus uint8 paths)
+$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
+  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_uint8.*' \
+  2>&1 | tee $WORKDIR/packer_uint8_fixed.log
+\end{verbatim}
+
+Confirm Layer~1 backstop still passes:
+
+\begin{verbatim}
+$GTEST/BRUTEFORCE_C_TEST
+echo "BRUTEFORCE exit: $?"
+\end{verbatim}
+
+\paragraph{5d. Commit and push the fork.}
+
+\begin{verbatim}
+cd ~/rocmds_check_gfx1100/hipVS
+git status
+git add cpp/tests/neighbors/ann_ivf_flat.cuh \
+        cpp/src/neighbors/ivf_flat/ivf_flat_helpers.cuh   # only files you changed
+git commit -m "fix(ivf_flat): correct interleaved pack/mask on gfx1100 warp-32 tail groups"
+git push -u origin gfx1100-ivf-packer-fix
+git rev-parse HEAD   # copy this hash into the runbook
+\end{verbatim}
+
+Optional upstream PR: open from \texttt{konkolchin/hipVS:gfx1100-ivf-packer-fix} $\rightarrow$
+\texttt{ROCm-DS/hipVS:release/rocmds-25.10} with the debug log, failing \texttt{GetParam()},
+and the diff. Keep building from your fork until AMD merges.
+
+\paragraph{5e. Record in \texttt{ann-harness-amd}.} Append to the lab log and update
+Section~\ref{sec:layer1-measured} when done:
 
 \begin{verbatim}
 Layer 1.5 — amd-rx7900xtx — YYYY-MM-DD
-Fork: github.com/<org>/hipVS @ <commit>
-Fix: <one-line summary, e.g. tail-group mask for kIndexGroupSize=32>
+Fork: https://github.com/konkolchin/hipVS @ <full-commit-hash>
+Branch: gfx1100-ivf-packer-fix
+Fix: <one line, e.g. tail-group mask for kIndexGroupSize=32>
+First failure: label=17 list_size=142 dim=16 mask_true=2288 expected=2272
 NEIGHBORS_ANN_IVF_FLAT_TEST float: 98/98 PASS
-BRUTEFORCE_C_TEST: still PASS
+BRUTEFORCE_C_TEST: PASS
+Logs: ~/rocmds_check_gfx1100/packer_debug_float.log
+       ~/rocmds_check_gfx1100/packer_float_fixed.log
 \end{verbatim}
+
+Reinstall into \texttt{\$INSTALL\_PREFIX} if you changed \texttt{libcuvs.so} after the last
+\texttt{build.sh install} step, then pin this commit for Layer~2 Knowhere builds.
+
+\subsection{Step 6 --- Layer~1.5 pass criteria}
+
+\begin{itemize}[leftmargin=*]
+  \item Fork pushed; commit hash recorded.
+  \item \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float: \textbf{98/98 PASS}, exit code~0.
+  \item \texttt{BRUTEFORCE\_C\_TEST}: still PASS.
+  \item \texttt{libcuvs.so} in \texttt{\$INSTALL\_PREFIX/lib} built from the fork commit.
+\end{itemize}
 
 Pin \texttt{INSTALL\_PREFIX/lib/libcuvs.so} to the fork build before Layer~2 Knowhere links against
 hipVS.
