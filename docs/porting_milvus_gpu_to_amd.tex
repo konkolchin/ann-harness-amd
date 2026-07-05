@@ -28,8 +28,9 @@ AMD hipVS/hipRAFT in the Milvus/Knowhere GPU path. It complements the CPU benchm
 runbook (\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU results on
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
-Layer~1 build completed on the 7900 XTX lab host (ROCm~7.0.2, July~2026); Layer~1.5 tracks
-a fork fix for the IVF packer layout bug on \texttt{gfx1100}.
+Layer~1 build completed on the 7900 XTX lab host (ROCm~7.0.2, July~2026). Layer~1.5
+(custom \texttt{kIndexGroupSize} patch for \texttt{gfx1100}) completed 2026-07-05 with
+\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float 98/98 pass.
 \end{abstract}
 
 \tableofcontents
@@ -93,7 +94,7 @@ current layer passes.
 \textbf{Layer} & \textbf{Name} & \textbf{Pass criterion (summary)} \\
 \midrule
 0 & ROCm + host sanity & GPU visible in \texttt{rocminfo}; Milvus CPU stack healthy \\
-1 & hipRAFT / hipVS alone & Libraries build; \texttt{BRUTEFORCE\_C\_TEST} on GPU; IVF gtests green or Layer~1.5 fork fix \\
+1 & hipRAFT / hipVS alone & Libraries build; \texttt{BRUTEFORCE\_C\_TEST} + float IVF gtests green on gfx1100 \\
 2 & Knowhere + HIP & Knowhere unit tests for one GPU index (e.g.\ \texttt{GPU\_IVF\_FLAT}) \\
 3 & Milvus source + GPU & Standalone \texttt{create\_index}/\texttt{search} on GPU index type \\
 4 & Harness benchmarks & Same SIFT-1M / \texttt{nprobe} grid: recall + QPS vs CPU baselines \\
@@ -229,7 +230,7 @@ ROCm installed (\texttt{7.0.2}) & Done \\
 Milvus Standalone Docker healthy & Done \\
 CPU FAISS + VDBBench IVF baselines (runbook Tables~5--6) & Done \\
 hipVS / hipRAFT built (\texttt{release/rocmds-25.10}) & Done (2026-07-03) \\
-IVF packer fix (Layer~1.5 fork) & In progress \\
+IVF packer fix (Layer~1.5) & Done (2026-07-05) \\
 Knowhere HIP fork & Not started \\
 Milvus GPU source build & Not started \\
 \bottomrule
@@ -256,7 +257,8 @@ returns sensible neighbors.
         \texttt{not supported with warp size 64 (gfx1100)}. This path is \textbf{experimental}
         in upstream cuco.
   \item Official hipVS docs list \textbf{Instinct GPUs only} (\texttt{gfx90a}/\texttt{gfx942});
-        \texttt{gfx1100} is community/experimental. Expect gtest gaps even when search works.
+        \texttt{gfx1100} is community/experimental. Stock \texttt{release/rocmds-25.10} fails IVF
+        packer gtests until \texttt{kIndexGroupSize=32} patch (Layer~1.5, Section~\ref{sec:layer15-measured}).
   \item First build downloads dependencies via ROCmDS-cmake and can take \textbf{1--3+ hours} and
         \textbf{10--30\,GB} disk under \texttt{\textasciitilde{}rocmds\_check\_gfx1100/}.
 \end{itemize}
@@ -557,10 +559,9 @@ Build flags & \texttt{USE\_WARPSIZE\_32=ON}, \texttt{--gpu-arch=gfx1100} \\
 \end{table}
 
 \textbf{Layer~1 baseline (2026-07-03):} hipRAFT + hipVS build; \texttt{BRUTEFORCE\_C\_TEST}
-green; \texttt{rocm-smi} shows GPU activity. \textbf{Layer~1.5 target:} fork hipVS, fix IVF
-packer/mask layout on \texttt{gfx1100}, \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} 98/98 green
-(Section~\ref{sec:layer15-packer-fix}). Then proceed to Layer~2 with \textbf{float}
-\texttt{GPU\_IVF\_FLAT} and SIFT recall checks.
+green. Stock hipVS float IVF gtest: 97/98 packer fail (recall often 1.0). \textbf{Layer~1.5
+(2026-07-05):} patches \texttt{0001} (debug) + \texttt{0002} (\texttt{kIndexGroupSize=32});
+98/98 pass---see Section~\ref{sec:layer15-measured}. Proceed to Layer~2.
 
 \subsection{Troubleshooting}
 
@@ -599,9 +600,8 @@ On \textbf{Instinct} (\texttt{gfx90a}/\texttt{gfx942}), upstream expects both gt
 \begin{itemize}[leftmargin=*]
   \item \textbf{Layer~1 (minimum):} hipRAFT \texttt{libraft.so} and hipVS \texttt{libcuvs.so} build
         with ROCm~$\geq$7.0.2; \texttt{BRUTEFORCE\_C\_TEST} exits~0.
-  \item \textbf{Layer~1.5 (project target):} \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} exits~0 on
-        float (and ideally uint8) after a fork fix to IVF interleaved pack/mask logic
-        (Section~\ref{sec:layer15-packer-fix}).
+  \item \textbf{Layer~1.5 (achieved 2026-07-05):} \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float
+        98/98 pass after \texttt{0002} patch (Section~\ref{sec:layer15-measured}).
   \item \texttt{rocm-smi} shows VRAM activity during tests.
   \item Record branch, fork commit, ROCm version, build flags, log paths (Table in
         Section~\ref{sec:layer1-measured}).
@@ -629,26 +629,18 @@ before Knowhere/Milvus integration.
 \textbf{Pass:} \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} exits~0 on \texttt{gfx1100} (float suite
 required; uint8 suite desirable). Record fork URL, commit hash, and log path in the runbook.
 
-\subsection{Root-cause hypothesis}
+\subsection{Root-cause hypothesis (confirmed 2026-07-05)}
 
 In hipVS \texttt{ivf\_flat.hpp}, interleaved cluster groups use
-\texttt{kIndexGroupSize = raft::warp\_size()}. With \texttt{USE\_WARPSIZE\_32=ON} on RDNA3 that
-is \textbf{32}; Instinct CI often runs warp~64. The gtest \texttt{testPacker()} builds a boolean
-\texttt{mask} over the padded interleaved buffer and asserts
-\texttt{thrust::reduce(mask) == list\_size * dim}. Failures with recall~1.0 mean search works but
-the mask formula and/or \texttt{helpers::codepacker::pack} layout disagree for some
-\texttt{(list\_size, dim, veclen)} tuples on warp-32.
+\texttt{kIndexGroupSize = raft::warp\_size()}. With \texttt{USE\_WARPSIZE\_32=ON} and
+\texttt{--gpu-arch=gfx1100}, CUCO compiles for warp~32 but \texttt{raft::warp\_size()} still
+resolved to \textbf{64} in headers---so \texttt{kIndexGroupSize=64} at runtime while packer
+layout expected warp-32 grouping. Symptom: \texttt{mask\_true = 2 $\times$ expected} on case
+\texttt{/0} (\texttt{list\_size=13}, \texttt{dim=1}); recall remained \textbf{1.0}.
 
-Likely fix locations (in order):
-\begin{enumerate}[leftmargin=*]
-  \item \texttt{cpp/tests/neighbors/ann\_ivf\_flat.cuh} --- mask lambda in \texttt{testPacker()}
-        (if production \texttt{codepacker} is correct).
-  \item \texttt{cpp/src/neighbors/ivf\_flat/ivf\_flat\_helpers.cuh} ---
-        \texttt{helpers::codepacker::pack\_1} / \texttt{unpack\_1} interleaving for partial tail
-        groups when \texttt{kIndexGroupSize=32}.
-  \item \texttt{ivf\_flat::extend} / \texttt{recompute\_internal\_state} --- if manual pack matches
-        extend layout only on Instinct.
-\end{enumerate}
+\textbf{Fix (in-repo):} \texttt{patches/hipvs/0002-ivf-kIndexGroupSize-warp32-gfx1100.patch}
+sets \texttt{kIndexGroupSize=32} when \texttt{CUCO\_USE\_WARPSIZE\_32} is defined. Apply via
+\texttt{scripts/apply\_hipvs\_layer15\_patches.sh}.
 
 \subsection{Step 1 --- Fork hipVS on GitHub and clone on the lab host}
 
@@ -887,7 +879,7 @@ $GTEST/BRUTEFORCE_C_TEST
 echo "BRUTEFORCE exit: $?"
 \end{verbatim}
 
-\paragraph{5d. Commit and push the fork.}
+\paragraph{5e. Commit and push the fork.}
 
 \begin{verbatim}
 cd ~/rocmds_check_gfx1100/hipVS
@@ -903,19 +895,18 @@ Optional upstream PR: open from \texttt{konkolchin/hipVS:gfx1100-ivf-packer-fix}
 \texttt{ROCm-DS/hipVS:release/rocmds-25.10} with the debug log, failing \texttt{GetParam()},
 and the diff. Keep building from your fork until AMD merges.
 
-\paragraph{5e. Record in \texttt{ann-harness-amd}.} Append to the lab log and update
+\paragraph{5f. Record in \texttt{ann-harness-amd}.} Append to the lab log and update
 Section~\ref{sec:layer1-measured} when done:
 
 \begin{verbatim}
-Layer 1.5 — amd-rx7900xtx — YYYY-MM-DD
-Fork: https://github.com/konkolchin/hipVS @ <full-commit-hash>
-Branch: gfx1100-ivf-packer-fix
-Fix: <one line, e.g. tail-group mask for kIndexGroupSize=32>
-First failure: label=17 list_size=142 dim=16 mask_true=2288 expected=2272
-NEIGHBORS_ANN_IVF_FLAT_TEST float: 98/98 PASS
+Layer 1.5 — amd-rx7900xtx — 2026-07-05
+Patches: ann-harness-amd patches/hipvs/0001 + 0002 (apply_hipvs_layer15_patches.sh)
+Fix: kIndexGroupSize=32 when CUCO_USE_WARPSIZE_32 (ivf_flat.hpp)
+Before: kIndexGroupSize=64; case /0 mask_true=26 expected=13
+NEIGHBORS_ANN_IVF_FLAT_TEST float: 98/98 PASS (~85s)
 BRUTEFORCE_C_TEST: PASS
-Logs: ~/rocmds_check_gfx1100/packer_debug_float.log
-       ~/rocmds_check_gfx1100/packer_float_fixed.log
+Logs: ~/rocmds_check_gfx1100/packer_float_fixed.log
+       ~/rocmds_check_gfx1100/packer_case_0_fixed.log
 \end{verbatim}
 
 Reinstall into \texttt{\$INSTALL\_PREFIX} if you changed \texttt{libcuvs.so} after the last
@@ -930,8 +921,31 @@ Reinstall into \texttt{\$INSTALL\_PREFIX} if you changed \texttt{libcuvs.so} aft
   \item \texttt{libcuvs.so} in \texttt{\$INSTALL\_PREFIX/lib} built from the fork commit.
 \end{itemize}
 
-Pin \texttt{INSTALL\_PREFIX/lib/libcuvs.so} to the fork build before Layer~2 Knowhere links against
+Pin \texttt{INSTALL\_PREFIX/lib/libcuvs.so} to the patched build before Layer~2 Knowhere links against
 hipVS.
+
+\subsection{Layer~1.5 measured results (\texttt{amd-rx7900xtx}, 2026-07-05)}
+\label{sec:layer15-measured}
+
+\begin{table}[h]
+\centering
+\caption{Layer~1.5 outcomes after \texttt{kIndexGroupSize} patch on RX 7900 XTX}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Item} & \textbf{Result} \\
+\midrule
+Patches & \texttt{ann-harness-amd} \texttt{patches/hipvs/0001} + \texttt{0002} \\
+Apply script & \texttt{scripts/apply\_hipvs\_layer15\_patches.sh} \\
+Fix & \texttt{kIndexGroupSize=32} when \texttt{CUCO\_USE\_WARPSIZE\_32} (\texttt{ivf\_flat.hpp}) \\
+Build & \texttt{USE\_WARPSIZE\_32=ON}, \texttt{BUILD\_CAGRA\_HNSWLIB=OFF}, \texttt{--gpu-arch=gfx1100} \\
+Before fix & \texttt{kIndexGroupSize=64}; case \texttt{/0}: \texttt{mask\_true=26}, \texttt{expected=13} \\
+\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} (float) & \textbf{98/98 PASS}; exit 0; $\sim$85\,s \\
+Case \texttt{/0} & \textbf{PASS}; recall 1.0 \\
+\texttt{BRUTEFORCE\_C\_TEST} & \textbf{PASS} (unchanged) \\
+Logs & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/packer\_float\_fixed.log} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Layer 2 --- Knowhere with HIP backend}
 
@@ -1070,9 +1084,9 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 \begin{itemize}[leftmargin=*]
   \item \textbf{hipVS is early} (e.g.\ v0.1.x)---expect gaps vs cuVS; start with
         \textbf{float} \texttt{GPU\_IVF\_FLAT} or GPU brute force, not every index at once.
-  \item \textbf{RDNA3 IVF packer bug}---\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} packer asserts fail on
-        stock \texttt{gfx1100} builds even at recall~1.0; fix in a project hipVS fork (Layer~1.5,
-        Section~\ref{sec:layer15-packer-fix}), not by weakening gtests.
+  \item \textbf{RDNA3 IVF packer bug (fixed Layer~1.5)}---stock \texttt{release/rocmds-25.10} used
+        \texttt{kIndexGroupSize=64} despite \texttt{USE\_WARPSIZE\_32}; patch \texttt{0002} in
+        \texttt{ann-harness-amd} restores 98/98 float gtests on \texttt{gfx1100}.
   \item \textbf{API compatibility $\neq$ drop-in binary}---Milvus/Knowhere still need
         build-system and wrapper changes.
   \item \textbf{CPU baseline stays essential}---GPU work asks whether the hipVS path improves
@@ -1085,10 +1099,8 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 \section{Immediate next steps (lab host)}
 
 \begin{enumerate}[leftmargin=*]
-  \item Layer~0--1: complete on \texttt{amd-rx7900xtx} (ROCm~7.0.2, \texttt{libcuvs.so},
-        \texttt{BRUTEFORCE\_C\_TEST} pass).
-  \item Layer~1.5: fork hipVS; apply \texttt{patches/hipvs/0001-ivf-packer-debug-instrumentation.patch};
-        fix packer/mask; \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} 98/98 green.
+  \item Layer~0--1.5: complete on \texttt{amd-rx7900xtx} (ROCm~7.0.2, patched \texttt{libcuvs.so},
+        \texttt{BRUTEFORCE\_C\_TEST} + IVF float gtests 98/98; Section~\ref{sec:layer15-measured}).
   \item Layer~2: Knowhere \texttt{GPU\_IVF\_FLAT} + \textbf{float} vectors; recall vs CPU IVF
         on 10k SIFT slice before Milvus.
   \item Layer~3--4: Milvus GPU Standalone, then harness \texttt{nprobe} sweep vs runbook
