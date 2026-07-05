@@ -576,7 +576,7 @@ cmake $<$ 3.31 & \texttt{pip install 'cmake>=3.31'}; verify \texttt{\textasciiti
 Missing hipBLAS/hipSPARSE & \texttt{sudo apt install rocm-dev rocm-hip-sdk} \\
 \texttt{no member named 'DeviceFor' in hipcub} & Upgrade to ROCm~$\geq$7.0.2; verify \texttt{device\_for.hpp} \\
 \texttt{amdgpu dkms failed} / \texttt{dkms: command not found} & \texttt{apt install dkms linux-headers-\$(uname -r)}; re-run \texttt{amdgpu-install} \\
-IVF gtest FAIL but Recall = 1.0 & Packer layout bug on gfx1100---Layer~1.5 fork fix; Section~\ref{sec:layer15-packer-fix} \\
+IVF gtest FAIL but Recall = 1.0 & Packer layout bug on gfx1100---apply patch \texttt{0002}; Section~\ref{sec:layer15-measured} \\
 \texttt{github.com//rocThrust/} clone fail (ROCm 6.4) & Patch \texttt{versions.json} rocThrust to \texttt{3.3.0}; export \texttt{RAPIDS\_CMAKE\_ROCM\_ORG=ROCm} \\
 \texttt{We-always-use-find\_package-for-rocthrust} & On ROCm~7: revert patch to \texttt{4.0.0}; install \texttt{rocthrust-dev}; set \texttt{rocthrust\_DIR}; wipe \texttt{\_deps} \\
 \texttt{not supported with warp size 64 (gfx1100)} & Pass \texttt{'--cmake-args=\"-DUSE\_WARPSIZE\_32=ON\"'} before \texttt{--gpu-arch}; experimental RDNA3 path \\
@@ -1063,7 +1063,7 @@ Recommended flow:
 \begin{enumerate}[leftmargin=*]
   \item Layer~0: ROCm + Milvus CPU healthy on \texttt{amd-rx7900xtx}.
   \item Layer~1: hipVS/hipRAFT standalone on \texttt{gfx1100} (Section~\ref{sec:layer1-measured}).
-  \item Layer~1.5: IVF packer fork fix; gtests green (Section~\ref{sec:layer15-packer-fix}).
+  \item Layer~1.5: \texttt{kIndexGroupSize} patch; IVF gtests 98/98 (Section~\ref{sec:layer15-measured}).
   \item Layer~2: Knowhere fork + HIP link; one index type.
   \item Layer~3: Milvus source build; Standalone GPU search smoke test.
   \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Tables~5--6.
