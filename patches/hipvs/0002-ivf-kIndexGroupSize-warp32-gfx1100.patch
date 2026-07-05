@@ -1,0 +1,16 @@
+diff --git a/cpp/include/cuvs/neighbors/ivf_flat.hpp b/cpp/include/cuvs/neighbors/ivf_flat.hpp
+index b095c09..081f63d 100644
+--- a/cpp/include/cuvs/neighbors/ivf_flat.hpp
++++ b/cpp/include/cuvs/neighbors/ivf_flat.hpp
+@@ -48,7 +48,11 @@ namespace cuvs::neighbors::ivf_flat {
+  */
+ 
+ /** Size of the interleaved group (see `index::data` description). */
++#if defined(CUCO_USE_WARPSIZE_32) && CUCO_USE_WARPSIZE_32
++constexpr static uint32_t kIndexGroupSize = 32;
++#else
+ constexpr static uint32_t kIndexGroupSize = raft::warp_size();
++#endif
+ 
+ struct index_params : cuvs::neighbors::index_params {
+   /** The number of inverted lists (clusters) */

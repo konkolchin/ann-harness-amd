@@ -584,6 +584,8 @@ IVF gtest FAIL but Recall = 1.0 & Packer layout bug on gfx1100---Layer~1.5 fork 
 HIP arch error / no kernel for GPU & Explicit \texttt{--gpu-arch="gfx1100"}; avoid \texttt{--allgpuarch} first \\
 Segfault on RDNA3 & Reboot GPU (\texttt{sudo reboot}); retry; consider ROCm version pin per hipVS branch \\
 OOM during build & Lower \texttt{PARALLEL\_LEVEL=8}; free disk; close Milvus if VRAM tight \\
+\texttt{hnsw.cpp} / \texttt{AVX512Capable} & Stale Instinct cache or HNSW enabled; \texttt{./build.sh clean}; \texttt{rm -rf cpp/build}; add \texttt{-DBUILD\_CAGRA\_HNSWLIB=OFF}; \texttt{--gpu-arch=gfx1100} \\
+\texttt{--offload-arch=gfx908} in compile line & Wipe \texttt{cpp/build}; reconfigure with \texttt{--gpu-arch=\"gfx1100\"} last \\
 ROCm 6.4 vs docs 7.0.2 & Upgrade ROCm to match hipVS branch notes, or pass issue with build log \\
 \bottomrule
 \end{tabular}
@@ -673,20 +675,25 @@ git checkout -b gfx1100-ivf-packer-fix
 If you already built from \texttt{ROCm-DS/hipVS} under \texttt{hipVS/}, add your fork as
 \texttt{origin} and push the branch there instead of re-cloning.
 
-\subsection{Step 2 --- Apply debug patch from \texttt{ann-harness-amd}}
+\subsection{Step 2 --- Apply Layer~1.5 patches from \texttt{ann-harness-amd}}
+
+Patches live in this repo (no manual hipVS fork editing on the lab host unless you prefer it).
+After \texttt{git pull} on \texttt{ann-harness-amd}, apply both patches to your hipVS tree:
 
 \begin{verbatim}
 cd ~/ann-harness-amd && git pull
-bash scripts/apply_hipvs_packer_debug_patch.sh ~/rocmds_check_gfx1100/hipVS
-# patch: patches/hipvs/0001-ivf-packer-debug-instrumentation.patch
+bash scripts/apply_hipvs_layer15_patches.sh ~/rocmds_check_gfx1100/hipVS
+# 0001: testPacker debug prints (mask_true vs expected)
+# 0002: kIndexGroupSize=32 when CUCO_USE_WARPSIZE_32 (gfx1100 fix)
 \end{verbatim}
 
-Commit the debug instrumentation on your fork branch (optional but keeps the tree reproducible):
+Optional: commit on hipVS branch \texttt{gfx1100-ivf-packer-fix}:
 
 \begin{verbatim}
 cd ~/rocmds_check_gfx1100/hipVS
-git add cpp/tests/neighbors/ann_ivf_flat.cuh
-git commit -m "debug: print testPacker mask_true vs expected on gfx1100"
+git checkout -b gfx1100-ivf-packer-fix 2>/dev/null || git checkout gfx1100-ivf-packer-fix
+git add cpp/include/cuvs/neighbors/ivf_flat.hpp cpp/tests/neighbors/ann_ivf_flat.cuh
+git commit -m "fix(ivf_flat): warp-32 kIndexGroupSize on gfx1100; packer debug"
 \end{verbatim}
 
 \subsection{Step 4 --- Rebuild, run gtest, and capture the first mismatch}
@@ -817,8 +824,14 @@ Watch GPU activity in a second terminal: \texttt{watch -n1 rocm-smi}.
 Work on branch \texttt{gfx1100-ivf-packer-fix}. \textbf{Do not} disable the assert or lower recall
 \texttt{eps}.
 
-\paragraph{5a. Compare test mask vs production packer.} Open these side by side for the failing
-\texttt{(list\_size, dim, veclen)} from Step~4:
+\paragraph{5a. Fix (in \texttt{ann-harness-amd} patches).} Step~4 showed \texttt{kIndexGroupSize=64}
+despite \texttt{USE\_WARPSIZE\_32=ON}. Patch \texttt{0002-ivf-kIndexGroupSize-warp32-gfx1100.patch}
+sets \texttt{kIndexGroupSize=32} when \texttt{CUCO\_USE\_WARPSIZE\_32} is defined (applied via
+\texttt{scripts/apply\_hipvs\_layer15\_patches.sh}). If case \texttt{/0} still fails after
+clean-rebuild, compare mask vs \texttt{pack\_1} as below.
+
+\paragraph{5b. Compare test mask vs production packer (if still failing).} Open these side by side
+for the failing \texttt{(list\_size, dim, veclen)} from Step~4:
 
 \begin{itemize}[leftmargin=*]
   \item \texttt{cpp/tests/neighbors/ann\_ivf\_flat.cuh} --- \texttt{testPacker()} mask lambda
@@ -832,18 +845,8 @@ The test mask uses \texttt{surplus / chunk\_size} and \texttt{interleaved\_group
 (\texttt{list\_size} not a multiple of \texttt{kIndexGroupSize}), those formulas must agree on
 which of the \texttt{n\_elems} slots hold real data.
 
-\paragraph{5b. Edit and rebuild loop.} Typical fix locations (try in order):
-
-\begin{enumerate}[leftmargin=*]
-  \item Correct the mask lambda in \texttt{ann\_ivf\_flat.cuh} if \texttt{pack\_1} and
-        \texttt{extend} already match on Instinct logic.
-  \item Correct \texttt{pack\_1}/\texttt{unpack\_1} in \texttt{ivf\_flat\_helpers.cuh} if the
-        production layout is wrong on warp-32 tail groups.
-  \item Inspect \texttt{ivf\_flat::extend} only if manual \texttt{codepacker::pack} matches the
-        fixed helper but \texttt{devArrMatch} against \texttt{extend\_index} still fails.
-\end{enumerate}
-
-After each edit, rebuild and re-run \textbf{one} case:
+\paragraph{5c. Rebuild and verify loop.} After \texttt{apply\_hipvs\_layer15\_patches.sh}, clean-rebuild
+and re-run case \texttt{/0}, then the full float filter:
 
 \begin{verbatim}
 cd $WORKDIR/hipVS
@@ -862,7 +865,7 @@ $GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
 \texttt{ann\_ivf\_flat.cuh:376}; optional second assert (\texttt{devArrMatch} packed vs extend)
 also passes.
 
-\paragraph{5c. Full float suite, then uint8.}
+\paragraph{5d. Full float suite, then uint8.}
 
 \begin{verbatim}
 $GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
