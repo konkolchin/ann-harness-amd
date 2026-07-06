@@ -10,7 +10,13 @@ ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 
 export INSTALL_PREFIX
 export ROCM_PATH HIP_PATH="${HIP_PATH:-${ROCM_PATH}}"
-export PATH="${HOME}/.local/bin:${PATH}"
+export PATH="${ROCM_PATH}/llvm/bin:${HOME}/.local/bin:${PATH}"
+
+if ! command -v clang++ >/dev/null 2>&1; then
+  echo "ERROR: clang++ not found (required for ROCm HIP host compile)." >&2
+  echo "  Install rocm-dev and ensure ${ROCM_PATH}/llvm/bin is on PATH." >&2
+  exit 1
+fi
 
 if ! grep -q 'Early WITH_HIP before project' "${KNOWHERE_DIR}/CMakeLists.txt" 2>/dev/null; then
   echo "ERROR: Layer 2 patches not applied under ${KNOWHERE_DIR}" >&2
