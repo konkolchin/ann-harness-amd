@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 # Apply Layer 2 Knowhere patches (HIP CMake + GPU device shim).
-# Usage: bash scripts/apply_knowhere_layer2_patches.sh [path/to/knowhere]
+#
+# Usage:
+#   bash scripts/apply_knowhere_layer2_patches.sh [path/to/knowhere]
+#   bash scripts/apply_knowhere_layer2_patches.sh --no-reset [path/to/knowhere]
+#
+# By default the script hard-resets knowhere to branch 2.5 and removes untracked
+# files left by prior patch attempts (git checkout -- . is NOT enough).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-KNOWHERE_DIR="${1:-${HOME}/rocmds_check_gfx1100/knowhere}"
 PATCH_DIR="${REPO_ROOT}/patches/knowhere"
+DO_RESET=1
+KNOWHERE_DIR=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --no-reset) DO_RESET=0 ;;
+    --reset) DO_RESET=1 ;;
+    -*) echo "Unknown option: $arg" >&2; exit 1 ;;
+    *) KNOWHERE_DIR="$arg" ;;
+  esac
+done
+KNOWHERE_DIR="${KNOWHERE_DIR:-${HOME}/rocmds_check_gfx1100/knowhere}"
 
 apply_patch() {
   local patch="$1"
@@ -23,30 +40,75 @@ apply_patch() {
     return 0
   fi
 
-  echo "ERROR: cannot apply ${name} (tree is not clean 2.5 + prior patches)." >&2
-  echo "  cd ${KNOWHERE_DIR} && git checkout -- . && bash $0 ${KNOWHERE_DIR}" >&2
+  echo "ERROR: cannot apply ${name}." >&2
+  echo "  Re-run without --no-reset to hard-reset knowhere to branch 2.5." >&2
   exit 1
+}
+
+verify_patches() {
+  local ok=1
+  if ! grep -q 'libhipcuvs_preproject.cmake' CMakeLists.txt; then
+    echo "VERIFY FAIL: CMakeLists.txt missing libhipcuvs_preproject include" >&2
+    ok=0
+  fi
+  if ! grep -q 'Early WITH_HIP/WITH_CUVS before project' CMakeLists.txt; then
+    echo "VERIFY FAIL: CMakeLists.txt missing patch 0009 early WITH_HIP block" >&2
+    ok=0
+  fi
+  for f in cmake/libs/libhipcuvs.cmake \
+           cmake/libs/libhipcuvs_preproject.cmake \
+           cmake/libs/knowhere_hip_host_fixup.cmake; do
+    if [ ! -f "$f" ]; then
+      echo "VERIFY FAIL: missing $f" >&2
+      ok=0
+    fi
+  done
+  if [ "$ok" -eq 0 ]; then
+    exit 1
+  fi
+  echo "VERIFY OK: all Layer 2 patch markers present"
 }
 
 if [ ! -d "${KNOWHERE_DIR}/.git" ]; then
   echo "knowhere git checkout not found: ${KNOWHERE_DIR}" >&2
+  echo "  git clone -b 2.5 --depth 1 https://github.com/zilliztech/knowhere.git ${KNOWHERE_DIR}" >&2
   exit 1
 fi
 
 cd "${KNOWHERE_DIR}"
-apply_patch "${PATCH_DIR}/0001-cmake-with-hip-prebuilt-hipvs.patch"
-apply_patch "${PATCH_DIR}/0002-gpu-device-count-hip-shim.patch"
-apply_patch "${PATCH_DIR}/0003-libhipcuvs-find-rocm-hip.patch"
-apply_patch "${PATCH_DIR}/0004-strip-hip-offload-host-cxx.patch"
-apply_patch "${PATCH_DIR}/0005-host-cxx-no-offload-arch.patch"
-apply_patch "${PATCH_DIR}/0006-gxx-wrapper-strip-offload-arch.patch"
-apply_patch "${PATCH_DIR}/0007-preproject-cxx-wrapper-and-launch-filter.patch"
-apply_patch "${PATCH_DIR}/0008-add-libhipcuvs-preproject.cmake.patch"
-apply_patch "${PATCH_DIR}/0009-early-with-hip-auto-detect.patch"
+
+if [ "$DO_RESET" -eq 1 ]; then
+  echo "Resetting ${KNOWHERE_DIR} to clean upstream knowhere branch 2.5..."
+  git fetch origin 2>/dev/null || true
+  if git show-ref --verify --quiet refs/heads/2.5; then
+    git checkout 2.5
+  elif git show-ref --verify --quiet refs/remotes/origin/2.5; then
+    git checkout -B 2.5 origin/2.5
+  else
+    echo "ERROR: branch 2.5 not found in ${KNOWHERE_DIR}" >&2
+    exit 1
+  fi
+  if git show-ref --verify --quiet refs/remotes/origin/2.5; then
+    git reset --hard origin/2.5
+  else
+    git reset --hard HEAD
+  fi
+  # Remove untracked patch artifacts (libhipcuvs.cmake etc.) that break git apply.
+  git clean -fd
+  echo "Reset complete: $(git log -1 --oneline)"
+fi
+
+for patch in "${PATCH_DIR}"/000*.patch; do
+  [ -f "$patch" ] || continue
+  apply_patch "$patch"
+done
+
+verify_patches
 
 echo ""
 echo "Layer 2 patches applied under ${KNOWHERE_DIR}"
 echo "Next:"
 echo "  export INSTALL_PREFIX=~/rocmds_check_gfx1100/install"
-echo "  cmake .. -DWITH_HIP=ON  (optional if INSTALL_PREFIX has hipVS; auto-detected by 0009)"
-echo "  See porting runbook Layer 2."
+echo "  cd ${KNOWHERE_DIR}/build && rm -f CMakeCache.txt && rm -rf CMakeFiles"
+echo "  cmake .. -DCMAKE_TOOLCHAIN_FILE=\$PWD/Release/generators/conan_toolchain.cmake \\"
+echo "    -DCMAKE_PREFIX_PATH=\"\$INSTALL_PREFIX;/opt/rocm\" -DCMAKE_BUILD_TYPE=Release"
