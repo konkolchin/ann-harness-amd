@@ -27,6 +27,7 @@ fi
 cd "${KNOWHERE_DIR}"
 apply_patch "${PATCH_DIR}/0001-cmake-with-hip-prebuilt-hipvs.patch"
 apply_patch "${PATCH_DIR}/0002-gpu-device-count-hip-shim.patch"
+apply_patch "${PATCH_DIR}/0003-libhipcuvs-find-rocm-hip.patch"
 
 echo ""
 echo "Layer 2 patches applied under ${KNOWHERE_DIR}"
