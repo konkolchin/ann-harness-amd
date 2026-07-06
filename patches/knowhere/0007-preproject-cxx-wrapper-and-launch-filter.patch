@@ -1,0 +1,41 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f63c6df..d676364 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -13,6 +13,9 @@
+ # the License
+ 
+ cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
++if(WITH_HIP)
++  include(cmake/libs/libhipcuvs_preproject.cmake)
++endif()
+ project(knowhere CXX C)
+ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0d5dbfc..0e6a248 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -40,3 +40,22 @@ if(TARGET knowhere)
+ endif()
+ 
+ message(STATUS "KNOWHERE WITH_HIP: host C++ build (no --offload-arch on g++)")
++
++set(_knowhere_strip_launcher "${CMAKE_BINARY_DIR}/knowhere-strip-offload.sh")
++file(WRITE "${_knowhere_strip_launcher}" "#!/usr/bin/env bash
++set -euo pipefail
++filtered=()
++for arg in \"\$@\"; do
++  case \"\$arg\" in
++    --offload-arch=*| -offload-arch=*) continue ;;
++  esac
++  filtered+=(\"\$arg\")
++done
++exec \"\${filtered[@]}\"
++")
++file(CHMOD "${_knowhere_strip_launcher}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
++if(TARGET knowhere)
++  set_property(TARGET knowhere PROPERTY RULE_LAUNCH_COMPILE "${_knowhere_strip_launcher}")
++endif()
++set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${_knowhere_strip_launcher}")
++message(STATUS "KNOWHERE WITH_HIP: RULE_LAUNCH_COMPILE=${_knowhere_strip_launcher}")
