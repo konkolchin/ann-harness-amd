@@ -44,6 +44,7 @@ apply_patch "${PATCH_DIR}/0004-strip-hip-offload-host-cxx.patch"
 apply_patch "${PATCH_DIR}/0005-host-cxx-no-offload-arch.patch"
 apply_patch "${PATCH_DIR}/0006-gxx-wrapper-strip-offload-arch.patch"
 apply_patch "${PATCH_DIR}/0007-preproject-cxx-wrapper-and-launch-filter.patch"
+apply_patch "${PATCH_DIR}/0008-add-libhipcuvs-preproject.cmake.patch"
 
 echo ""
 echo "Layer 2 patches applied under ${KNOWHERE_DIR}"
