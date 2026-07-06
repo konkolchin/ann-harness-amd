@@ -98,8 +98,11 @@ if [ "$DO_RESET" -eq 1 ]; then
   echo "Reset complete: $(git log -1 --oneline)"
 fi
 
-for patch in "${PATCH_DIR}"/000*.patch; do
-  [ -f "$patch" ] || continue
+shopt -s nullglob
+patches=( "${PATCH_DIR}"/[0-9]*.patch )
+IFS=$'\n' patches=( $(printf '%s\n' "${patches[@]}" | sort) )
+unset IFS
+for patch in "${patches[@]}"; do
   apply_patch "$patch"
 done
 
