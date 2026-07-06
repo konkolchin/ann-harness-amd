@@ -12,23 +12,20 @@ apply_patch() {
   local name
   name="$(basename "$patch")"
 
-  # Forward check: patch still needed
   if git apply --check "$patch" 2>/dev/null; then
     git apply "$patch"
     echo "Applied: ${name}"
     return 0
   fi
 
-  # Reverse check: patch already applied verbatim
   if git apply --reverse --check "$patch" 2>/dev/null; then
     echo "Already applied: ${name}"
     return 0
   fi
 
-  # Later patches may have modified the same files (e.g. 0003 edits libhipcuvs.cmake
-  # created by 0001). Treat as already applied so incremental runs can reach 0004.
-  echo "Already applied (or superseded): ${name}"
-  return 0
+  echo "ERROR: cannot apply ${name} (tree is not clean 2.5 + prior patches)." >&2
+  echo "  cd ${KNOWHERE_DIR} && git checkout -- . && bash $0 ${KNOWHERE_DIR}" >&2
+  exit 1
 }
 
 if [ ! -d "${KNOWHERE_DIR}/.git" ]; then
@@ -45,7 +42,11 @@ apply_patch "${PATCH_DIR}/0005-host-cxx-no-offload-arch.patch"
 apply_patch "${PATCH_DIR}/0006-gxx-wrapper-strip-offload-arch.patch"
 apply_patch "${PATCH_DIR}/0007-preproject-cxx-wrapper-and-launch-filter.patch"
 apply_patch "${PATCH_DIR}/0008-add-libhipcuvs-preproject.cmake.patch"
+apply_patch "${PATCH_DIR}/0009-early-with-hip-auto-detect.patch"
 
 echo ""
 echo "Layer 2 patches applied under ${KNOWHERE_DIR}"
-echo "Next: cmake with -DWITH_HIP=ON and INSTALL_PREFIX set (see porting runbook Layer 2)."
+echo "Next:"
+echo "  export INSTALL_PREFIX=~/rocmds_check_gfx1100/install"
+echo "  cmake .. -DWITH_HIP=ON  (optional if INSTALL_PREFIX has hipVS; auto-detected by 0009)"
+echo "  See porting runbook Layer 2."

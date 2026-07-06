@@ -1,0 +1,46 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0000000..1111111 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -13,10 +13,40 @@
+ # the License
+ 
+ cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
+-if(WITH_HIP)
++
++# Early WITH_HIP/WITH_CUVS before project(): Conan sets WITH_CUVS via toolchain;
++# decide HIP here so pre-project CXX wrapper runs and we never probe nvcc.
++if(NOT DEFINED WITH_CUVS)
++  set(WITH_CUVS OFF CACHE BOOL "Build with CUVS indexes")
++endif()
++if(NOT DEFINED WITH_HIP)
++  set(_knowhere_want_hip OFF)
++  if(DEFINED ENV{KNOWHERE_WITH_HIP} AND NOT "$ENV{KNOWHERE_WITH_HIP}" STREQUAL "0")
++    set(_knowhere_want_hip ON)
++  elseif(DEFINED ENV{INSTALL_PREFIX}
++         AND EXISTS "$ENV{INSTALL_PREFIX}/lib/cmake/cuvs/cuvs-config.cmake")
++    set(_knowhere_want_hip ON)
++  endif()
++  set(WITH_HIP ${_knowhere_want_hip} CACHE BOOL
++      "Link prebuilt hipVS/hipRAFT (ROCm) instead of CUDA cuVS")
++  unset(_knowhere_want_hip)
++endif()
++if(WITH_CUVS AND WITH_HIP)
+   include(cmake/libs/libhipcuvs_preproject.cmake)
++elseif(WITH_CUVS)
++  find_program(_knowhere_nvcc nvcc)
++  if(NOT _knowhere_nvcc)
++    message(FATAL_ERROR
++      "WITH_CUVS=ON but nvcc not found. For AMD ROCm / hipVS builds set\n"
++      "  export INSTALL_PREFIX=$HOME/rocmds_check_gfx1100/install\n"
++      "  cmake ... -DWITH_HIP=ON   (or export KNOWHERE_WITH_HIP=1)\n"
++      "See ann-harness-amd Layer 2 runbook.")
++  endif()
++  unset(_knowhere_nvcc)
+ endif()
++
+ project(knowhere CXX C)
++
+ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
+ include(GNUInstallDirs)
