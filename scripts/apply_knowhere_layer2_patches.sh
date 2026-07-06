@@ -11,12 +11,24 @@ apply_patch() {
   local patch="$1"
   local name
   name="$(basename "$patch")"
+
+  # Forward check: patch still needed
+  if git apply --check "$patch" 2>/dev/null; then
+    git apply "$patch"
+    echo "Applied: ${name}"
+    return 0
+  fi
+
+  # Reverse check: patch already applied verbatim
   if git apply --reverse --check "$patch" 2>/dev/null; then
     echo "Already applied: ${name}"
     return 0
   fi
-  git apply "$patch"
-  echo "Applied: ${name}"
+
+  # Later patches may have modified the same files (e.g. 0003 edits libhipcuvs.cmake
+  # created by 0001). Treat as already applied so incremental runs can reach 0004.
+  echo "Already applied (or superseded): ${name}"
+  return 0
 }
 
 if [ ! -d "${KNOWHERE_DIR}/.git" ]; then
