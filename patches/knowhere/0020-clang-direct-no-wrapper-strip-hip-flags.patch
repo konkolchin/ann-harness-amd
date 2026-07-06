@@ -1,0 +1,70 @@
+diff --git a/cmake/libs/libhipcuvs.cmake b/tmp/kh-p20work/cmake/libs/libhipcuvs.cmake
+index 2db2931..f3f0642 100644
+--- a/cmake/libs/libhipcuvs.cmake
++++ b/cmake/libs/libhipcuvs.cmake
+@@ -35,7 +35,7 @@ find_package(cuvs CONFIG REQUIRED)
+ set(CMAKE_CXX_COMPILER "${_knowhere_saved_cxx}" CACHE FILEPATH "Host C++ compiler" FORCE)
+ unset(_knowhere_saved_cxx)
+ 
+-# libcuvs.so is already device-built; host .cc files must compile with g++, not hipcc.
++# libcuvs.so is device-built; faiss uses plain clang++, knowhere adds -x hip per-target.
+ foreach(_knowhere_flag_var IN ITEMS CMAKE_CXX_FLAGS CMAKE_C_FLAGS
+     CMAKE_CXX_FLAGS_RELEASE CMAKE_C_FLAGS_RELEASE CMAKE_CXX_FLAGS_DEBUG
+     CMAKE_C_FLAGS_DEBUG)
+@@ -82,8 +82,12 @@ message(STATUS "KNOWHERE WITH_HIP: raft from ${raft_DIR}")
+ message(STATUS "KNOWHERE WITH_HIP: cuvs from ${cuvs_DIR}")
+ 
+ find_program(_knowhere_real_cxx NAMES clang++ g++ c++ REQUIRED)
+-set(_knowhere_gxx_wrapper "${CMAKE_BINARY_DIR}/knowhere-g++-host.sh")
+-file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
++if(_knowhere_real_cxx MATCHES "clang\\+\\+$")
++  set(CMAKE_CXX_COMPILER "${_knowhere_real_cxx}" CACHE FILEPATH "Knowhere HIP host compiler (clang++)" FORCE)
++  message(STATUS "KNOWHERE WITH_HIP: host C++ via ${_knowhere_real_cxx} (knowhere target adds -x hip)")
++else()
++  set(_knowhere_gxx_wrapper "${CMAKE_BINARY_DIR}/knowhere-g++-host.sh")
++  file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
+ set -euo pipefail
+ _real_cxx=\"${_knowhere_real_cxx}\"
+ args=()
+@@ -101,6 +105,8 @@ for arg in \"\$@\"; do
+ done
+ exec \"\${_real_cxx}\" \"\${args[@]}\"
+ ")
+-file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+-set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ via clang++/g++ (strips HIP flags)" FORCE)
+-message(STATUS "KNOWHERE WITH_HIP: host C++ via ${_knowhere_gxx_wrapper}")
++  file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
++  set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ via g++ (strips HIP flags)" FORCE)
++  message(STATUS "KNOWHERE WITH_HIP: host C++ via ${_knowhere_gxx_wrapper}")
++endif()
++unset(_knowhere_real_cxx)
+diff --git a/cmake/libs/libhipcuvs_preproject.cmake b/tmp/kh-p20work/cmake/libs/libhipcuvs_preproject.cmake
+index 148c20e..9d67a54 100644
+--- a/cmake/libs/libhipcuvs_preproject.cmake
++++ b/cmake/libs/libhipcuvs_preproject.cmake
+@@ -1,7 +1,11 @@
+ # Must run before project(): host g++ wrapper strips HIP-only flags.
+ find_program(_knowhere_real_cxx NAMES clang++ g++ c++ REQUIRED)
+-set(_knowhere_gxx_wrapper "${CMAKE_CURRENT_BINARY_DIR}/knowhere-g++-host.sh")
+-file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
++if(_knowhere_real_cxx MATCHES "clang\\+\\+$")
++  set(CMAKE_CXX_COMPILER "${_knowhere_real_cxx}" CACHE FILEPATH "Knowhere HIP host compiler (clang++)" FORCE)
++  message(STATUS "KNOWHERE WITH_HIP: pre-project CXX=${CMAKE_CXX_COMPILER}")
++else()
++  set(_knowhere_gxx_wrapper "${CMAKE_CURRENT_BINARY_DIR}/knowhere-g++-host.sh")
++  file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
+ set -euo pipefail
+ _real_cxx=\"${_knowhere_real_cxx}\"
+ args=()
+@@ -19,6 +23,8 @@ for arg in \"\$@\"; do
+ done
+ exec \"\${_real_cxx}\" \"\${args[@]}\"
+ ")
+-file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+-set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ via clang++/g++ (strips HIP flags)" FORCE)
+-message(STATUS "KNOWHERE WITH_HIP: pre-project CXX=${CMAKE_CXX_COMPILER}")
++  file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
++  set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ via g++ (strips HIP flags)" FORCE)
++  message(STATUS "KNOWHERE WITH_HIP: pre-project CXX=${CMAKE_CXX_COMPILER}")
++endif()
++unset(_knowhere_real_cxx)
