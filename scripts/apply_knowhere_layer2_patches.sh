@@ -42,6 +42,7 @@ apply_patch "${PATCH_DIR}/0002-gpu-device-count-hip-shim.patch"
 apply_patch "${PATCH_DIR}/0003-libhipcuvs-find-rocm-hip.patch"
 apply_patch "${PATCH_DIR}/0004-strip-hip-offload-host-cxx.patch"
 apply_patch "${PATCH_DIR}/0005-host-cxx-no-offload-arch.patch"
+apply_patch "${PATCH_DIR}/0006-gxx-wrapper-strip-offload-arch.patch"
 
 echo ""
 echo "Layer 2 patches applied under ${KNOWHERE_DIR}"
