@@ -1,0 +1,73 @@
+diff --git a/src/common/cuvs/integration/cuda_compat.hpp b/src/common/cuvs/integration/cuda_compat.hpp
+index 0000000..1111111 100644
+@@ -0,0 +1,32 @@
++/**
++ * CUDA runtime / fp16 headers for knowhere cuVS integration.
++ * On ROCm (KNOWHERE_WITH_HIP) map to HIP equivalents used by prebuilt hipRAFT/hipVS.
++ */
++#pragma once
++
++#ifdef KNOWHERE_WITH_HIP
++#include <hip/hip_runtime.h>
++
++#define cudaSuccess hipSuccess
++#define cudaErrorUnknown hipErrorUnknown
++typedef hipError_t cudaError_t;
++#define cudaGetDeviceCount hipGetDeviceCount
++#define cudaGetErrorString hipGetErrorString
++#define cudaSetDevice hipSetDevice
++#define cudaGetDevice hipGetDevice
++#define cudaDeviceSynchronize hipDeviceSynchronize
++#define cudaMalloc hipMalloc
++#define cudaFree hipFree
++#define cudaMemcpy hipMemcpy
++#define cudaMemcpyAsync hipMemcpyAsync
++#define cudaMemGetInfo hipMemGetInfo
++
++// Host .cc files compile with g++; only need a 16-bit storage name for templates.
++typedef struct {
++    unsigned short __x;
++} half;
++
++#else
++#include <cuda_runtime_api.h>
++#include <cuda_fp16.h>
++#endif
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0000000..1111111 100644
+@@ -77,3 +77,22 @@
+ endif()
+ set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${_knowhere_strip_launcher}")
+ message(STATUS "KNOWHERE WITH_HIP: RULE_LAUNCH_COMPILE=${_knowhere_strip_launcher}")
++
++if(DEFINED ENV{ROCM_PATH})
++  set(_knowhere_fixup_rocm "$ENV{ROCM_PATH}")
++elseif(DEFINED ENV{HIP_PATH})
++  set(_knowhere_fixup_rocm "$ENV{HIP_PATH}")
++elseif(EXISTS "/opt/rocm")
++  set(_knowhere_fixup_rocm "/opt/rocm")
++endif()
++if(TARGET knowhere AND _knowhere_fixup_rocm)
++  target_compile_definitions(knowhere PRIVATE
++    KNOWHERE_WITH_HIP
++    THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP
++    THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP)
++  if(EXISTS "${_knowhere_fixup_rocm}/include/hipcub")
++    target_include_directories(knowhere SYSTEM PRIVATE "${_knowhere_fixup_rocm}/include/hipcub")
++  endif()
++  message(STATUS "KNOWHERE WITH_HIP: Thrust/HIP + hipcub from ${_knowhere_fixup_rocm}")
++endif()
++unset(_knowhere_fixup_rocm)
+diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
+index 0000000..1111111 100644
+@@ -14,6 +14,10 @@
+   message(FATAL_ERROR "WITH_HIP: set ROCM_PATH or install ROCm under /opt/rocm")
+ endif()
+ list(PREPEND CMAKE_PREFIX_PATH "${_knowhere_rocm_prefix}")
++add_compile_definitions(THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP)
++add_compile_definitions(THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP)
++include_directories(SYSTEM "${_knowhere_rocm_prefix}/include/hipcub")
++
+ if(EXISTS "${_knowhere_rocm_prefix}/lib/cmake/hip")
+   set(hip_DIR "${_knowhere_rocm_prefix}/lib/cmake/hip" CACHE PATH "ROCm hip cmake dir")
+ endif()
