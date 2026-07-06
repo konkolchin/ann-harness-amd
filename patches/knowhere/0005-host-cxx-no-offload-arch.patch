@@ -13,6 +13,54 @@ index 9879a0d..f63c6df 100644
  install(TARGETS knowhere
          DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
  install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/knowhere"
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+new file mode 100644
+index 0000000..0d5dbfc
+--- /dev/null
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -0,0 +1,42 @@
++# Final pass: strip HIP --offload-arch from host C++ after all targets exist.
++
++function(knowhere_strip_offload_opts _in _out_var)
++  set(_out)
++  foreach(_item IN LISTS ${_in})
++    if(_item MATCHES "offload-arch")
++      continue()
++    endif()
++    list(APPEND _out "${_item}")
++  endforeach()
++  set(${_out_var} "${_out}" PARENT_SCOPE)
++endfunction()
++
++foreach(_flag_var IN ITEMS CMAKE_CXX_FLAGS CMAKE_C_FLAGS CMAKE_CXX_FLAGS_RELEASE
++    CMAKE_C_FLAGS_RELEASE CMAKE_CXX_FLAGS_DEBUG CMAKE_C_FLAGS_DEBUG)
++  if(DEFINED ${_flag_var})
++    set(_clean "${${_flag_var}}")
++    while(_clean MATCHES "(^| )-?-offload-arch=[^ ]+")
++      string(REGEX REPLACE "(^| )-?-offload-arch=[^ ]+" "\\1" _clean "${_clean}")
++      string(STRIP "${_clean}" _clean)
++    endwhile()
++    set(${_flag_var} "${_clean}" CACHE STRING "" FORCE)
++  endif()
++endforeach()
++
++get_property(_dir_opts DIRECTORY PROPERTY COMPILE_OPTIONS)
++if(_dir_opts)
++  knowhere_strip_offload_opts(_dir_opts _dir_clean)
++  set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "${_dir_clean}")
++endif()
++
++if(TARGET knowhere)
++  foreach(_prop COMPILE_OPTIONS INTERFACE_COMPILE_OPTIONS)
++    get_target_property(_opts knowhere ${_prop})
++    if(_opts)
++      knowhere_strip_offload_opts(_opts _opts_clean)
++      set_target_properties(knowhere PROPERTIES ${_prop} "${_opts_clean}")
++    endif()
++  endforeach()
++endif()
++
++message(STATUS "KNOWHERE WITH_HIP: host C++ build (no --offload-arch on g++)")
 diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
 index 69f4e42..7122e12 100644
 --- a/cmake/libs/libhipcuvs.cmake
