@@ -1,0 +1,79 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 76aaf95..b050fc0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -162,10 +162,10 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET
+     "10.15"
+     CACHE STRING "Minimum OS X deployment version" FORCE)
+ 
+-if(OPENMP_FOUND)
++if(OpenMP_FOUND)
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+-  set(CMAKE_EXE_LINKER_FLAGS
+-      "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
++  set(CMAKE_SHARED_LINKER_FLAGS
++      "${CMAKE_SHARED_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+ endif()
+ 
+ if(WITH_COVERAGE)
+diff --git a/cmake/libs/libfaiss.cmake b/cmake/libs/libfaiss.cmake
+index 98dbef4..e7d2a9a 100644
+--- a/cmake/libs/libfaiss.cmake
++++ b/cmake/libs/libfaiss.cmake
+@@ -203,7 +203,7 @@ if(__X86_64)
+             -Wno-unused-function
+             -Wno-strict-aliasing>)
+   target_link_libraries(
+-    faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
++    faiss PUBLIC ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
+                  faiss_avx2 faiss_avx512 knowhere_utils)
+   target_compile_definitions(faiss PRIVATE FINTEGER=int)
+ endif()
+@@ -225,7 +225,7 @@ if(__AARCH64)
+             -Wno-strict-aliasing>)
+ 
+   add_dependencies(faiss knowhere_utils)
+-  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
++  target_link_libraries(faiss PUBLIC ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
+                                      knowhere_utils)
+   target_compile_definitions(faiss PRIVATE FINTEGER=int)
+ endif()
+@@ -252,7 +252,7 @@ if(__RISCV64)
+             -Wno-strict-aliasing>)
+ 
+   add_dependencies(faiss knowhere_utils)
+-  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
++  target_link_libraries(faiss PUBLIC ${BLAS_LIBRARIES}
+                                      ${LAPACK_LIBRARIES} knowhere_utils)
+   target_compile_definitions(faiss PRIVATE FINTEGER=int)
+ endif()
+@@ -279,7 +279,11 @@ if(__PPC64)
+             -Wno-strict-aliasing>)
+ 
+   add_dependencies(faiss knowhere_utils)
+-  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
++  target_link_libraries(faiss PUBLIC ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
+                                       knowhere_utils)
+   target_compile_definitions(faiss PRIVATE FINTEGER=int)
+ endif()
++
++if(TARGET faiss AND OpenMP_CXX_FLAGS)
++  target_compile_options(faiss PRIVATE ${OpenMP_CXX_FLAGS})
++endif()
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index aeaf892..1317b76 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -53,6 +53,12 @@ elseif(EXISTS "/opt/rocm")
+   set(_knowhere_fixup_rocm "/opt/rocm")
+ endif()
+ if(TARGET knowhere AND _knowhere_fixup_rocm)
++
++  find_package(OpenMP REQUIRED)
++  if(OpenMP_CXX_FLAGS)
++    target_compile_options(knowhere PRIVATE "SHELL:${OpenMP_CXX_FLAGS}")
++    target_link_options(knowhere PUBLIC "SHELL:${OpenMP_CXX_FLAGS}")
++  endif()
+   target_compile_definitions(knowhere PRIVATE
+     KNOWHERE_WITH_HIP
+     THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP
