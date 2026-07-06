@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 1111111..2222222 100644
+index b365242..62224c7 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -22,12 +22,18 @@ include(cmake/utils/compile_flags.cmake)
+@@ -23,7 +23,10 @@ include(cmake/utils/compile_flags.cmake)
  include(cmake/utils/platform_check.cmake)
  
  knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
@@ -14,36 +14,27 @@ index 1111111..2222222 100644
    set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
    include(cmake/libs/librapids.cmake)
    project(knowhere CXX C CUDA)
-   include(cmake/libs/libcuvs.cmake)
- endif()
- 
- knowhere_option(WITH_UT "Build with UT test" OFF)
- knowhere_option(WITH_ASAN "Build with ASAN" OFF)
-@@ -199,12 +205,16 @@ add_library(knowhere SHARED ${KNOWHERE_SRCS})
- add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
- if(WITH_CUVS)
-   list(
+@@ -204,10 +207,10 @@ if(WITH_CUVS)
      APPEND
      KNOWHERE_LINKER_LIBS
      raft::raft
-     cuvs::cuvs
+-    cuvs::cuvs
 -    CUDA::cublas
 -    CUDA::cusparse
 -    CUDA::cusolver)
-+  )
++    cuvs::cuvs)
 +  if(NOT WITH_HIP)
-+    list(APPEND KNOWHERE_LINKER_LIBS CUDA::cublas CUDA::cusparse
-+                                    CUDA::cusolver)
++    list(APPEND KNOWHERE_LINKER_LIBS CUDA::cublas CUDA::cusparse CUDA::cusolver)
 +  endif()
  endif()
  target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
  target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
 new file mode 100644
-index 0000000..3333333
+index 0000000..7e429ce
 --- /dev/null
 +++ b/cmake/libs/libhipcuvs.cmake
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,17 @@
 +# Link prebuilt hipVS / hipRAFT (ROCm) instead of fetching cuVS via CPM + CUDAToolkit.
 +
 +add_definitions(-DKNOWHERE_WITH_CUVS)
