@@ -1,0 +1,153 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0000000..1111111 100644
+@@ -1,9 +1,18 @@
+-# Final pass: strip HIP --offload-arch from host C++ after all targets exist.
++# Final pass: strip HIP-only flags from host C++ after all targets exist.
+ 
+ function(knowhere_strip_offload_opts _in _out_var)
+   set(_out)
++  set(_skip_next FALSE)
+   foreach(_item IN LISTS ${_in})
+-    if(_item MATCHES "offload-arch")
++    if(_skip_next)
++      set(_skip_next FALSE)
++      continue()
++    endif()
++    if(_item STREQUAL "-x")
++      set(_skip_next TRUE)
++      continue()
++    endif()
++    if(_item MATCHES "offload-arch" OR _item STREQUAL "-xhip" OR _item STREQUAL "hip")
+       continue()
+     endif()
+     list(APPEND _out "${_item}")
+@@ -19,6 +28,9 @@
+       string(REGEX REPLACE "(^| )-?-offload-arch=[^ ]+" "\\1" _clean "${_clean}")
+       string(STRIP "${_clean}" _clean)
+     endwhile()
++    string(REGEX REPLACE " *-x hip" "" _clean "${_clean}")
++    string(REGEX REPLACE " *-xhip" "" _clean "${_clean}")
++    string(STRIP "${_clean}" _clean)
+     set(${_flag_var} "${_clean}" CACHE STRING "" FORCE)
+   endif()
+ endforeach()
+@@ -39,19 +51,25 @@
+   endforeach()
+ endif()
+ 
+-message(STATUS "KNOWHERE WITH_HIP: host C++ build (no --offload-arch on g++)")
++message(STATUS "KNOWHERE WITH_HIP: host C++ build (no HIP lang / --offload-arch on g++)")
+ 
+ set(_knowhere_strip_launcher "${CMAKE_BINARY_DIR}/knowhere-strip-offload.sh")
+ file(WRITE "${_knowhere_strip_launcher}" "#!/usr/bin/env bash
+ set -euo pipefail
+-filtered=()
++args=()
++skip=0
+ for arg in \"\$@\"; do
++  if [ \"\$skip\" -eq 1 ]; then
++    skip=0
++    continue
++  fi
+   case \"\$arg\" in
+-    --offload-arch=*| -offload-arch=*) continue ;;
++    -x) skip=1; continue ;;
++    -xhip|--offload-arch=*| -offload-arch=*|--cuda-gpu-arch=*) continue ;;
+   esac
+-  filtered+=(\"\$arg\")
++  args+=(\"\$arg\")
+ done
+-exec \"\${filtered[@]}\"
++exec \"\${args[@]}\"
+ ")
+ file(CHMOD "${_knowhere_strip_launcher}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+ if(TARGET knowhere)
+diff --git a/cmake/libs/libhipcuvs_preproject.cmake b/cmake/libs/libhipcuvs_preproject.cmake
+index 0000000..1111111 100644
+@@ -1,18 +1,24 @@
+-# Must run before project(): host g++ wrapper strips HIP --offload-arch flags.
++# Must run before project(): host g++ wrapper strips HIP-only flags.
+ find_program(_knowhere_real_cxx NAMES g++ c++ REQUIRED)
+ set(_knowhere_gxx_wrapper "${CMAKE_CURRENT_BINARY_DIR}/knowhere-g++-host.sh")
+ file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
+ set -euo pipefail
+ _real_cxx=\"${_knowhere_real_cxx}\"
+ args=()
++skip=0
+ for arg in \"\$@\"; do
++  if [ \"\$skip\" -eq 1 ]; then
++    skip=0
++    continue
++  fi
+   case \"\$arg\" in
+-    --offload-arch=*| -offload-arch=*) continue ;;
++    -x) skip=1; continue ;;
++    -xhip|--offload-arch=*| -offload-arch=*|--cuda-gpu-arch=*) continue ;;
+   esac
+   args+=(\"\$arg\")
+ done
+ exec \"\${_real_cxx}\" \"\${args[@]}\"
+ ")
+ file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+-set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips --offload-arch)" FORCE)
++set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips HIP flags)" FORCE)
+ message(STATUS "KNOWHERE WITH_HIP: pre-project CXX=${CMAKE_CXX_COMPILER}")
+diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
+index 0000000..1111111 100644
+@@ -38,6 +38,8 @@
+   if(DEFINED ${_knowhere_flag_var})
+     string(REGEX REPLACE " *--offload-arch=[^ ]+" "" _knowhere_clean
+                          "${${_knowhere_flag_var}}")
++    string(REGEX REPLACE " *-x hip" "" _knowhere_clean "${_knowhere_clean}")
++    string(REGEX REPLACE " *-xhip" "" _knowhere_clean "${_knowhere_clean}")
+     string(STRIP "${_knowhere_clean}" _knowhere_clean)
+     set(${_knowhere_flag_var} "${_knowhere_clean}" CACHE STRING "" FORCE)
+   endif()
+@@ -48,11 +50,22 @@
+ get_property(_knowhere_dir_opts DIRECTORY PROPERTY COMPILE_OPTIONS)
+ if(_knowhere_dir_opts)
+   set(_knowhere_new_dir_opts)
++  set(_knowhere_skip_next FALSE)
+   foreach(_opt IN LISTS _knowhere_dir_opts)
+-    if(NOT _opt MATCHES "^--offload-arch=")
+-      list(APPEND _knowhere_new_dir_opts "${_opt}")
++    if(_knowhere_skip_next)
++      set(_knowhere_skip_next FALSE)
++      continue()
+     endif()
++    if(_opt STREQUAL "-x")
++      set(_knowhere_skip_next TRUE)
++      continue()
++    endif()
++    if(_opt MATCHES "^--offload-arch=" OR _opt STREQUAL "-xhip" OR _opt STREQUAL "hip")
++      continue()
++    endif()
++    list(APPEND _knowhere_new_dir_opts "${_opt}")
+   endforeach()
++  unset(_knowhere_skip_next)
+   set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "${_knowhere_new_dir_opts}")
+ endif()
+ unset(_knowhere_dir_opts)
+@@ -70,14 +83,20 @@
+ set -euo pipefail
+ _real_cxx=\"${_knowhere_real_cxx}\"
+ args=()
++skip=0
+ for arg in \"\$@\"; do
++  if [ \"\$skip\" -eq 1 ]; then
++    skip=0
++    continue
++  fi
+   case \"\$arg\" in
+-    --offload-arch=*| -offload-arch=*) continue ;;
++    -x) skip=1; continue ;;
++    -xhip|--offload-arch=*| -offload-arch=*|--cuda-gpu-arch=*) continue ;;
+   esac
+   args+=(\"\$arg\")
+ done
+ exec \"\${_real_cxx}\" \"\${args[@]}\"
+ ")
+ file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+-set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips --offload-arch)" FORCE)
++set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips HIP flags)" FORCE)
+ message(STATUS "KNOWHERE WITH_HIP: host C++ via ${_knowhere_gxx_wrapper}")
