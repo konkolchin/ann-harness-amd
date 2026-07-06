@@ -51,8 +51,8 @@ verify_patches() {
     echo "VERIFY FAIL: CMakeLists.txt missing libhipcuvs_preproject include" >&2
     ok=0
   fi
-  if ! grep -q 'Early WITH_HIP/WITH_CUVS before project' CMakeLists.txt; then
-    echo "VERIFY FAIL: CMakeLists.txt missing patch 0009 early WITH_HIP block" >&2
+  if ! grep -q 'Early WITH_HIP before project' CMakeLists.txt; then
+    echo "VERIFY FAIL: CMakeLists.txt missing patch 0010 early WITH_HIP block" >&2
     ok=0
   fi
   for f in cmake/libs/libhipcuvs.cmake \

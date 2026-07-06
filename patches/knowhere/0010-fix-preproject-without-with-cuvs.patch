@@ -1,0 +1,54 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0000000..1111111 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -14,11 +14,8 @@
+ 
+ cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
+ 
+-# Early WITH_HIP/WITH_CUVS before project(): Conan sets WITH_CUVS via toolchain;
+-# decide HIP here so pre-project CXX wrapper runs and we never probe nvcc.
+-if(NOT DEFINED WITH_CUVS)
+-  set(WITH_CUVS OFF CACHE BOOL "Build with CUVS indexes")
+-endif()
++# Early WITH_HIP before project(): Conan injects WITH_CUVS at project() time, so do
++# not read or default WITH_CUVS here. Auto-detect HIP from INSTALL_PREFIX env.
+ if(NOT DEFINED WITH_HIP)
+   set(_knowhere_want_hip OFF)
+   if(DEFINED ENV{KNOWHERE_WITH_HIP} AND NOT "$ENV{KNOWHERE_WITH_HIP}" STREQUAL "0")
+@@ -31,18 +28,8 @@
+       "Link prebuilt hipVS/hipRAFT (ROCm) instead of CUDA cuVS")
+   unset(_knowhere_want_hip)
+ endif()
+-if(WITH_CUVS AND WITH_HIP)
++if(WITH_HIP)
+   include(cmake/libs/libhipcuvs_preproject.cmake)
+-elseif(WITH_CUVS)
+-  find_program(_knowhere_nvcc nvcc)
+-  if(NOT _knowhere_nvcc)
+-    message(FATAL_ERROR
+-      "WITH_CUVS=ON but nvcc not found. For AMD ROCm / hipVS builds set\n"
+-      "  export INSTALL_PREFIX=$HOME/rocmds_check_gfx1100/install\n"
+-      "  cmake ... -DWITH_HIP=ON   (or export KNOWHERE_WITH_HIP=1)\n"
+-      "See ann-harness-amd Layer 2 runbook.")
+-  endif()
+-  unset(_knowhere_nvcc)
+ endif()
+ 
+ project(knowhere CXX C)
+@@ -60,6 +47,15 @@
+ if(WITH_CUVS AND WITH_HIP)
+   include(cmake/libs/libhipcuvs.cmake)
+ elseif(WITH_CUVS)
++  find_program(_knowhere_nvcc nvcc)
++  if(NOT _knowhere_nvcc)
++    message(FATAL_ERROR
++      "WITH_CUVS=ON but nvcc not found. For AMD ROCm / hipVS builds set\n"
++      "  export INSTALL_PREFIX=$HOME/rocmds_check_gfx1100/install\n"
++      "  cmake ... -DWITH_HIP=ON   (or export KNOWHERE_WITH_HIP=1)\n"
++      "See ann-harness-amd Layer 2 runbook.")
++  endif()
++  unset(_knowhere_nvcc)
+   set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
+   include(cmake/libs/librapids.cmake)
+   project(knowhere CXX C CUDA)
