@@ -1,0 +1,12 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 87cc4bb..1ad988d 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -86,7 +86,6 @@ if(TARGET knowhere AND _knowhere_fixup_rocm)
+     endif()
+   endforeach()
+   target_compile_options(knowhere PRIVATE "SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+-  target_link_options(knowhere PRIVATE "LINKER:--hip-link")
+   message(STATUS "KNOWHERE WITH_HIP: knowhere SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+ 
+   knowhere_file_glob(GLOB_RECURSE _knowhere_cuvs_cu src/common/cuvs/*.cu)
