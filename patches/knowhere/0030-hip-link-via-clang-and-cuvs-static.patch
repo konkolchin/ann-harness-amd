@@ -1,0 +1,28 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index bf485e1..1b81feb 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -90,7 +90,7 @@ if(TARGET knowhere AND _knowhere_fixup_rocm)
+ 
+   knowhere_file_glob(GLOB_RECURSE _knowhere_cuvs_cu src/common/cuvs/*.cu)
+   if(_knowhere_cuvs_cu)
+-    add_library(knowhere_cuvs_hip OBJECT ${_knowhere_cuvs_cu})
++    add_library(knowhere_cuvs_hip STATIC ${_knowhere_cuvs_cu})
+     set_target_properties(knowhere_cuvs_hip PROPERTIES POSITION_INDEPENDENT_CODE ON)
+     target_compile_definitions(knowhere_cuvs_hip PRIVATE
+       KNOWHERE_WITH_CUVS
+@@ -115,9 +115,11 @@ if(TARGET knowhere AND _knowhere_fixup_rocm)
+       endif()
+     endforeach()
+     target_compile_options(knowhere_cuvs_hip PRIVATE
+-      "SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+-    target_sources(knowhere PRIVATE $<TARGET_OBJECTS:knowhere_cuvs_hip>)
+-    message(STATUS "KNOWHERE WITH_HIP: knowhere_cuvs_hip OBJECT -> knowhere (${_knowhere_cuvs_cu})")
++      "SHELL:-x hip --offload-arch=${_knowhere_gfx} -fgpu-rdc")
++    target_link_libraries(knowhere PRIVATE
++      "$<LINK_LIBRARY:WHOLE_ARCHIVE,knowhere_cuvs_hip>")
++    target_link_options(knowhere PRIVATE "SHELL:--hip-link -fgpu-rdc")
++    message(STATUS "KNOWHERE WITH_HIP: knowhere_cuvs_hip WHOLE_ARCHIVE (${_knowhere_cuvs_cu})")
+   endif()
+   unset(_knowhere_cuvs_cu)
+   unset(_hip_dep)
