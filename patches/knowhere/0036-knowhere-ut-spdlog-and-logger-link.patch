@@ -2,7 +2,7 @@ diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.c
 index 5543557..c4d5e6f 100644
 --- a/cmake/libs/knowhere_hip_link.cmake
 +++ b/cmake/libs/knowhere_hip_link.cmake
-@@ -48,16 +48,6 @@ function(knowhere_hip_link_rmm _target)
+@@ -47,15 +47,4 @@ function(knowhere_hip_link_rmm _target)
      message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_librapids_logger}")
    endif()
  
@@ -18,10 +18,7 @@ index 5543557..c4d5e6f 100644
 -  endif()
 -
    set(_knowhere_logger_cpp "")
-   foreach(_prefix IN LISTS _knowhere_prefixes)
-     foreach(_candidate IN ITEMS
-@@ -75,10 +65,16 @@ function(knowhere_hip_link_rmm _target)
-     target_sources(${_target} PRIVATE "${_knowhere_logger_cpp}")
+@@ -78,7 +67,15 @@ function(knowhere_hip_link_rmm _target)
      message(STATUS "KNOWHERE WITH_HIP: ${_target} compiles rmm logger from ${_knowhere_logger_cpp}")
      if(TARGET spdlog::spdlog)
        target_link_libraries(${_target} PUBLIC spdlog::spdlog)
@@ -39,15 +36,16 @@ index 5543557..c4d5e6f 100644
 +      unset(_knowhere_libspdlog)
      endif()
    else()
-     message(WARNING
 diff --git a/tests/ut/CMakeLists.txt b/tests/ut/CMakeLists.txt
 index 1111111..2222222 100644
 --- a/tests/ut/CMakeLists.txt
 +++ b/tests/ut/CMakeLists.txt
-@@ -44,3 +44,15 @@ target_link_libraries(knowhere_tests PRIVATE
-  atomic
-  stdc++fs
-  knowhere)
+@@ -50,5 +50,17 @@
+ target_link_libraries(knowhere_tests PRIVATE
+         Catch2::Catch2WithMain
+         atomic
+         stdc++fs
+         knowhere)
 +
 +# HIP cuVS: UT may compile rmm logger.cpp; link libspdlog explicitly.
 +if(WITH_HIP AND WITH_CUVS)
