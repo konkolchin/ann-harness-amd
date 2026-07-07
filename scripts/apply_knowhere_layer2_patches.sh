@@ -87,8 +87,8 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0038 rapids_logger logger.cpp preference" >&2
     ok=0
   fi
-  if ! grep -q 'skipping legacy include/rmm/logger_impl/logger.cpp' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
-    echo "VERIFY FAIL: missing patch 0039 skip legacy rmm logger.cpp in knowhere_hip_link.cmake" >&2
+  if ! grep -q 'include/raft/core/logger_impl/logger.cpp' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0041 raft core logger.cpp compile in knowhere_hip_link.cmake" >&2
     ok=0
   fi
   if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
