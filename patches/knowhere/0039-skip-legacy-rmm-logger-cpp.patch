@@ -1,0 +1,86 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index 54478cf..72a9324 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -45,6 +45,25 @@ function(knowhere_hip_link_rmm _target)
+     message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_libraft}")
+   endif()
+ 
++  if(NOT TARGET rmm::rmm_logger_impl AND DEFINED rmm_DIR)
++    foreach(_targets_file IN ITEMS rmm-targets.cmake RMMTargets.cmake)
++      if(EXISTS "${rmm_DIR}/${_targets_file}")
++        include("${rmm_DIR}/${_targets_file}")
++        message(STATUS "KNOWHERE WITH_HIP: included ${rmm_DIR}/${_targets_file}")
++        break()
++      endif()
++    endforeach()
++  endif()
++  if(NOT TARGET raft::raft_logger_impl AND DEFINED raft_DIR)
++    foreach(_targets_file IN ITEMS raft-targets.cmake RAFTTargets.cmake)
++      if(EXISTS "${raft_DIR}/${_targets_file}")
++        include("${raft_DIR}/${_targets_file}")
++        message(STATUS "KNOWHERE WITH_HIP: included ${raft_DIR}/${_targets_file}")
++        break()
++      endif()
++    endforeach()
++  endif()
++
+   set(_knowhere_logger_resolved FALSE)
+   foreach(_logger_impl IN ITEMS rmm::rmm_logger_impl raft::raft_logger_impl)
+     if(TARGET ${_logger_impl})
+@@ -67,10 +86,7 @@ function(knowhere_hip_link_rmm _target)
+   set(_knowhere_logger_cpp "")
+   if(NOT _knowhere_logger_resolved)
+     foreach(_prefix IN LISTS _knowhere_prefixes)
+-      foreach(_candidate IN ITEMS
+-          "include/rapids_logger/logger_impl/logger.cpp"
+-          "include/rmm/logger_impl/logger.cpp"
+-          "include/rmm/detail/logger_impl/logger.cpp")
++      foreach(_candidate IN ITEMS "include/rapids_logger/logger_impl/logger.cpp")
+         if(EXISTS "${_prefix}/${_candidate}")
+           set(_knowhere_logger_cpp "${_prefix}/${_candidate}")
+           break()
+@@ -83,18 +99,27 @@ function(knowhere_hip_link_rmm _target)
+     if(_knowhere_logger_cpp)
+       target_sources(${_target} PRIVATE "${_knowhere_logger_cpp}")
+       message(STATUS "KNOWHERE WITH_HIP: ${_target} compiles rmm logger from ${_knowhere_logger_cpp}")
+-      if(_knowhere_logger_cpp MATCHES "/rmm/logger_impl/")
+-        message(WARNING
+-          "KNOWHERE WITH_HIP: legacy rmm logger.cpp uses removed raft::logger API; prefer rapids_logger logger.cpp")
+-      endif()
+       set(_knowhere_logger_resolved TRUE)
+     else()
+-      message(WARNING
+-        "KNOWHERE WITH_HIP: rmm logger impl not found; libknowhere may have undefined rmm::logger symbols")
++      set(_knowhere_legacy_logger_cpp "")
++      foreach(_prefix IN LISTS _knowhere_prefixes)
++        if(EXISTS "${_prefix}/include/rmm/logger_impl/logger.cpp")
++          set(_knowhere_legacy_logger_cpp "${_prefix}/include/rmm/logger_impl/logger.cpp")
++          break()
++        endif()
++      endforeach()
++      if(_knowhere_legacy_logger_cpp)
++        message(WARNING
++          "KNOWHERE WITH_HIP: skipping legacy include/rmm/logger_impl/logger.cpp (removed raft::logger API); using librapids_logger/librmm only")
++      else()
++        message(WARNING
++          "KNOWHERE WITH_HIP: rmm logger impl not found; libknowhere may have undefined rmm::logger symbols")
++      endif()
++      unset(_knowhere_legacy_logger_cpp)
+     endif()
+   endif()
+ 
+-  if(_knowhere_logger_resolved)
++  if(_knowhere_logger_resolved OR _knowhere_librapids_logger OR _knowhere_librmm)
+     find_library(_knowhere_libspdlog NAMES spdlog PATHS ${_knowhere_prefixes}
+                  PATH_SUFFIXES lib NO_DEFAULT_PATH)
+     if(_knowhere_libspdlog)
+@@ -120,6 +145,8 @@ function(knowhere_hip_link_rmm _target)
+   unset(_candidate)
+   unset(_logger_impl)
+   unset(_rmm_dep)
++  unset(_targets_file)
++  unset(_knowhere_legacy_logger_cpp)
+ endfunction()
+ 
+ function(knowhere_hip_link_ut_logger_deps _target)
