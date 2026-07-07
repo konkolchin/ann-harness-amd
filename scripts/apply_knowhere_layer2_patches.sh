@@ -59,6 +59,14 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0030 knowhere_cuvs_hip WHOLE_ARCHIVE + --hip-link" >&2
     ok=0
   fi
+  if ! grep -q 'CUDA_R_32F HIP_R_32F' src/common/cuvs/integration/cuda_compat.hpp 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0032 CUDA dtype shims in cuda_compat.hpp" >&2
+    ok=0
+  fi
+  if grep -q 'std::uint16_t' src/common/cuvs/integration/type_mappers.hpp 2>/dev/null; then
+    echo "VERIFY FAIL: patch 0032 fp16 __half mapping not applied (still std::uint16_t)" >&2
+    ok=0
+  fi
   for f in cmake/libs/libhipcuvs.cmake \
            cmake/libs/libhipcuvs_preproject.cmake \
            cmake/libs/knowhere_hip_host_fixup.cmake \
