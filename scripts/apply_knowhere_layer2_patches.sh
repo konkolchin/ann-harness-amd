@@ -79,6 +79,14 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0037 libraft link in knowhere_hip_link.cmake" >&2
     ok=0
   fi
+  if ! grep -q 'WHOLE_ARCHIVE rmm::rmm_logger_impl\|WHOLE_ARCHIVE raft::raft_logger_impl' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0038 WHOLE_ARCHIVE logger impl link in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
+  if ! grep -q 'include/rapids_logger/logger_impl/logger.cpp' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0038 rapids_logger logger.cpp preference" >&2
+    ok=0
+  fi
   if ! grep -q 'knowhere_hip_link_ut_logger_deps' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
     echo "VERIFY FAIL: missing patch 0037 UT logger link helper in knowhere_hip_link.cmake" >&2
     ok=0
