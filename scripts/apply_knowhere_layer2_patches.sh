@@ -75,6 +75,14 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0034 single HIP cuVS instantiation unit" >&2
     ok=0
   fi
+  if ! grep -q '_knowhere_libspdlog' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0036 spdlog link in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
+  if ! grep -q 'HIP cuVS: UT may compile rmm logger.cpp' tests/ut/CMakeLists.txt 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0036 spdlog link in tests/ut/CMakeLists.txt" >&2
+    ok=0
+  fi
   for f in cmake/libs/libhipcuvs.cmake \
            cmake/libs/libhipcuvs_preproject.cmake \
            cmake/libs/knowhere_hip_host_fixup.cmake \

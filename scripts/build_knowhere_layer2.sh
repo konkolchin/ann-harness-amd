@@ -22,6 +22,16 @@ fi
 echo "==> apply Layer 2 patches"
 bash "${REPO_ROOT}/scripts/apply_knowhere_layer2_patches.sh" "${KNOWHERE_DIR}"
 
+echo "==> conan install (with_cuvs + with_ut for knowhere_tests)"
+mkdir -p "${BUILD_DIR}"
+cd "${BUILD_DIR}"
+if ! grep -q 'WITH_UT:BOOL=ON\|WITH_UT:STRING=True' CMakeCache.txt 2>/dev/null; then
+  conan install .. --build=missing -s build_type=Release \
+    -o with_cuvs=True \
+    -o with_ut=True
+fi
+cd "${REPO_ROOT}"
+
 echo "==> configure"
 bash "${REPO_ROOT}/scripts/configure_knowhere_hip.sh" 2>&1 | tee "${WORKDIR}/knowhere_cmake_hip.log"
 
@@ -45,4 +55,5 @@ echo "  tests: ${BUILD_DIR}/tests/ut/knowhere_tests"
 echo ""
 echo "Run GPU tests (Catch2 v2: pass test name as positional arg):"
 echo "  export LD_LIBRARY_PATH=\"${WORKDIR}/install/lib:/opt/rocm/lib:\${LD_LIBRARY_PATH}\""
-echo "  ${BUILD_DIR}/tests/ut/knowhere_tests 'Test All GPU Index'"
+echo "  ${BUILD_DIR}/tests/ut/knowhere_tests 'Test Gpu Index Search L2 Metric'"
+echo "  (Do not use 'Test All GPU Index' on gfx1100 — CAGRA/brute-force fail.)"
