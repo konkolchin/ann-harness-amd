@@ -1,0 +1,54 @@
+diff --git a/src/common/cuvs/integration/cuvs_knowhere_index.cuh b/src/common/cuvs/integration/cuvs_knowhere_index.cuh
+index 0000000..1111111 100644
+--- a/src/common/cuvs/integration/cuvs_knowhere_index.cuh
++++ b/src/common/cuvs/integration/cuvs_knowhere_index.cuh
+@@ -588,7 +588,16 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
+             auto scoped_device = raft::device_setter{device_id};
+             auto const& res = get_device_resources_without_mempool();
+             RAFT_EXPECTS(index_, "Index has not yet been trained");
++#if defined(KNOWHERE_WITH_HIP)
++            if constexpr (std::is_same_v<data_type, float> || std::is_same_v<data_type, int8_t> ||
++                          std::is_same_v<data_type, uint8_t>) {
++                cuvs_index_type::template serialize_to_hnswlib<data_type, indexing_type>(res, os, *index_);
++            } else {
++                RAFT_FAIL("CAGRA serialize_to_hnswlib is not supported for fp16 on HIP");
++            }
++#else
+             cuvs_index_type::template serialize_to_hnswlib<data_type, indexing_type>(res, os, *index_);
++#endif
+             raft::serialize_scalar(res, os, false);
+         }
+     }
+diff --git a/src/common/cuvs/integration/ivf_flat_index.cu b/src/common/cuvs/integration/ivf_flat_index.cu
+index 0000000..1111111 100644
+--- a/src/common/cuvs/integration/ivf_flat_index.cu
++++ b/src/common/cuvs/integration/ivf_flat_index.cu
+@@ -19,6 +19,8 @@
+ 
+ namespace cuvs_knowhere {
+ template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::fp32>;
++#ifndef KNOWHERE_WITH_HIP
+ template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::fp16>;
++#endif
+ template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::int8>;
+ }  // namespace cuvs_knowhere
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc b/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc
+index 0000000..1111111 100644
+--- a/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc
++++ b/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc
+@@ -37,6 +37,7 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_FLAT, GpuCuvsIvfFlatIndexNode
+                                               KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
++#ifndef KNOWHERE_WITH_HIP
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_FLAT, GpuCuvsIvfFlatIndexNode, fp16,
+                                           knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                               int count;
+@@ -48,6 +49,7 @@ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_FLAT, GpuCuvsIvfFlatIndexNode,
+                                               KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
++#endif
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_FLAT, GpuCuvsIvfFlatIndexNode, int8,
+                                           knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                               int count;

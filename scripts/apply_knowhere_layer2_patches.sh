@@ -67,6 +67,10 @@ verify_patches() {
     echo "VERIFY FAIL: patch 0032 fp16 __half mapping not applied (still std::uint16_t)" >&2
     ok=0
   fi
+  if ! grep -q 'KNOWHERE_WITH_HIP' src/common/cuvs/integration/ivf_flat_index.cu 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0033 HIP-guarded ivf_flat fp16 instantiation" >&2
+    ok=0
+  fi
   for f in cmake/libs/libhipcuvs.cmake \
            cmake/libs/libhipcuvs_preproject.cmake \
            cmake/libs/knowhere_hip_host_fixup.cmake \
