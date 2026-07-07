@@ -35,6 +35,11 @@ cd "${REPO_ROOT}"
 echo "==> configure"
 bash "${REPO_ROOT}/scripts/configure_knowhere_hip.sh" 2>&1 | tee "${WORKDIR}/knowhere_cmake_hip.log"
 
+echo "==> drop stale knowhere logger objects (legacy logger.cpp must not linger in libknowhere.so)"
+find "${BUILD_DIR}" -path '*/knowhere.dir/*' -name 'logger.cpp.o' -delete 2>/dev/null || true
+find "${BUILD_DIR}" -path '*/CMakeFiles/knowhere.dir/*' -name '*logger*.o' -delete 2>/dev/null || true
+rm -f "${BUILD_DIR}/libknowhere.so" "${BUILD_DIR}/libknowhere.so."* 2>/dev/null || true
+
 echo "==> build (log: ${LOG})"
 set +e
 cmake --build "${BUILD_DIR}" -j"$(nproc)" 2>&1 | tee "${LOG}"

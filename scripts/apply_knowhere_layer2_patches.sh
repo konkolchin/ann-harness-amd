@@ -91,6 +91,10 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0039 skip legacy rmm logger.cpp in knowhere_hip_link.cmake" >&2
     ok=0
   fi
+  if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0040 skip legacy logger_impl WHOLE_ARCHIVE in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
   if ! grep -q 'knowhere_hip_link_ut_logger_deps' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
     echo "VERIFY FAIL: missing patch 0037 UT logger link helper in knowhere_hip_link.cmake" >&2
     ok=0
