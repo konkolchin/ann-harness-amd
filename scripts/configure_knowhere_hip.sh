@@ -36,8 +36,22 @@ fi
 
 mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}"
-rm -f CMakeCache.txt
-rm -rf CMakeFiles
+
+# Wipe stale cmake/make outputs but keep conan Release/generators.
+# Deleting only CMakeFiles/ leaves Makefile rules pointing at missing
+# VerifyGlobs.cmake (cmake_check_build_system fails on next build).
+_conan_release="${BUILD_DIR}/Release"
+if [ -d "${_conan_release}" ]; then
+  _conan_tmp="$(mktemp -d)"
+  cp -a "${_conan_release}" "${_conan_tmp}/Release"
+fi
+find "${BUILD_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+if [ -n "${_conan_tmp:-}" ]; then
+  mkdir -p "${BUILD_DIR}/Release"
+  cp -a "${_conan_tmp}/Release/." "${BUILD_DIR}/Release/"
+  rm -rf "${_conan_tmp}"
+fi
+unset _conan_release _conan_tmp
 
 cmake .. -G "Unix Makefiles" \
   -DCMAKE_BUILD_TYPE=Release \

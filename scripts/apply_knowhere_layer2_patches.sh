@@ -55,9 +55,14 @@ verify_patches() {
     echo "VERIFY FAIL: CMakeLists.txt missing patch 0010 early WITH_HIP block" >&2
     ok=0
   fi
+  if ! grep -q 'knowhere_cuvs_hip OBJECT' cmake/libs/knowhere_hip_host_fixup.cmake; then
+    echo "VERIFY FAIL: missing patch 0027 knowhere_cuvs_hip OBJECT library" >&2
+    ok=0
+  fi
   for f in cmake/libs/libhipcuvs.cmake \
            cmake/libs/libhipcuvs_preproject.cmake \
-           cmake/libs/knowhere_hip_host_fixup.cmake; do
+           cmake/libs/knowhere_hip_host_fixup.cmake \
+           cmake/libs/knowhere_hip_link.cmake; do
     if [ ! -f "$f" ]; then
       echo "VERIFY FAIL: missing $f" >&2
       ok=0
