@@ -71,6 +71,10 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0033 HIP-guarded ivf_flat fp16 instantiation" >&2
     ok=0
   fi
+  if ! grep -q 'cuvs_knowhere_index_hip.cu' cmake/libs/knowhere_hip_host_fixup.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0034 single HIP cuVS instantiation unit" >&2
+    ok=0
+  fi
   for f in cmake/libs/libhipcuvs.cmake \
            cmake/libs/libhipcuvs_preproject.cmake \
            cmake/libs/knowhere_hip_host_fixup.cmake \
