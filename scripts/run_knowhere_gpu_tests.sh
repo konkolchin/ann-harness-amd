@@ -159,7 +159,10 @@ ldd "${TEST_BIN}" 2>/dev/null | grep -E 'gflags|glog' || true
 echo ""
 
 if [ "$#" -eq 0 ]; then
-  set -- 'Test Gpu Index Search L2 Metric'
+  # Catch2 TEST_CASE is "Test All GPU Index"; L2 is a SECTION under it.
+  # Prefer L2 section only (skip CAGRA/brute-force sections that fail on gfx1100).
+  set -- 'Test All GPU Index' -c 'Test Gpu Index Search L2 Metric'
 fi
 
+echo "Running: ${TEST_BIN} $*"
 exec "${TEST_BIN}" "$@"
