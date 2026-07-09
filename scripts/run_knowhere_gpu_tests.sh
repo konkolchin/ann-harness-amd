@@ -68,43 +68,27 @@ fi
 
 if [ "${_need_rebuild}" -eq 1 ]; then
   _gflags_a=""
-  _find_roots=()
-  [ -d "${HOME}/.conan" ] && _find_roots+=("${HOME}/.conan")
-  [ -d "${HOME}/.conan2" ] && _find_roots+=("${HOME}/.conan2")
 
-  # Prefer explicit Conan package globs (avoid find on missing ~/.conan2).
-  shopt -s nullglob
-  for _cand in \
-      "${HOME}"/.conan/data/gflags/*/_/_/package/*/lib/libgflags_nothreads.a \
-      "${HOME}"/.conan/data/gflags/*/_/_/package/*/lib/libgflags.a \
-      "${HOME}"/.conan/data/gflags/*/package/*/lib/libgflags_nothreads.a \
-      "${HOME}"/.conan/data/gflags/*/package/*/lib/libgflags.a; do
-    if [ -f "${_cand}" ] && nm "${_cand}" 2>/dev/null | grep -qE '_ZN6(gflags|google)14FlagRegisterer'; then
-      _gflags_a="${_cand}"
-      break
-    fi
-  done
-  shopt -u nullglob
+  # Dead-simple discovery: same path the user already verified with nm.
+  # (Complex find/glob + missing ~/.conan2 was failing under set -e/pipefail.)
+  set +e
+  _gflags_a="$(ls -1 \
+    "${HOME}"/.conan/data/gflags/*/_/_/package/*/lib/libgflags_nothreads.a \
+    "${HOME}"/.conan/data/gflags/*/_/_/package/*/lib/libgflags.a \
+    2>/dev/null | head -1)"
+  set -e
 
-  if [ -z "${_gflags_a}" ] && [ "${#_find_roots[@]}" -gt 0 ]; then
-    while IFS= read -r _cand; do
-      [ -n "${_cand}" ] || continue
-      if nm "${_cand}" 2>/dev/null | grep -qE '_ZN6(gflags|google)14FlagRegisterer'; then
-        _gflags_a="${_cand}"
-        break
-      fi
-    done < <(find "${_find_roots[@]}" -type f \( \
-        -name 'libgflags.a' -o -name 'libgflags_nothreads.a' \) 2>/dev/null | head -80 || true)
-  fi
-  unset _find_roots
-
-  if [ -z "${_gflags_a}" ]; then
-    echo "ERROR: no Conan libgflags*.a found with FlagRegisterer." >&2
-    echo "  ls ~/.conan/data/gflags/2.2.2/_/_/package/*/lib/" >&2
-    echo "  nm .../libgflags_nothreads.a | grep FlagRegisterer | head" >&2
+  if [ -z "${_gflags_a}" ] || [ ! -f "${_gflags_a}" ]; then
+    echo "ERROR: no Conan libgflags*.a under ~/.conan/data/gflags/" >&2
+    echo "  Tried:" >&2
+    ls -la "${HOME}"/.conan/data/gflags/*/_/_/package/*/lib/ 2>&1 | head -40 >&2 || true
     exit 1
   fi
   echo "Found Conan gflags archive: ${_gflags_a}"
+  if ! nm "${_gflags_a}" | grep -q FlagRegisterer; then
+    echo "ERROR: ${_gflags_a} has no FlagRegisterer symbols" >&2
+    exit 1
+  fi
 
   echo "Building gflags shim from ${_gflags_a}"
   _tmp_so="${SHIM_DIR}/libgflags_shim_tmp.so"
