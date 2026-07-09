@@ -52,28 +52,25 @@ fi
 unset _conan_gen
 
 # ---------------------------------------------------------------------------
-# gflags: Conan glog needs gflags::FlagRegisterer (_ZN6gflags14...).
-# Apt libgflags has google:: (_ZN6google14...) — wrong namespace.
-# Conan gflags is often static-only (libgflags.a); wrap it into a shim .so.
+# gflags shim for Conan glog:
+#   Conan glog needs  gflags::FlagRegisterer  (_ZN6gflags14...)
+#   Conan/apt gflags often export google::     (_ZN6google14...)
+#   "google" and "gflags" are both length 6 → safe mangled rename via objcopy.
 # ---------------------------------------------------------------------------
-_gflags_preload=""
+mkdir -p "${SHIM_DIR}"
+_gflags_preload="${SHIM_DIR}/libgflags_gflagsns.so"
 
-# 1) Prefer an existing shared lib that exports gflags::FlagRegisterer.
-while IFS= read -r _cand; do
-  [ -n "${_cand}" ] || continue
-  if nm -D "${_cand}" 2>/dev/null | grep -q '_ZN6gflags14FlagRegisterer'; then
-    _gflags_preload="${_cand}"
-    break
-  fi
-done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( -name 'libgflags.so' -o -name 'libgflags.so.*' \) ! -name '*nothreads*' 2>/dev/null | head -40)
+_need_rebuild=1
+if [ -e "${_gflags_preload}" ] && nm -D "${_gflags_preload}" 2>/dev/null | grep -q '_ZN6gflags14FlagRegisterer'; then
+  _need_rebuild=0
+  echo "Reusing gflags shim: ${_gflags_preload}"
+fi
 
-# 2) Else build a shared shim from Conan static archive (gflags:: symbols).
-#    ConanCenter often packages only libgflags_nothreads.a (still gflags:: ns).
-if [ -z "${_gflags_preload}" ]; then
+if [ "${_need_rebuild}" -eq 1 ]; then
   _gflags_a=""
   while IFS= read -r _cand; do
     [ -n "${_cand}" ] || continue
-    if nm "${_cand}" 2>/dev/null | grep -q '_ZN6gflags14FlagRegisterer'; then
+    if nm "${_cand}" 2>/dev/null | grep -qE '_ZN6(gflags|google)14FlagRegisterer'; then
       _gflags_a="${_cand}"
       break
     fi
@@ -81,45 +78,48 @@ if [ -z "${_gflags_preload}" ]; then
       -name 'libgflags.a' -o -name 'libgflags_nothreads.a' \) 2>/dev/null | head -40)
 
   if [ -z "${_gflags_a}" ]; then
-    echo "No Conan libgflags*.a with gflags:: symbols; forcing Conan rebuild..."
-    conan install gflags/2.2.2@ --build=gflags -s build_type=Release || true
-    while IFS= read -r _cand; do
-      [ -n "${_cand}" ] || continue
-      if nm "${_cand}" 2>/dev/null | grep -q '_ZN6gflags14FlagRegisterer'; then
-        _gflags_a="${_cand}"
-        break
-      fi
-    done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( \
-        -name 'libgflags.a' -o -name 'libgflags_nothreads.a' \) 2>/dev/null | head -40)
+    echo "ERROR: no Conan libgflags*.a found with FlagRegisterer." >&2
+    echo "  ls ~/.conan/data/gflags/2.2.2/_/_/package/*/lib/" >&2
+    echo "  nm .../libgflags_nothreads.a | grep FlagRegisterer | head" >&2
+    exit 1
   fi
 
-  if [ -z "${_gflags_preload}" ] && [ -n "${_gflags_a}" ]; then
-    mkdir -p "${SHIM_DIR}"
-    _gflags_preload="${SHIM_DIR}/libgflags_gflagsns.so"
-    echo "Building gflags:: shim from ${_gflags_a} -> ${_gflags_preload}"
-    g++ -shared -fPIC -o "${_gflags_preload}" \
-      -Wl,--whole-archive "${_gflags_a}" -Wl,--no-whole-archive \
-      -lpthread -lrt
-    if ! nm -D "${_gflags_preload}" | grep -q '_ZN6gflags14FlagRegisterer'; then
-      echo "ERROR: shim built but still missing gflags::FlagRegisterer" >&2
-      exit 1
-    fi
-  fi
-  unset _gflags_a
-fi
+  echo "Building gflags shim from ${_gflags_a}"
+  _tmp_so="${SHIM_DIR}/libgflags_shim_tmp.so"
+  g++ -shared -fPIC -o "${_tmp_so}" \
+    -Wl,--whole-archive "${_gflags_a}" -Wl,--no-whole-archive \
+    -lpthread -lrt
 
-if [ -z "${_gflags_preload}" ]; then
-  echo "ERROR: cannot provide gflags::FlagRegisterer for Conan glog." >&2
-  echo "  Inspect Conan gflags package:" >&2
-  echo "    ls -la ~/.conan/data/gflags/2.2.2/_/_/package/*/lib/" >&2
-  echo "    nm ~/.conan/data/gflags/2.2.2/_/_/package/*/lib/libgflags_nothreads.a | grep FlagRegisterer | head" >&2
-  exit 1
+  if nm -D "${_tmp_so}" | grep -q '_ZN6gflags14FlagRegisterer'; then
+    mv -f "${_tmp_so}" "${_gflags_preload}"
+    echo "Shim already has gflags:: namespace"
+  elif nm -D "${_tmp_so}" | grep -q '_ZN6google14FlagRegisterer'; then
+    # Rename google:: → gflags:: in mangled names (same identifier length).
+    _map="${SHIM_DIR}/gflags_redefine.map"
+    nm -D "${_tmp_so}" | awk '{print $NF}' | grep '6google' | sort -u | while read -r _sym; do
+      printf '%s %s\n' "${_sym}" "${_sym//6google/6gflags}"
+    done > "${_map}"
+    echo "Renaming google:: → gflags:: ($(wc -l < "${_map}") symbols)"
+    objcopy --redefine-syms="${_map}" "${_tmp_so}" "${_gflags_preload}"
+    rm -f "${_tmp_so}" "${_map}"
+  else
+    echo "ERROR: FlagRegisterer not found in either namespace after linking shim" >&2
+    nm -D "${_tmp_so}" | grep -i FlagRegisterer | head >&2 || true
+    exit 1
+  fi
+
+  if ! nm -D "${_gflags_preload}" | grep -q '_ZN6gflags14FlagRegisterer'; then
+    echo "ERROR: shim missing gflags::FlagRegisterer after rename" >&2
+    exit 1
+  fi
+  echo "Built ${_gflags_preload}"
 fi
+unset _need_rebuild _gflags_a _cand _tmp_so _map _sym
 
 prepend_libdir "$(dirname "${_gflags_preload}")"
 export LD_PRELOAD="${_gflags_preload}${LD_PRELOAD:+:${LD_PRELOAD}}"
 echo "Using gflags preload: ${_gflags_preload}"
-unset _cand _gflags_preload
+unset _gflags_preload
 
 _glog_so="$(find "${HOME}/.conan" "${HOME}/.conan2" -type f -name 'libglog.so.1' 2>/dev/null | head -1 || true)"
 if [ -n "${_glog_so}" ]; then
