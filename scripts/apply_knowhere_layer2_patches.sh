@@ -95,6 +95,10 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0042 host-only logger object library" >&2
     ok=0
   fi
+  if ! grep -q 'spdlog includes' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0043 host logger spdlog includes" >&2
+    ok=0
+  fi
   if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
     echo "VERIFY FAIL: missing patch 0040 skip legacy logger_impl WHOLE_ARCHIVE in knowhere_hip_link.cmake" >&2
     ok=0
