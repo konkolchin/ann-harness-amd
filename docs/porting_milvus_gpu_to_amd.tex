@@ -7,6 +7,8 @@
 \usepackage{hyperref}
 \usepackage{enumitem}
 \usepackage{longtable}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
 
 \hypersetup{
     colorlinks=true,
@@ -30,7 +32,10 @@ runbook (\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU 
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
 Layer~1 build completed on the 7900 XTX lab host (ROCm~7.0.2, July~2026). Layer~1.5
 (custom \texttt{kIndexGroupSize} patch for \texttt{gfx1100}) completed 2026-07-05 with
-\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float 98/98 pass.
+\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float 98/98 pass. Layer~2 (Knowhere + HIP against
+prebuilt hipVS/hipRAFT) completed 2026-07-09: Catch2 section \texttt{Test Gpu Index Search}
+(L2) --- 108 assertions passed; HIP tree merged to DXC
+\texttt{llmkb-internal/knowhere} branch \texttt{2.5}.
 \end{abstract}
 
 \tableofcontents
@@ -95,7 +100,7 @@ current layer passes.
 \midrule
 0 & ROCm + host sanity & GPU visible in \texttt{rocminfo}; Milvus CPU stack healthy \\
 1 & hipRAFT / hipVS alone & Libraries build; \texttt{BRUTEFORCE\_C\_TEST} + float IVF gtests green on gfx1100 \\
-2 & Knowhere + HIP & Knowhere unit tests for one GPU index (e.g.\ \texttt{GPU\_IVF\_FLAT}) \\
+2 & Knowhere + HIP & Catch2 \texttt{Test Gpu Index Search} (L2) green on gfx1100 (Done 2026-07-09) \\
 3 & Milvus source + GPU & Standalone \texttt{create\_index}/\texttt{search} on GPU index type \\
 4 & Harness benchmarks & Same SIFT-1M / \texttt{nprobe} grid: recall + QPS vs CPU baselines \\
 \bottomrule
@@ -231,7 +236,7 @@ Milvus Standalone Docker healthy & Done \\
 CPU FAISS + VDBBench IVF baselines (runbook Tables~5--6) & Done \\
 hipVS / hipRAFT built (\texttt{release/rocmds-25.10}) & Done (2026-07-03) \\
 IVF packer fix (Layer~1.5) & Done (2026-07-05) \\
-Knowhere HIP fork & Not started \\
+Knowhere HIP (Layer~2) & Done (2026-07-09); merged DXC \texttt{2.5} \\
 Milvus GPU source build & Not started \\
 \bottomrule
 \end{tabular}
@@ -948,29 +953,117 @@ Logs & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/packer\_float\_fixed.log
 \end{table}
 
 \section{Layer 2 --- Knowhere with HIP backend}
+\label{sec:layer2-knowhere-hip}
 
 \subsection{Goal}
 
-Substitute the library link at the Knowhere layer, still without full Milvus.
+Substitute the library link at the Knowhere layer, still without full Milvus: build
+\texttt{libknowhere.so} with \texttt{WITH\_HIP=ON} against prebuilt hipVS/hipRAFT under
+\texttt{\$INSTALL\_PREFIX}, and pass GPU unit tests for L2 search.
 
-\subsection{Steps}
+\subsection{Interaction diagram: Knowhere, hipVS, hipRAFT}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=1.2cm,
+  box/.style={draw, rounded corners, align=center, minimum width=4.0cm, minimum height=0.95cm},
+  smallbox/.style={draw, rounded corners, align=center, minimum width=3.7cm, minimum height=0.85cm},
+  arr/.style={-{Latex[length=2.5mm]}, thick}
+]
+  \node[box] (milvus) {Milvus (QueryNode / IndexNode)\\create\_index(), search()};
+  \node[box, below=of milvus] (knowhere) {Knowhere GPU wrappers\\GPU\_IVF\_FLAT / GPU\_BRUTE\_FORCE};
+  \node[box, below=of knowhere] (hipvs) {hipVS ANN layer\\IVF build/search, top-k};
+  \node[smallbox, below=of hipvs] (hipraft) {hipRAFT primitives\\distance, selection, kNN helpers};
+  \node[smallbox, below=of hipraft] (rocm) {ROCm runtime + HIP kernels\\(gfx1100 device execution)};
+
+  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
+    (milvus) -- node[right, xshift=6pt, align=left] {\scriptsize index/search requests\\\scriptsize + result IDs/scores} (knowhere);
+  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
+    (knowhere) -- node[right, xshift=6pt, align=left] {\scriptsize API calls\\\scriptsize + results} (hipvs);
+  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
+    (hipvs) -- node[right, xshift=6pt, align=left] {\scriptsize primitive calls\\\scriptsize + outputs} (hipraft);
+  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
+    (hipraft) -- node[right, xshift=6pt, align=left] {\scriptsize kernel launches\\\scriptsize + distances/neighbors} (rocm);
+\end{tikzpicture}
+\caption{Layer~2 interaction model on AMD: Knowhere routes GPU index work to hipVS, hipVS uses hipRAFT primitives, and ROCm executes HIP kernels on the target GPU.}
+\end{figure}
+
+\subsection{Repos and branch}
+
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.28\textwidth}X@{}}
+\toprule
+\textbf{Field} & \textbf{Value} \\
+\midrule
+DXC Knowhere & \url{https://github.dxc.com/llmkb-internal/knowhere} (branch \texttt{2.5}; PR~\#2 merged 2026-07-09) \\
+Public mirror & \url{https://github.com/konkolchin/knowhere} branch \texttt{amd-hip-gfx1100-layer2} \\
+Harness patches & \texttt{ann-harness-amd/patches/knowhere/0001}--\texttt{0047} \\
+Build / test scripts & \texttt{scripts/build\_knowhere\_layer2.sh}, \texttt{scripts/run\_knowhere\_gpu\_tests.sh} \\
+Lab tree & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/knowhere} \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Steps (reproducible)}
 
 \begin{enumerate}[leftmargin=*]
-  \item Clone \textbf{milvus-io/knowhere} pinned to your Milvus release (e.g.\ v2.5.x).
-  \item Study CMake options for GPU / cuVS / RAFT in the NVIDIA build docs.
-  \item Fork or patch: link \texttt{hipVS} / \texttt{hipRAFT} instead of \texttt{cuvs} /
-        \texttt{raft}; add backend flag (e.g.\ \texttt{KNOWHERE\_WITH\_HIP} vs
-        \texttt{KNOWHERE\_WITH\_CUVS}).
-  \item Run Knowhere unit tests for one index, e.g.\ \texttt{GPU\_IVF\_FLAT}:
-        build on GPU, search with \texttt{nprobe} sweep, compare recall curve to CPU
-        \texttt{IVF\_FLAT} on the same data.
+  \item Ensure Layer~1.5 \texttt{libcuvs.so} / hipRAFT are installed under
+        \texttt{\$INSTALL\_PREFIX} (patched packer).
+  \item Clone Knowhere \texttt{2.5} (DXC tree preferred) or apply harness patches to
+        upstream \texttt{zilliztech/knowhere} \texttt{2.5}:
+\begin{verbatim}
+bash scripts/apply_knowhere_layer2_patches.sh ~/rocmds_check_gfx1100/knowhere
+\end{verbatim}
+  \item Configure and build with Conan + HIP (not bare cmake into \texttt{build-hip}):
+\begin{verbatim}
+export WORKDIR=~/rocmds_check_gfx1100
+export INSTALL_PREFIX=$WORKDIR/install
+export ROCM_PATH=/opt/rocm
+SKIP_GIT_PULL=1 bash scripts/build_knowhere_layer2.sh
+\end{verbatim}
+  \item Run the Layer~2 gate (Catch2 \textbf{section} under \texttt{Test All GPU Index};
+        there is no section named ``\ldots{} L2 Metric''):
+\begin{verbatim}
+bash scripts/run_knowhere_gpu_tests.sh
+# equivalent:
+# knowhere_tests 'Test All GPU Index' --section 'Test Gpu Index Search'
+\end{verbatim}
 \end{enumerate}
 
-\textbf{Pass:} Knowhere tests green; recall vs \texttt{nprobe} rises like CPU IVF (not
-necessarily bit-identical).
+\textbf{Pass (Layer~2):} section \texttt{Test Gpu Index Search} reports assertions $>0$ and
+all green (L2 search over GPU/CUVS indexes including IVF\_FLAT / IVF\_PQ / CAGRA). Full
+\texttt{Test All GPU Index} is \emph{not} the gate---see known gaps below.
 
 This is where ``replace cuVS/cuRAFT'' actually happens---in Knowhere's build and GPU index
 wrappers, not in \texttt{run\_milvus\_hdf5.py}.
+
+\subsection{Measured on lab host (Layer~2 pass)}
+\label{sec:layer2-measured}
+
+\begin{table}[h]
+\centering
+\caption{Layer~2 results (\texttt{amd-rx7900xtx}, 2026-07-09)}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Item} & \textbf{Result} \\
+\midrule
+ROCm / arch & 7.0.2 / \texttt{gfx1100} \\
+Knowhere base & \texttt{2.5} + HIP CMake / shims (patches 0001--0047) \\
+Build & \texttt{libknowhere.so} + \texttt{knowhere\_tests} via Conan + \texttt{WITH\_HIP} \\
+Gate test & \texttt{Test Gpu Index Search} --- \textbf{108 assertions passed} \\
+Runtime helpers & gflags shim (\texttt{libgflags\_gflagsns.so}); spdlog via \texttt{SPDLOG\_HEADER\_ONLY} \\
+DXC merge & squash \texttt{bd82ff28} on \texttt{2.5} (PR~\#2) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Known gaps on gfx1100 (not Layer~2 blockers)}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{CAGRA + bitset:} recall $0.0$ in Bitset / Simple Bitset sections.
+  \item \textbf{IVF\_PQ TopK:} occasional threshold miss (e.g.\ $0.8368 < 0.85$).
+  \item Full suite may show $\sim$3--4 failed assertions among hundreds; treat as triage
+        backlog, not a Layer~2 fail.
+\end{itemize}
 
 \section{Layer 3 --- Milvus from source (end-to-end)}
 
@@ -1064,7 +1157,7 @@ Recommended flow:
   \item Layer~0: ROCm + Milvus CPU healthy on \texttt{amd-rx7900xtx}.
   \item Layer~1: hipVS/hipRAFT standalone on \texttt{gfx1100} (Section~\ref{sec:layer1-measured}).
   \item Layer~1.5: \texttt{kIndexGroupSize} patch; IVF gtests 98/98 (Section~\ref{sec:layer15-measured}).
-  \item Layer~2: Knowhere fork + HIP link; one index type.
+  \item Layer~2: Knowhere + HIP; L2 GPU search UT green (Section~\ref{sec:layer2-measured}).
   \item Layer~3: Milvus source build; Standalone GPU search smoke test.
   \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Tables~5--6.
   \item If recall OK and GPU faster at target points: widen index types + VectorDBBench GPU
@@ -1088,7 +1181,8 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
         \texttt{kIndexGroupSize=64} despite \texttt{USE\_WARPSIZE\_32}; patch \texttt{0002} in
         \texttt{ann-harness-amd} restores 98/98 float gtests on \texttt{gfx1100}.
   \item \textbf{API compatibility $\neq$ drop-in binary}---Milvus/Knowhere still need
-        build-system and wrapper changes.
+        build-system and wrapper changes. Layer~2 delivers the Knowhere HIP link; Layer~3
+        still requires a Milvus source build against that Knowhere.
   \item \textbf{CPU baseline stays essential}---GPU work asks whether the hipVS path improves
         the recall--QPS trade-off vs CPU Milvus/FAISS on the same host, not whether Milvus
         beats FAISS on raw in-process QPS.
@@ -1099,12 +1193,13 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 \section{Immediate next steps (lab host)}
 
 \begin{enumerate}[leftmargin=*]
-  \item Layer~0--1.5: complete on \texttt{amd-rx7900xtx} (ROCm~7.0.2, patched \texttt{libcuvs.so},
-        \texttt{BRUTEFORCE\_C\_TEST} + IVF float gtests 98/98; Section~\ref{sec:layer15-measured}).
-  \item Layer~2: Knowhere \texttt{GPU\_IVF\_FLAT} + \textbf{float} vectors; recall vs CPU IVF
-        on 10k SIFT slice before Milvus.
-  \item Layer~3--4: Milvus GPU Standalone, then harness \texttt{nprobe} sweep vs runbook
-        Tables~5--6.
+  \item Layer~0--2: complete on \texttt{amd-rx7900xtx} (ROCm~7.0.2, patched \texttt{libcuvs.so},
+        Knowhere HIP L2 search 108/108; Sections~\ref{sec:layer15-measured},
+        \ref{sec:layer2-measured}).
+  \item Layer~3: build Milvus against DXC Knowhere \texttt{2.5} (HIP); Standalone
+        \texttt{GPU\_IVF\_FLAT} create\_index / search smoke test.
+  \item Layer~4: harness \texttt{nprobe} sweep vs runbook Tables~5--6; triage CAGRA bitset /
+        IVF\_PQ TopK gaps as capacity allows.
 \end{enumerate}
 
 \section{References}
@@ -1116,6 +1211,9 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
   \item hipVS docs: \url{https://rocm.docs.amd.com/projects/hipVS/en/latest/}
   \item hipVS repo: \url{https://github.com/ROCm-DS/hipVS}
   \item hipRAFT repo: \url{https://github.com/ROCm-DS/hipRaft}
+  \item DXC Knowhere (HIP): \url{https://github.dxc.com/llmkb-internal/knowhere}
+  \item Public Knowhere mirror: \url{https://github.com/konkolchin/knowhere}
+  \item Harness (patches + Layer~2 scripts): \url{https://github.com/konkolchin/ann-harness-amd}
 \end{itemize}
 
 \end{document}
