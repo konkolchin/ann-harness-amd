@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# Run Knowhere GPU unit tests with a safe spdlog load order.
-#
-# hipRAFT ships install/lib/libspdlog.so.1.14 (needed by libcuvs) but that copy
-# is missing symbols Knowhere needs (e.g. set_pattern). Preload apt's
-# libspdlog.so.1 so those symbols resolve, while keeping install/lib on
-# LD_LIBRARY_PATH for libspdlog.so.1.14 / libcuvs / libraft.
+# Run Knowhere GPU unit tests (Layer 2).
 #
 # Usage:
 #   bash scripts/run_knowhere_gpu_tests.sh
@@ -16,7 +11,6 @@ INSTALL_PREFIX="${INSTALL_PREFIX:-${WORKDIR}/install}"
 ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 KNOWHERE_DIR="${KNOWHERE_DIR:-${WORKDIR}/knowhere}"
 TEST_BIN="${TEST_BIN:-${KNOWHERE_DIR}/build/tests/ut/knowhere_tests}"
-APT_SPDLOG="${APT_SPDLOG:-/usr/lib/x86_64-linux-gnu/libspdlog.so.1}"
 
 if [ ! -x "${TEST_BIN}" ]; then
   echo "ERROR: knowhere_tests not found: ${TEST_BIN}" >&2
@@ -24,7 +18,7 @@ if [ ! -x "${TEST_BIN}" ]; then
   exit 1
 fi
 
-# Restore quarantined hipRAFT spdlog if present (libcuvs needs SONAME 1.14).
+# Restore quarantined hipRAFT spdlog if present (libcuvs may DT_NEEDED SONAME 1.14).
 shopt -s nullglob
 for _f in "${INSTALL_PREFIX}/lib"/libspdlog.so*.hipraft-bak; do
   _orig="${_f%.hipraft-bak}"
@@ -35,19 +29,19 @@ done
 unset _f _orig
 shopt -u nullglob
 
-if [ ! -e "${APT_SPDLOG}" ]; then
-  echo "ERROR: apt spdlog missing: ${APT_SPDLOG}" >&2
-  echo "  sudo apt-get install -y libspdlog-dev" >&2
-  exit 1
+export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
+export LD_LIBRARY_PATH="${INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+
+# Optional: if libknowhere still has undefined spdlog (pre-0047 build), try apt preload.
+if ! nm -D "${KNOWHERE_DIR}/build/libknowhere.so" 2>/dev/null | grep -q 'T.*spdlog.*set_pattern'; then
+  if [ -e /usr/lib/x86_64-linux-gnu/libspdlog.so.1 ]; then
+    export LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libspdlog.so.1${LD_PRELOAD:+:${LD_PRELOAD}}"
+    echo "NOTE: set_pattern not in libknowhere.so; LD_PRELOAD apt spdlog (rebuild with patch 0047 preferred)"
+  fi
 fi
 
-export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
-export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}"
-export LD_PRELOAD="${APT_SPDLOG}${LD_PRELOAD:+:${LD_PRELOAD}}"
-
-echo "spdlog load check:"
+echo "spdlog DT_NEEDED:"
 ldd "${KNOWHERE_DIR}/build/libknowhere.so" | grep spdlog || true
-echo "LD_PRELOAD=${LD_PRELOAD}"
 echo ""
 
 if [ "$#" -eq 0 ]; then

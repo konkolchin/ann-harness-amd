@@ -112,6 +112,10 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0046 apt libspdlog preference" >&2
     ok=0
   fi
+  if ! grep -q 'SPDLOG_HEADER_ONLY' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0047 SPDLOG_HEADER_ONLY in host logger lib" >&2
+    ok=0
+  fi
   if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
     echo "VERIFY FAIL: missing patch 0040 skip legacy logger_impl WHOLE_ARCHIVE in knowhere_hip_link.cmake" >&2
     ok=0
