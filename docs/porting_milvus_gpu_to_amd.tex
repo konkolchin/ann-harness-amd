@@ -30,12 +30,11 @@ AMD hipVS/hipRAFT in the Milvus/Knowhere GPU path. It complements the CPU benchm
 runbook (\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU results on
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
-Layer~1 build completed on the 7900 XTX lab host (ROCm~7.0.2, July~2026). Layer~1.5
-(custom \texttt{kIndexGroupSize} patch for \texttt{gfx1100}) completed 2026-07-05 with
-\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float 98/98 pass. Layer~2 (Knowhere + HIP against
-prebuilt hipVS/hipRAFT) completed 2026-07-09: Catch2 section \texttt{Test Gpu Index Search}
-(L2) --- 108 assertions passed; HIP tree merged to DXC
-\texttt{llmkb-internal/knowhere} branch \texttt{2.5}.
+
+\textbf{Status (2026-07-09):} Layers~\textbf{0--2 done} on the 7900 XTX lab host
+(ROCm~7.0.2; hipVS IVF packer fixed; Knowhere HIP L2 search 108 assertions; DXC Knowhere
+\texttt{2.5} merged). Layers~\textbf{3--4 not started} (Milvus GPU source build; harness
+benchmarks). See Section~\ref{sec:layer-progress}.
 \end{abstract}
 
 \tableofcontents
@@ -91,23 +90,36 @@ Do not attempt to ``replace cuVS in Milvus'' in one step. Use \textbf{five layer
 (Layer~0 through Layer~4), each with explicit pass/fail criteria. Only advance when the
 current layer passes.
 
+\subsection{Progress at a glance (lab host \texttt{amd-rx7900xtx})}
+\label{sec:layer-progress}
+
+\textbf{Completed (gate passed):} Layers~\textbf{0}, \textbf{1}, \textbf{1.5}, and \textbf{2}.
+\textbf{Not started:} Layers~\textbf{3} and \textbf{4}.
+
 \begin{table}[h]
 \centering
-\caption{Layer overview}
-\begin{tabular}{@{}clp{0.52\textwidth}@{}}
+\caption{Layer status and pass criteria (as of 2026-07-09)}
+\begin{tabular}{@{}cllp{0.38\textwidth}@{}}
 \toprule
-\textbf{Layer} & \textbf{Name} & \textbf{Pass criterion (summary)} \\
+\textbf{Layer} & \textbf{Name} & \textbf{Status} & \textbf{Pass criterion / evidence} \\
 \midrule
-0 & ROCm + host sanity & GPU visible in \texttt{rocminfo}; Milvus CPU stack healthy \\
-1 & hipRAFT / hipVS alone & Libraries build; \texttt{BRUTEFORCE\_C\_TEST} + float IVF gtests green on gfx1100 \\
-2 & Knowhere + HIP & Catch2 \texttt{Test Gpu Index Search} (L2) green on gfx1100 (Done 2026-07-09) \\
-3 & Milvus source + GPU & Standalone \texttt{create\_index}/\texttt{search} on GPU index type \\
-4 & Harness benchmarks & Same SIFT-1M / \texttt{nprobe} grid: recall + QPS vs CPU baselines \\
+0 & ROCm + host sanity & \textbf{Done} & \texttt{rocminfo} gfx1100; Milvus CPU healthy \\
+1 & hipRAFT / hipVS alone & \textbf{Done} & Build + \texttt{BRUTEFORCE\_C\_TEST}; IVF packer issues deferred to 1.5 \\
+1.5 & IVF packer fix (gfx1100) & \textbf{Done} & Float IVF gtests 98/98 (2026-07-05) \\
+2 & Knowhere + HIP & \textbf{Done} & Catch2 \texttt{Test Gpu Index Search}: 108 assertions (2026-07-09); DXC \texttt{2.5} merged \\
+3 & Milvus source + GPU & \textbf{Not started} & Standalone \texttt{create\_index}/\texttt{search} on GPU index \\
+4 & Harness benchmarks & \textbf{Not started} & SIFT-1M \texttt{nprobe} grid: recall + QPS vs CPU baselines \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\noindent\textit{Note:} Layer~2 ``Done'' means the Knowhere HIP L2-search gate passed. The full
+Catch2 GPU suite still has known gaps (CAGRA bitset, IVF\_PQ TopK); those are not Layer~2
+blockers. Layer~3 is the next required step for end-to-end Milvus on AMD GPU.
+
 \section{Layer 0 --- Machine, ROCm, and CPU Milvus sanity}
+
+\noindent\textit{Status: \textbf{Done} (see Section~\ref{sec:layer-progress}).}
 
 \subsection{Goal}
 
@@ -221,11 +233,11 @@ Use \texttt{tmux} for any Layer~1+ build or benchmark. Detach with \textbf{Ctrl+
 closing SSH. An empty \texttt{tmux ls} after reboot is normal---start a new session
 (\texttt{tmux new -s rocm-check}).
 
-\subsection{Layer~0 status}
+\subsection{Layer~0 checklist (host readiness)}
 
 \begin{table}[h]
 \centering
-\caption{Layer~0 checklist (\texttt{amd-rx7900xtx})}
+\caption{Host readiness checklist (\texttt{amd-rx7900xtx}); see also Section~\ref{sec:layer-progress}}
 \begin{tabular}{@{}lr@{}}
 \toprule
 \textbf{Item} & \textbf{Status} \\
@@ -234,16 +246,17 @@ ROCm installed (\texttt{7.0.2}) & Done \\
 \texttt{rocminfo} shows \texttt{gfx1100} / 7900 XTX & Done \\
 Milvus Standalone Docker healthy & Done \\
 CPU FAISS + VDBBench IVF baselines (runbook Tables~5--6) & Done \\
-hipVS / hipRAFT built (\texttt{release/rocmds-25.10}) & Done (2026-07-03) \\
-IVF packer fix (Layer~1.5) & Done (2026-07-05) \\
-Knowhere HIP (Layer~2) & Done (2026-07-09); merged DXC \texttt{2.5} \\
-Milvus GPU source build & Not started \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\noindent Later layers (hipVS, packer, Knowhere, Milvus GPU) are tracked in
+Section~\ref{sec:layer-progress}, not in this Layer~0-only checklist.
+
 \section{Layer 1 --- hipRAFT and hipVS in isolation}
 \label{sec:layer1-hipvs-hipraft}
+
+\noindent\textit{Status: \textbf{Done} (build + brute-force; IVF packer completed in Layer~1.5).}
 
 \subsection{Goal}
 
@@ -623,6 +636,8 @@ Repositories:
 first Knowhere target---check upstream before Layer~2 fork work.
 
 \section{Layer 1.5 --- Fix IVF packer on \texttt{gfx1100} (fork work)}
+
+\noindent\textit{Status: \textbf{Done} (2026-07-05; float IVF gtests 98/98).}
 \label{sec:layer15-packer-fix}
 
 \subsection{Goal}
@@ -955,6 +970,9 @@ Logs & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/packer\_float\_fixed.log
 \section{Layer 2 --- Knowhere with HIP backend}
 \label{sec:layer2-knowhere-hip}
 
+\noindent\textit{Status: \textbf{Done} (2026-07-09; L2 search gate 108 assertions; DXC \texttt{2.5} merged).
+Full GPU Catch2 suite still has known gaps---not Layer~2 blockers.}
+
 \subsection{Goal}
 
 Substitute the library link at the Knowhere layer, still without full Milvus: build
@@ -1067,6 +1085,8 @@ DXC merge & squash \texttt{bd82ff28} on \texttt{2.5} (PR~\#2) \\
 
 \section{Layer 3 --- Milvus from source (end-to-end)}
 
+\noindent\textit{Status: \textbf{Not started} --- this is the next required layer.}
+
 \subsection{Goal}
 
 Milvus server uses the HIP-enabled Knowhere build on AMD GPU.
@@ -1089,6 +1109,8 @@ docker run --device=/dev/kfd --device=/dev/dri --group-add video ...
 GPU index path (not CPU SSE-only Knowhere).
 
 \section{Layer 4 --- Harness benchmarks (comparison science)}
+
+\noindent\textit{Status: \textbf{Not started} (blocked on Layer~3 Milvus GPU Standalone).}
 
 \subsection{Goal}
 
@@ -1192,14 +1214,15 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 
 \section{Immediate next steps (lab host)}
 
+\textbf{Where we are:} Layers~0--2 are complete (Section~\ref{sec:layer-progress}).
+\textbf{What remains:} Layer~3, then Layer~4.
+
 \begin{enumerate}[leftmargin=*]
-  \item Layer~0--2: complete on \texttt{amd-rx7900xtx} (ROCm~7.0.2, patched \texttt{libcuvs.so},
-        Knowhere HIP L2 search 108/108; Sections~\ref{sec:layer15-measured},
-        \ref{sec:layer2-measured}).
-  \item Layer~3: build Milvus against DXC Knowhere \texttt{2.5} (HIP); Standalone
-        \texttt{GPU\_IVF\_FLAT} create\_index / search smoke test.
-  \item Layer~4: harness \texttt{nprobe} sweep vs runbook Tables~5--6; triage CAGRA bitset /
-        IVF\_PQ TopK gaps as capacity allows.
+  \item \textbf{Layer~3 (next):} build Milvus against DXC Knowhere \texttt{2.5} (HIP);
+        Standalone \texttt{GPU\_IVF\_FLAT} \texttt{create\_index} / \texttt{search} smoke test.
+  \item \textbf{Layer~4:} harness \texttt{nprobe} sweep vs runbook Tables~5--6.
+  \item \textbf{Optional triage} (does not block Layer~3): CAGRA bitset recall$=0$; IVF\_PQ
+        TopK threshold flakes on gfx1100.
 \end{enumerate}
 
 \section{References}
