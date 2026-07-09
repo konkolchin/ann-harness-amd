@@ -35,10 +35,22 @@ cd "${REPO_ROOT}"
 echo "==> configure"
 bash "${REPO_ROOT}/scripts/configure_knowhere_hip.sh" 2>&1 | tee "${WORKDIR}/knowhere_cmake_hip.log"
 
+# Fail fast if spdlog was not wired into knowhere (avoids long rebuild then link fail).
+if ! grep -qE 'KNOWHERE WITH_HIP: knowhere (linked|WHOLE_ARCHIVE).*spdlog' \
+     "${WORKDIR}/knowhere_cmake_hip.log" 2>/dev/null; then
+  echo "WARNING: cmake log has no 'knowhere ... spdlog' link line." >&2
+  echo "  Check: ls /usr/lib/x86_64-linux-gnu/libspdlog.so*" >&2
+  echo "  and: grep spdlog ${WORKDIR}/knowhere_cmake_hip.log" >&2
+fi
+
 echo "==> force-relink libknowhere.so (keep host logger objects from patch 0042)"
 rm -f "${BUILD_DIR}/libknowhere.so" "${BUILD_DIR}/libknowhere.so."* 2>/dev/null || true
 # Drop only logger objects wrongly compiled into the HIP knowhere target (not host logger lib).
 find "${BUILD_DIR}" -path '*/CMakeFiles/knowhere.dir/*' -name 'logger.cpp.o' -delete 2>/dev/null || true
+# Clear stale find_library(spdlog) NOTFOUND from before apt install.
+if [ -f "${BUILD_DIR}/CMakeCache.txt" ]; then
+  sed -i '/_knowhere_libspdlog/d' "${BUILD_DIR}/CMakeCache.txt" || true
+fi
 
 echo "==> build (log: ${LOG})"
 set +e

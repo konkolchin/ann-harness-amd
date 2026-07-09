@@ -1,0 +1,88 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index a14171f..b6f176c 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -194,28 +194,66 @@ function(knowhere_hip_link_rmm _target)
+   endif()
+ 
+   if(_knowhere_logger_resolved OR _knowhere_librapids_logger OR _knowhere_librmm OR _knowhere_libraft)
+-    # Prefer compiled libspdlog.so (apt/Conan). NO_DEFAULT_PATH alone misses /usr/lib.
+-    find_library(_knowhere_libspdlog NAMES spdlog PATHS ${_knowhere_prefixes}
++    # Bust stale NOTFOUND from configures before apt install libspdlog-dev.
++    unset(_knowhere_libspdlog CACHE)
++    unset(_knowhere_libspdlog_sys CACHE)
++    unset(_knowhere_libspdlog_a CACHE)
++
++    # Prefer static libspdlog.a (WHOLE_ARCHIVE survives --hip-link). Else shared.
++    set(_knowhere_libspdlog_a "")
++    foreach(_prefix IN LISTS _knowhere_prefixes)
++      if(EXISTS "${_prefix}/lib/libspdlog.a")
++        set(_knowhere_libspdlog_a "${_prefix}/lib/libspdlog.a")
++        break()
++      endif()
++    endforeach()
++    foreach(_cand IN ITEMS
++        "/usr/lib/x86_64-linux-gnu/libspdlog.a"
++        "/usr/lib/libspdlog.a")
++      if(NOT _knowhere_libspdlog_a AND EXISTS "${_cand}")
++        set(_knowhere_libspdlog_a "${_cand}")
++      endif()
++    endforeach()
++
++    find_library(_knowhere_libspdlog_sys NAMES spdlog PATHS ${_knowhere_prefixes}
+                  PATH_SUFFIXES lib NO_DEFAULT_PATH)
+-    if(NOT _knowhere_libspdlog)
+-      find_library(_knowhere_libspdlog NAMES spdlog)
++    if(NOT _knowhere_libspdlog_sys)
++      find_library(_knowhere_libspdlog_sys NAMES spdlog
++                   PATHS /usr/lib/x86_64-linux-gnu /usr/lib
++                   PATH_SUFFIXES lib)
+     endif()
+-    if(_knowhere_libspdlog)
+-      target_link_libraries(${_target} PUBLIC "-Wl,--push-state" "-Wl,--no-as-needed"
+-                            "${_knowhere_libspdlog}" "-Wl,--pop-state")
+-      message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_libspdlog}")
++    foreach(_cand IN ITEMS
++        "/usr/lib/x86_64-linux-gnu/libspdlog.so"
++        "/usr/lib/libspdlog.so")
++      if(NOT _knowhere_libspdlog_sys AND EXISTS "${_cand}")
++        set(_knowhere_libspdlog_sys "${_cand}")
++      endif()
++    endforeach()
++
++    if(_knowhere_libspdlog_a)
++      target_link_libraries(${_target} PUBLIC
++        "-Wl,--whole-archive" "${_knowhere_libspdlog_a}" "-Wl,--no-whole-archive")
++      message(STATUS
++        "KNOWHERE WITH_HIP: ${_target} WHOLE_ARCHIVE ${_knowhere_libspdlog_a}")
++    endif()
++    if(_knowhere_libspdlog_sys)
++      # Absolute .so path as a plain link item (hip-clang drops many -Wl wrappers).
++      target_link_libraries(${_target} PUBLIC "${_knowhere_libspdlog_sys}")
++      message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_libspdlog_sys}")
+     elseif(TARGET spdlog::spdlog)
+-      target_link_libraries(${_target} PUBLIC "-Wl,--push-state" "-Wl,--no-as-needed"
+-                            spdlog::spdlog "-Wl,--pop-state")
++      target_link_libraries(${_target} PUBLIC spdlog::spdlog)
+       message(STATUS "KNOWHERE WITH_HIP: ${_target} linked spdlog::spdlog")
+-    elseif(TARGET spdlog::spdlog_header_only)
+-      message(WARNING
+-        "KNOWHERE WITH_HIP: spdlog header-only cannot satisfy compiled logger.cpp for ${_target}")
+-    else()
+-      message(WARNING
+-        "KNOWHERE WITH_HIP: libspdlog not found; libknowhere may have undefined spdlog symbols")
++    elseif(NOT _knowhere_libspdlog_a)
++      if(TARGET spdlog::spdlog_header_only)
++        message(WARNING
++          "KNOWHERE WITH_HIP: spdlog header-only cannot satisfy compiled logger.cpp for ${_target}")
++      else()
++        message(WARNING
++          "KNOWHERE WITH_HIP: libspdlog not found; libknowhere may have undefined spdlog symbols")
++      endif()
+     endif()
+-    unset(_knowhere_libspdlog)
++    unset(_knowhere_libspdlog_sys)
++    unset(_knowhere_libspdlog_a)
+   endif()
+ 
+   unset(_knowhere_logger_resolved)

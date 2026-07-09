@@ -103,6 +103,10 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0044 system libspdlog fallback" >&2
     ok=0
   fi
+  if ! grep -q 'Bust stale NOTFOUND from configures before apt install libspdlog' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0045 static/shared libspdlog force-link" >&2
+    ok=0
+  fi
   if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
     echo "VERIFY FAIL: missing patch 0040 skip legacy logger_impl WHOLE_ARCHIVE in knowhere_hip_link.cmake" >&2
     ok=0
