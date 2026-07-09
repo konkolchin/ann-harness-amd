@@ -91,6 +91,10 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0041 raft core logger.cpp compile in knowhere_hip_link.cmake" >&2
     ok=0
   fi
+  if ! grep -q 'knowhere_hip_loggers_' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0042 host-only logger object library" >&2
+    ok=0
+  fi
   if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
     echo "VERIFY FAIL: missing patch 0040 skip legacy logger_impl WHOLE_ARCHIVE in knowhere_hip_link.cmake" >&2
     ok=0
@@ -129,18 +133,18 @@ cd "${KNOWHERE_DIR}"
 if [ "$DO_RESET" -eq 1 ]; then
   echo "Resetting ${KNOWHERE_DIR} to clean upstream knowhere branch 2.5..."
   git fetch origin 2>/dev/null || true
-  if git show-ref --verify --quiet refs/heads/2.5; then
-    git checkout 2.5
-  elif git show-ref --verify --quiet refs/remotes/origin/2.5; then
+  # Discard local edits first — checkout fails on dirty CMakeLists.txt otherwise.
+  git reset --hard HEAD
+  git clean -fd
+  if git show-ref --verify --quiet refs/remotes/origin/2.5; then
     git checkout -B 2.5 origin/2.5
+    git reset --hard origin/2.5
+  elif git show-ref --verify --quiet refs/heads/2.5; then
+    git checkout -f 2.5
+    git reset --hard HEAD
   else
     echo "ERROR: branch 2.5 not found in ${KNOWHERE_DIR}" >&2
     exit 1
-  fi
-  if git show-ref --verify --quiet refs/remotes/origin/2.5; then
-    git reset --hard origin/2.5
-  else
-    git reset --hard HEAD
   fi
   # Remove untracked patch artifacts (libhipcuvs.cmake etc.) that break git apply.
   git clean -fd
