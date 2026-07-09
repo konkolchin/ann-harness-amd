@@ -3,7 +3,10 @@
 #
 # Usage:
 #   bash scripts/run_knowhere_gpu_tests.sh
-#   bash scripts/run_knowhere_gpu_tests.sh 'Test Gpu Index Search L2 Metric'
+#   bash scripts/run_knowhere_gpu_tests.sh 'Test All GPU Index' --section 'Test Gpu Index Search'
+#
+# Knowhere Catch2 layout (v3): one TEST_CASE "Test All GPU Index" with SECTIONs.
+# L2 search is SECTION "Test Gpu Index Search" (not "... L2 Metric" — that name does not exist).
 set -euo pipefail
 
 WORKDIR="${WORKDIR:-${HOME}/rocmds_check_gfx1100}"
@@ -159,13 +162,58 @@ ldd "${TEST_BIN}" 2>/dev/null | grep -E 'gflags|glog' || true
 echo ""
 
 if [ "$#" -eq 0 ]; then
-  # Catch2 TEST_CASE is "Test All GPU Index". Prefer L2 Metric section only.
+  # Prefer L2 search section only (default metric in that SECTION is L2).
   # Full suite still has known gfx1100 gaps: CAGRA bitset (recall 0) and
   # occasional IVF_PQ TopK threshold misses — not Layer-2 blockers for IVF_FLAT.
-  set -- 'Test All GPU Index' --section 'Test Gpu Index Search L2 Metric'
+  set -- 'Test All GPU Index' --section 'Test Gpu Index Search'
+fi
+
+# If caller passed the old mistaken section name, rewrite it.
+_args=()
+_rewrite_next=0
+for _a in "$@"; do
+  if [ "${_rewrite_next}" -eq 1 ]; then
+    case "${_a}" in
+      'Test Gpu Index Search L2 Metric'|'Test Gpu Index Search L2')
+        _a='Test Gpu Index Search'
+        ;;
+    esac
+    _rewrite_next=0
+  fi
+  case "${_a}" in
+    --section|-c) _rewrite_next=1 ;;
+  esac
+  _args+=("${_a}")
+done
+set -- "${_args[@]}"
+unset _args _a _rewrite_next
+
+# Also accept bare mistaken name as sole arg (old docs).
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    'Test Gpu Index Search L2 Metric'|'Test Gpu Index Search L2')
+      set -- 'Test All GPU Index' --section 'Test Gpu Index Search'
+      ;;
+    'Test Gpu Index Search'|'Test Gpu Index Search With Bitset'|'Test Gpu Index Search TopK'| \
+    'Test Gpu Index Serialize/Deserialize'|'Test Gpu Index Search Simple Bitset'| \
+    'Test Gpu Index Search Cosine Metric'|'Test Gpu Index Search Hamming Metric'| \
+    'Test Gpu Index Cagra Adapt For Cpu'|'Test Gpu Index Cagra Adapt For Cpu Without Ef')
+      set -- 'Test All GPU Index' --section "$1"
+      ;;
+  esac
 fi
 
 echo "Running: ${TEST_BIN} $*"
-echo "(Expect assertions > 0; 'assertions: none' means the section filter missed.)"
-echo "Layer-2 pass focus: GPU_CUVS_IVF_FLAT / L2. Ignore CAGRA bitset / IVF_PQ TopK flakes in full suite."
-exec "${TEST_BIN}" "$@"
+echo "(Expect assertions > 0; 'assertions: none' means the section filter missed / wrong name.)"
+echo "Layer-2 pass focus: SECTION 'Test Gpu Index Search' (L2). Ignore CAGRA bitset / IVF_PQ TopK in full suite."
+# Fail closed if Catch2 reports no assertions (wrong --section is a silent false pass).
+_out="$("${TEST_BIN}" "$@" 2>&1)"
+_rc=$?
+printf '%s\n' "${_out}"
+if printf '%s\n' "${_out}" | grep -qE 'assertions:[[:space:]]*-[[:space:]]*none[[:space:]]*-'; then
+  echo "ERROR: Catch2 ran 0 assertions — section filter likely wrong." >&2
+  echo "  List sections: grep 'SECTION(' ${KNOWHERE_DIR}/tests/ut/test_gpu_search.cc" >&2
+  echo "  Example: bash $0 'Test All GPU Index' --section 'Test Gpu Index Search'" >&2
+  exit 2
+fi
+exit "${_rc}"
