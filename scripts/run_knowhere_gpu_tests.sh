@@ -50,40 +50,46 @@ elif [ -f "${_conan_gen}/activate_run.sh" ]; then
 fi
 unset _conan_gen
 
-# Conan glog needs gflags::FlagRegisterer from the *threaded* libgflags.
-# System libgflags_nothreads.so does NOT export it. Conan often installs only
-# static libgflags.a — then we must use /usr/lib/.../libgflags.so (apt).
+# Conan glog needs gflags::FlagRegisterer (mangled _ZN6gflags14FlagRegisterer...).
+# Ubuntu libgflags exports google::FlagRegisterer (_ZN6google14...) — wrong namespace.
+# Conan gflags is often static-only; build shared: -o gflags:shared=True
 _gflags_shared=""
-for _cand in \
-  /usr/lib/x86_64-linux-gnu/libgflags.so.2.2 \
-  /usr/lib/x86_64-linux-gnu/libgflags.so.2 \
-  /usr/lib/x86_64-linux-gnu/libgflags.so \
-  /usr/lib/libgflags.so; do
-  if [ -e "${_cand}" ]; then
+while IFS= read -r _cand; do
+  [ -n "${_cand}" ] || continue
+  if nm -D "${_cand}" 2>/dev/null | grep -q '_ZN6gflags14FlagRegisterer'; then
     _gflags_shared="${_cand}"
     break
   fi
-done
+done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( -name 'libgflags.so' -o -name 'libgflags.so.*' \) ! -name '*nothreads*' 2>/dev/null | head -40)
+
 if [ -z "${_gflags_shared}" ]; then
-  _gflags_shared="$(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( -name 'libgflags.so' -o -name 'libgflags.so.*' \) ! -name '*nothreads*' 2>/dev/null | head -1 || true)"
+  echo "Conan shared libgflags with gflags:: namespace not found; building..."
+  if command -v conan >/dev/null 2>&1; then
+    conan install gflags/2.2.2@ --build=missing -o gflags:shared=True -s build_type=Release
+    while IFS= read -r _cand; do
+      [ -n "${_cand}" ] || continue
+      if nm -D "${_cand}" 2>/dev/null | grep -q '_ZN6gflags14FlagRegisterer'; then
+        _gflags_shared="${_cand}"
+        break
+      fi
+    done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( -name 'libgflags.so' -o -name 'libgflags.so.*' \) ! -name '*nothreads*' 2>/dev/null | head -40)
+  fi
 fi
 
-if [ -n "${_gflags_shared}" ]; then
-  prepend_libdir "$(dirname "${_gflags_shared}")"
-  # Force this SONAME ahead of nothreads (glog may DT_NEEDED gflags without path).
-  export LD_PRELOAD="${_gflags_shared}${LD_PRELOAD:+:${LD_PRELOAD}}"
-  echo "Using threaded gflags: ${_gflags_shared}"
-  if ! nm -D "${_gflags_shared}" 2>/dev/null | grep -q FlagRegisterer; then
-    echo "WARNING: ${_gflags_shared} has no FlagRegisterer symbol" >&2
-  fi
-else
-  echo "ERROR: threaded libgflags.so not found." >&2
-  echo "  Install: sudo apt-get install -y libgflags2.2 libgflags-dev" >&2
-  echo "  Or rebuild Conan gflags shared: conan install gflags/2.2.2@ --build=missing -o gflags:shared=True" >&2
-  echo "  Conan gflags package libs:" >&2
-  find "${HOME}/.conan/data/gflags" -path '*/package/*/lib/*' 2>/dev/null | head -20 >&2 || true
+if [ -z "${_gflags_shared}" ]; then
+  echo "ERROR: need Conan shared gflags (gflags:: namespace), not apt google:: namespace." >&2
+  echo "  Run:" >&2
+  echo "    conan install gflags/2.2.2@ --build=missing -o gflags:shared=True -s build_type=Release" >&2
+  echo "  Then:" >&2
+  echo "    find ~/.conan -name 'libgflags.so*' | head" >&2
+  echo "    nm -D <path> | grep '_ZN6gflags14FlagRegisterer'" >&2
+  echo "  Apt libgflags only has _ZN6google14FlagRegisterer — will not satisfy Conan glog." >&2
   exit 1
 fi
+
+prepend_libdir "$(dirname "${_gflags_shared}")"
+export LD_PRELOAD="${_gflags_shared}${LD_PRELOAD:+:${LD_PRELOAD}}"
+echo "Using Conan gflags (gflags::): ${_gflags_shared}"
 unset _cand _gflags_shared
 
 _glog_so="$(find "${HOME}/.conan" "${HOME}/.conan2" -type f -name 'libglog.so.1' 2>/dev/null | head -1 || true)"
@@ -105,7 +111,7 @@ unset _libknowhere
 
 echo "spdlog DT_NEEDED:"
 ldd "${BUILD_DIR}/libknowhere.so" | grep spdlog || true
-echo "gflags/glog resolution (with LD_PRELOAD=${LD_PRELOAD:-}):"
+echo "gflags/glog resolution (LD_PRELOAD=${LD_PRELOAD:-}):"
 ldd "${TEST_BIN}" 2>/dev/null | grep -E 'gflags|glog' || true
 echo ""
 
