@@ -85,8 +85,10 @@ if [ "${_need_rebuild}" -eq 1 ]; then
     exit 1
   fi
   echo "Found Conan gflags archive: ${_gflags_a}"
-  if ! nm "${_gflags_a}" | grep -q FlagRegisterer; then
+  # Do not use `nm | grep -q` under pipefail: grep -q exits early → nm SIGPIPE → false negative.
+  if ! nm "${_gflags_a}" 2>/dev/null | grep FlagRegisterer | head -1 | grep -q .; then
     echo "ERROR: ${_gflags_a} has no FlagRegisterer symbols" >&2
+    nm "${_gflags_a}" 2>/dev/null | grep -i flag | head -5 >&2 || true
     exit 1
   fi
 
