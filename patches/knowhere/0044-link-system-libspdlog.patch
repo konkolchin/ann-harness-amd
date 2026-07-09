@@ -1,0 +1,53 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index 016b196..a14171f 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -154,7 +154,20 @@ function(knowhere_hip_link_rmm _target)
+             message(WARNING
+               "KNOWHERE WITH_HIP: spdlog headers not found for ${_knowhere_logger_obj}")
+           endif()
++          find_library(_knowhere_logger_libspdlog NAMES spdlog PATHS ${_knowhere_prefixes}
++                       PATH_SUFFIXES lib NO_DEFAULT_PATH)
++          if(NOT _knowhere_logger_libspdlog)
++            find_library(_knowhere_logger_libspdlog NAMES spdlog)
++          endif()
++          if(_knowhere_logger_libspdlog)
++            target_link_libraries(${_knowhere_logger_obj} PRIVATE
++              "-Wl,--push-state" "-Wl,--no-as-needed"
++              "${_knowhere_logger_libspdlog}" "-Wl,--pop-state")
++            message(STATUS
++              "KNOWHERE WITH_HIP: ${_knowhere_logger_obj} linked ${_knowhere_logger_libspdlog}")
++          endif()
+           unset(_knowhere_spdlog_inc)
++          unset(_knowhere_logger_libspdlog)
+         endif()
+         foreach(_knowhere_logger_cpp IN LISTS _knowhere_logger_cpp_files)
+           set_source_files_properties("${_knowhere_logger_cpp}" TARGET_DIRECTORY
+@@ -181,17 +194,26 @@ function(knowhere_hip_link_rmm _target)
+   endif()
+ 
+   if(_knowhere_logger_resolved OR _knowhere_librapids_logger OR _knowhere_librmm OR _knowhere_libraft)
++    # Prefer compiled libspdlog.so (apt/Conan). NO_DEFAULT_PATH alone misses /usr/lib.
+     find_library(_knowhere_libspdlog NAMES spdlog PATHS ${_knowhere_prefixes}
+                  PATH_SUFFIXES lib NO_DEFAULT_PATH)
++    if(NOT _knowhere_libspdlog)
++      find_library(_knowhere_libspdlog NAMES spdlog)
++    endif()
+     if(_knowhere_libspdlog)
+       target_link_libraries(${_target} PUBLIC "-Wl,--push-state" "-Wl,--no-as-needed"
+                             "${_knowhere_libspdlog}" "-Wl,--pop-state")
+       message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_libspdlog}")
+     elseif(TARGET spdlog::spdlog)
+-      target_link_libraries(${_target} PUBLIC spdlog::spdlog)
++      target_link_libraries(${_target} PUBLIC "-Wl,--push-state" "-Wl,--no-as-needed"
++                            spdlog::spdlog "-Wl,--pop-state")
++      message(STATUS "KNOWHERE WITH_HIP: ${_target} linked spdlog::spdlog")
+     elseif(TARGET spdlog::spdlog_header_only)
+       message(WARNING
+         "KNOWHERE WITH_HIP: spdlog header-only cannot satisfy compiled logger.cpp for ${_target}")
++    else()
++      message(WARNING
++        "KNOWHERE WITH_HIP: libspdlog not found; libknowhere may have undefined spdlog symbols")
+     endif()
+     unset(_knowhere_libspdlog)
+   endif()
