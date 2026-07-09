@@ -99,12 +99,12 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0043 host logger spdlog includes" >&2
     ok=0
   fi
-  if ! grep -q 'NO_DEFAULT_PATH alone misses' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
-    echo "VERIFY FAIL: missing patch 0044 system libspdlog fallback" >&2
-    ok=0
-  fi
   if ! grep -q 'Bust stale NOTFOUND from configures before apt install libspdlog' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
     echo "VERIFY FAIL: missing patch 0045 static/shared libspdlog force-link" >&2
+    ok=0
+  fi
+  if ! grep -q '/usr/lib/x86_64-linux-gnu/libspdlog.so' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0045 absolute libspdlog.so path" >&2
     ok=0
   fi
   if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
