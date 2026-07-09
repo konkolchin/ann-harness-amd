@@ -50,28 +50,21 @@ rm -f "${BUILD_DIR}/libknowhere.so" "${BUILD_DIR}/libknowhere.so."* 2>/dev/null 
 # configure_knowhere_hip.sh already wipes the build tree (keeps Conan Release/).
 find "${BUILD_DIR}" -path '*/CMakeFiles/knowhere.dir/*' -name 'logger.cpp.o' -delete 2>/dev/null || true
 
-# Prefer apt spdlog; hipRAFT install/lib/libspdlog.so often lacks set_pattern and
-# wins at runtime when INSTALL_PREFIX/lib is first on LD_LIBRARY_PATH.
+# hipRAFT install/lib/libspdlog.so.1.14 is incomplete (no set_pattern) but libcuvs
+# still DT_NEEDED it — do NOT quarantine. At runtime preload apt libspdlog.so.1.
 _install_lib="${INSTALL_PREFIX:-${WORKDIR}/install}/lib"
-if [ ! -e /usr/lib/x86_64-linux-gnu/libspdlog.so ] && [ ! -e /usr/lib/x86_64-linux-gnu/libspdlog.a ]; then
+if [ ! -e /usr/lib/x86_64-linux-gnu/libspdlog.so ]; then
   echo "WARNING: apt libspdlog not found. Install: sudo apt-get install -y libspdlog-dev" >&2
 fi
+# Restore any previous quarantine so libcuvs can load.
 shopt -s nullglob
-_spdlog_quarantine=()
-for _f in "${_install_lib}"/libspdlog.so "${_install_lib}"/libspdlog.so.*; do
-  [ -e "${_f}" ] || continue
-  case "${_f}" in
-    *.hipraft-bak) continue ;;
-  esac
-  _spdlog_quarantine+=("${_f}")
+for _f in "${_install_lib}"/libspdlog.so*.hipraft-bak; do
+  _orig="${_f%.hipraft-bak}"
+  if [ ! -e "${_orig}" ]; then
+    mv -v "${_f}" "${_orig}"
+  fi
 done
-if [ "${#_spdlog_quarantine[@]}" -gt 0 ]; then
-  echo "==> quarantine incomplete hipRAFT spdlog under ${_install_lib} (use apt libspdlog)"
-  for _f in "${_spdlog_quarantine[@]}"; do
-    mv -v "${_f}" "${_f}.hipraft-bak"
-  done
-fi
-unset _f _spdlog_quarantine _install_lib
+unset _f _orig _install_lib
 shopt -u nullglob
 
 echo "==> build (log: ${LOG})"
@@ -95,8 +88,5 @@ echo "  lib: ${BUILD_DIR}/libknowhere.so"
 echo "  tests: ${BUILD_DIR}/tests/ut/knowhere_tests"
 echo ""
 echo "Run GPU tests (Catch2 v2: pass test name as positional arg):"
-echo "  # Put /usr/lib before install/lib so apt libspdlog wins over any leftover hipRAFT copy."
-echo "  export LD_LIBRARY_PATH=\"/usr/lib/x86_64-linux-gnu:${WORKDIR}/install/lib:/opt/rocm/lib:\${LD_LIBRARY_PATH}\""
-echo "  ldd ${BUILD_DIR}/libknowhere.so | grep spdlog   # must be /lib/... or /usr/lib/..., not install/lib"
-echo "  ${BUILD_DIR}/tests/ut/knowhere_tests 'Test Gpu Index Search L2 Metric'"
+echo "  bash ${REPO_ROOT}/scripts/run_knowhere_gpu_tests.sh 'Test Gpu Index Search L2 Metric'"
 echo "  (Do not use 'Test All GPU Index' on gfx1100 — CAGRA/brute-force fail.)"
