@@ -160,9 +160,10 @@ echo ""
 
 if [ "$#" -eq 0 ]; then
   # Catch2 TEST_CASE is "Test All GPU Index"; L2 is a SECTION under it.
-  # Prefer L2 section only (skip CAGRA/brute-force sections that fail on gfx1100).
-  set -- 'Test All GPU Index' -c 'Test Gpu Index Search L2 Metric'
+  # Use long --section (Catch2 v3: short -c is not a reliable section filter).
+  set -- 'Test All GPU Index' --section 'Test Gpu Index Search L2 Metric'
 fi
 
 echo "Running: ${TEST_BIN} $*"
+echo "(Expect assertions > 0; 'assertions: none' means the section filter missed.)"
 exec "${TEST_BIN}" "$@"
