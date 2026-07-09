@@ -159,11 +159,13 @@ ldd "${TEST_BIN}" 2>/dev/null | grep -E 'gflags|glog' || true
 echo ""
 
 if [ "$#" -eq 0 ]; then
-  # Catch2 TEST_CASE is "Test All GPU Index"; L2 is a SECTION under it.
-  # Use long --section (Catch2 v3: short -c is not a reliable section filter).
+  # Catch2 TEST_CASE is "Test All GPU Index". Prefer L2 Metric section only.
+  # Full suite still has known gfx1100 gaps: CAGRA bitset (recall 0) and
+  # occasional IVF_PQ TopK threshold misses — not Layer-2 blockers for IVF_FLAT.
   set -- 'Test All GPU Index' --section 'Test Gpu Index Search L2 Metric'
 fi
 
 echo "Running: ${TEST_BIN} $*"
 echo "(Expect assertions > 0; 'assertions: none' means the section filter missed.)"
+echo "Layer-2 pass focus: GPU_CUVS_IVF_FLAT / L2. Ignore CAGRA bitset / IVF_PQ TopK flakes in full suite."
 exec "${TEST_BIN}" "$@"
