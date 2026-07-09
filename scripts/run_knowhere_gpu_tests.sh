@@ -67,7 +67,8 @@ while IFS= read -r _cand; do
   fi
 done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( -name 'libgflags.so' -o -name 'libgflags.so.*' \) ! -name '*nothreads*' 2>/dev/null | head -40)
 
-# 2) Else build a shared shim from Conan static libgflags.a (gflags:: symbols).
+# 2) Else build a shared shim from Conan static archive (gflags:: symbols).
+#    ConanCenter often packages only libgflags_nothreads.a (still gflags:: ns).
 if [ -z "${_gflags_preload}" ]; then
   _gflags_a=""
   while IFS= read -r _cand; do
@@ -76,11 +77,11 @@ if [ -z "${_gflags_preload}" ]; then
       _gflags_a="${_cand}"
       break
     fi
-  done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f -name 'libgflags.a' 2>/dev/null | head -20)
+  done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( \
+      -name 'libgflags.a' -o -name 'libgflags_nothreads.a' \) 2>/dev/null | head -40)
 
   if [ -z "${_gflags_a}" ]; then
-    echo "No Conan libgflags.a with gflags:: symbols; forcing Conan rebuild..."
-    conan install gflags/2.2.2@ --build=gflags -o gflags:shared=True -s build_type=Release || true
+    echo "No Conan libgflags*.a with gflags:: symbols; forcing Conan rebuild..."
     conan install gflags/2.2.2@ --build=gflags -s build_type=Release || true
     while IFS= read -r _cand; do
       [ -n "${_cand}" ] || continue
@@ -88,14 +89,8 @@ if [ -z "${_gflags_preload}" ]; then
         _gflags_a="${_cand}"
         break
       fi
-    done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f -name 'libgflags.a' 2>/dev/null | head -20)
-    while IFS= read -r _cand; do
-      [ -n "${_cand}" ] || continue
-      if nm -D "${_cand}" 2>/dev/null | grep -q '_ZN6gflags14FlagRegisterer'; then
-        _gflags_preload="${_cand}"
-        break
-      fi
-    done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( -name 'libgflags.so' -o -name 'libgflags.so.*' \) ! -name '*nothreads*' 2>/dev/null | head -40)
+    done < <(find "${HOME}/.conan" "${HOME}/.conan2" -type f \( \
+        -name 'libgflags.a' -o -name 'libgflags_nothreads.a' \) 2>/dev/null | head -40)
   fi
 
   if [ -z "${_gflags_preload}" ] && [ -n "${_gflags_a}" ]; then
@@ -117,7 +112,7 @@ if [ -z "${_gflags_preload}" ]; then
   echo "ERROR: cannot provide gflags::FlagRegisterer for Conan glog." >&2
   echo "  Inspect Conan gflags package:" >&2
   echo "    ls -la ~/.conan/data/gflags/2.2.2/_/_/package/*/lib/" >&2
-  echo "    nm ~/.conan/data/gflags/2.2.2/_/_/package/*/lib/libgflags.a | grep FlagRegisterer | head" >&2
+  echo "    nm ~/.conan/data/gflags/2.2.2/_/_/package/*/lib/libgflags_nothreads.a | grep FlagRegisterer | head" >&2
   exit 1
 fi
 
