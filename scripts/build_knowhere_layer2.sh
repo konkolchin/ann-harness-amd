@@ -50,6 +50,14 @@ rm -f "${BUILD_DIR}/libknowhere.so" "${BUILD_DIR}/libknowhere.so."* 2>/dev/null 
 # configure_knowhere_hip.sh already wipes the build tree (keeps Conan Release/).
 find "${BUILD_DIR}" -path '*/CMakeFiles/knowhere.dir/*' -name 'logger.cpp.o' -delete 2>/dev/null || true
 
+# Prefer apt spdlog; hipRAFT install/lib/libspdlog.so often lacks set_pattern.
+if [ ! -e /usr/lib/x86_64-linux-gnu/libspdlog.so ] && [ ! -e /usr/lib/x86_64-linux-gnu/libspdlog.a ]; then
+  echo "WARNING: apt libspdlog not found. Install: sudo apt-get install -y libspdlog-dev" >&2
+fi
+if [ -e "${INSTALL_PREFIX:-${WORKDIR}/install}/lib/libspdlog.so" ]; then
+  echo "NOTE: ${INSTALL_PREFIX:-${WORKDIR}/install}/lib/libspdlog.so exists; patch 0046 prefers /usr/lib/... instead"
+fi
+
 echo "==> build (log: ${LOG})"
 set +e
 cmake --build "${BUILD_DIR}" -j"$(nproc)" 2>&1 | tee "${LOG}"
