@@ -46,11 +46,9 @@ fi
 echo "==> force-relink libknowhere.so (keep host logger objects from patch 0042)"
 rm -f "${BUILD_DIR}/libknowhere.so" "${BUILD_DIR}/libknowhere.so."* 2>/dev/null || true
 # Drop only logger objects wrongly compiled into the HIP knowhere target (not host logger lib).
+# Do NOT sed CMakeCache.txt — that corrupts the cache (cmake_check_build_system parse errors).
+# configure_knowhere_hip.sh already wipes the build tree (keeps Conan Release/).
 find "${BUILD_DIR}" -path '*/CMakeFiles/knowhere.dir/*' -name 'logger.cpp.o' -delete 2>/dev/null || true
-# Clear stale find_library(spdlog) NOTFOUND from before apt install.
-if [ -f "${BUILD_DIR}/CMakeCache.txt" ]; then
-  sed -i '/_knowhere_libspdlog/d' "${BUILD_DIR}/CMakeCache.txt" || true
-fi
 
 echo "==> build (log: ${LOG})"
 set +e
