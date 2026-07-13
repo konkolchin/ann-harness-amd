@@ -1,5 +1,5 @@
 diff --git a/internal/core/thirdparty/knowhere/CMakeLists.txt b/internal/core/thirdparty/knowhere/CMakeLists.txt
-index 90d34bc..95d4977 100644
+index bef8d2f..429c465 100644
 --- a/internal/core/thirdparty/knowhere/CMakeLists.txt
 +++ b/internal/core/thirdparty/knowhere/CMakeLists.txt
 @@ -14,10 +14,22 @@
@@ -7,7 +7,7 @@ index 90d34bc..95d4977 100644
  milvus_add_pkg_config("knowhere")
  set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES "")
 -set( KNOWHERE_VERSION v2.5.2 )
--set( GIT_REPOSITORY "https://github.com/zilliztech/knowhere.git")
+-set( GIT_REPOSITORY  "https://github.com/zilliztech/knowhere.git")
 +# Layer 3 AMD/HIP: default to DXC Knowhere 2.5 (HIP merged). Override with:
 +#   -DMILVUS_KNOWHERE_GIT_REPOSITORY=... -DMILVUS_KNOWHERE_VERSION=...
 +#   -DMILVUS_KNOWHERE_SOURCE_DIR=/path/to/local/knowhere  (skip git fetch)
@@ -27,11 +27,11 @@ index 90d34bc..95d4977 100644
  
  message(STATUS "Building knowhere-${KNOWHERE_SOURCE_VER} from source")
  message(STATUS ${CMAKE_BUILD_TYPE})
-@@ -35,26 +47,49 @@ else ()
+@@ -35,11 +47,33 @@ else ()
  endif()
  
  if ( MILVUS_GPU_VERSION STREQUAL "ON" )
-- set(WITH_RAFT ON CACHE BOOL "" FORCE )
+-    set(WITH_RAFT ON CACHE BOOL "" FORCE )
 +  # NVIDIA path used WITH_RAFT; AMD Layer-3 HIP Knowhere uses WITH_CUVS + WITH_HIP
 +  # against prebuilt hipVS/hipRAFT under INSTALL_PREFIX.
 +  set(WITH_CUVS ON CACHE BOOL "" FORCE )
@@ -42,12 +42,6 @@ index 90d34bc..95d4977 100644
  
 -set( CMAKE_PREFIX_PATH ${CONAN_BOOST_ROOT} )
 -FetchContent_Declare(
-- knowhere
-- GIT_REPOSITORY ${GIT_REPOSITORY}
-- GIT_TAG ${KNOWHERE_VERSION}
-- SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/knowhere-src
-- BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/knowhere-build
-- DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_PATH} )
 +# Prefer hipVS/hipRAFT + ROCm ahead of Conan boost for find_package(cuvs/raft/hip).
 +set(_milvus_hip_prefix "$ENV{INSTALL_PREFIX}")
 +if(_milvus_hip_prefix STREQUAL "")
@@ -67,28 +61,23 @@ index 90d34bc..95d4977 100644
 +  add_subdirectory( ${knowhere_SOURCE_DIR} ${knowhere_BINARY_DIR} )
 +else()
 +  FetchContent_Declare(
-+   knowhere
-+   GIT_REPOSITORY ${GIT_REPOSITORY}
-+   GIT_TAG ${KNOWHERE_VERSION}
-+   SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/knowhere-src
-+   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/knowhere-build
-+   DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_PATH} )
+         knowhere
+         GIT_REPOSITORY  ${GIT_REPOSITORY}
+         GIT_TAG         ${KNOWHERE_VERSION}
+@@ -47,14 +81,15 @@ FetchContent_Declare(
+         BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/knowhere-build
+         DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )
  
 -FetchContent_GetProperties( knowhere )
 -if ( NOT knowhere_POPULATED )
-- FetchContent_Populate( knowhere )
 +  FetchContent_GetProperties( knowhere )
 +  if ( NOT knowhere_POPULATED )
-+   FetchContent_Populate( knowhere )
+     FetchContent_Populate( knowhere )
  
-- # Adding the following target:
-- # knowhere
-- add_subdirectory( ${knowhere_SOURCE_DIR}
-- ${knowhere_BINARY_DIR} )
-+   # Adding the following target:
-+   # knowhere
-+   add_subdirectory( ${knowhere_SOURCE_DIR}
-+   ${knowhere_BINARY_DIR} )
+     # Adding the following target:
+     # knowhere
+     add_subdirectory( ${knowhere_SOURCE_DIR}
+                       ${knowhere_BINARY_DIR} )
 +  endif()
  endif()
  

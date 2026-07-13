@@ -25,6 +25,9 @@ export INSTALL_PREFIX ROCM_PATH HIP_PATH="${HIP_PATH:-${ROCM_PATH}}"
 export PATH="${ROCM_PATH}/llvm/bin:${HOME}/.local/bin:${PATH}"
 export CMAKE_PREFIX_PATH="${INSTALL_PREFIX};${ROCM_PATH};${CMAKE_PREFIX_PATH:-}"
 export LD_LIBRARY_PATH="${INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}"
+# core_build.sh defaults CUDA_COMPILER to /usr/local/cuda/bin/nvcc; AMD HIP builds
+# must not require nvcc (src CMakeLists is patched to skip CUDA language).
+export CUDA_COMPILER="${CUDA_COMPILER:-$(command -v hipcc 2>/dev/null || echo /bin/true)}"
 
 if [ ! -f "${INSTALL_PREFIX}/lib/cmake/cuvs/cuvs-config.cmake" ]; then
   echo "ERROR: hipVS not found at ${INSTALL_PREFIX}/lib/cmake/cuvs/" >&2

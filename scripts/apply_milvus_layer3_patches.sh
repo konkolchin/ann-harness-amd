@@ -22,9 +22,13 @@ done
 MILVUS_DIR="${MILVUS_DIR:-${HOME}/rocmds_check_gfx1100/milvus}"
 
 # Prefer python3, then python (single interpreter — no broken double-heredoc).
+# Reject Windows Store python stubs that print a redirect and exit non-zero.
 _PY="$(command -v python3 || true)"
 if [ -z "${_PY}" ]; then
   _PY="$(command -v python || true)"
+fi
+if [ -n "${_PY}" ] && ! "${_PY}" -c 'import sys' >/dev/null 2>&1; then
+  _PY=""
 fi
 
 normalize_patch() {
@@ -72,7 +76,8 @@ dst.write_text("".join(out), encoding="utf-8", newline="\n")
 PY
   else
     # Fallback: strip CR only (patches already ship with ---/+++).
-    tr -d '\r' <"${src}" >"${dst}"
+    # Use $'\r' — plain '\r' can delete the letter r on some tr/MSYS builds.
+    tr -d $'\r' <"${src}" >"${dst}"
   fi
 }
 
@@ -153,6 +158,10 @@ if ! grep -q 'MILVUS Layer3 HIP' internal/core/thirdparty/knowhere/CMakeLists.tx
 fi
 if ! grep -q 'WITH_HIP ON' internal/core/thirdparty/knowhere/CMakeLists.txt; then
   echo "VERIFY FAIL: WITH_HIP not forced in knowhere CMakeLists" >&2
+  exit 1
+fi
+if ! grep -q 'without CUDA language' internal/core/src/CMakeLists.txt; then
+  echo "VERIFY FAIL: CUDA language skip patch missing in src/CMakeLists.txt" >&2
   exit 1
 fi
 echo "VERIFY OK: Layer 3 Milvus patches present"

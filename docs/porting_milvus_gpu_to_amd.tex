@@ -1106,7 +1106,8 @@ is \emph{not} the Layer~3 binary.
 Milvus tag & \texttt{v2.5.4} (\texttt{milvus-io/milvus}) \\
 Knowhere & Local \texttt{\$WORKDIR/knowhere} (HIP) or DXC \texttt{llmkb-internal/knowhere} \texttt{2.5} \\
 hipVS/hipRAFT & \texttt{\$INSTALL\_PREFIX} (Layer~1.5) \\
-Harness patch & \texttt{patches/milvus/0001-knowhere-hip-dxc-fetchcontent.patch} \\
+Harness patch & \texttt{patches/milvus/0001-knowhere-hip-dxc-fetchcontent.patch},
+                  \texttt{0002-skip-cuda-language-for-hip.patch} \\
 Build & \texttt{scripts/build\_milvus\_layer3.sh} ($\rightarrow$ \texttt{make milvus-gpu}) \\
 Smoke & \texttt{scripts/run\_milvus\_gpu\_smoke.sh} \\
 Client & \texttt{scripts/run\_milvus\_hdf5.py --index-type GPU\_IVF\_FLAT} \\
@@ -1128,7 +1129,7 @@ export WORKDIR=~/rocmds_check_gfx1100
 export INSTALL_PREFIX=$WORKDIR/install
 export ROCM_PATH=/opt/rocm
 # uses local HIP Knowhere when present; else FetchContent DXC 2.5
-bash scripts/build_milvus_layer3.sh
+SKIP_CLONE=1 bash scripts/build_milvus_layer3.sh
 \end{verbatim}
   \item Smoke: etcd/minio from compose (stops stock \texttt{standalone}), start HIP milvus,
         \texttt{GPU\_IVF\_FLAT} on a SIFT slice:
@@ -1145,9 +1146,9 @@ bash scripts/run_milvus_gpu_smoke.sh
 \texttt{GPU\_IVF\_FLAT}; \texttt{milvus\_gpu\_standalone.log} shows HIP/Knowhere GPU activity
 (not CPU SSE-only Docker Knowhere).
 
-\subsection{What the Milvus patch changes}
+\subsection{What the Milvus patches change}
 
-\texttt{internal/core/thirdparty/knowhere/CMakeLists.txt}:
+\texttt{internal/core/thirdparty/knowhere/CMakeLists.txt} (\texttt{0001}):
 \begin{itemize}[leftmargin=*]
   \item Default Knowhere remote $\rightarrow$ DXC \texttt{2.5} (override via CMake vars).
   \item Optional \texttt{MILVUS\_KNOWHERE\_SOURCE\_DIR} skips git and uses the Layer~2 tree.
@@ -1155,6 +1156,11 @@ bash scripts/run_milvus_gpu_smoke.sh
         (not NVIDIA \texttt{WITH\_RAFT}).
   \item Prepends \texttt{\$INSTALL\_PREFIX} and \texttt{\$ROCM\_PATH} to
         \texttt{CMAKE\_PREFIX\_PATH} for hipVS/hipRAFT.
+\end{itemize}
+\texttt{internal/core/src/CMakeLists.txt} (\texttt{0002}):
+\begin{itemize}[leftmargin=*]
+  \item GPU build keeps \texttt{MILVUS\_GPU\_VERSION} but does \emph{not} enable the CUDA
+        language (no \texttt{nvcc} on AMD).
 \end{itemize}
 
 \section{Layer 4 --- Harness benchmarks (comparison science)}
