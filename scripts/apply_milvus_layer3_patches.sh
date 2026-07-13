@@ -21,16 +21,20 @@ for arg in "$@"; do
 done
 MILVUS_DIR="${MILVUS_DIR:-${HOME}/rocmds_check_gfx1100/milvus}"
 
-apply_patch() {
-  local patch="$1"
-  local name
-  name="$(basename "$patch")"
-  local norm
-  norm="$(mktemp)"
-  # Strip CR and ensure ---/+++ before @@ (Windows-safe apply).
-  python3 - "$patch" "$norm" <<'PY' 2>/dev/null || python - "$patch" "$norm" <<'PY'
+# Prefer python3, then python (single interpreter — no broken double-heredoc).
+_PY="$(command -v python3 || true)"
+if [ -z "${_PY}" ]; then
+  _PY="$(command -v python || true)"
+fi
+
+normalize_patch() {
+  local src="$1"
+  local dst="$2"
+  if [ -n "${_PY}" ]; then
+    "${_PY}" - "${src}" "${dst}" <<'PY'
 import sys
 from pathlib import Path
+
 src, dst = Path(sys.argv[1]), Path(sys.argv[2])
 text = src.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n").decode("utf-8", errors="replace")
 lines = text.splitlines(True)
@@ -66,6 +70,19 @@ while i < len(lines):
     i += 1
 dst.write_text("".join(out), encoding="utf-8", newline="\n")
 PY
+  else
+    # Fallback: strip CR only (patches already ship with ---/+++).
+    tr -d '\r' <"${src}" >"${dst}"
+  fi
+}
+
+apply_patch() {
+  local patch="$1"
+  local name
+  name="$(basename "$patch")"
+  local norm
+  norm="$(mktemp)"
+  normalize_patch "$patch" "$norm"
 
   if git apply --check "$norm" 2>/dev/null; then
     git apply "$norm"
@@ -100,19 +117,19 @@ cd "${MILVUS_DIR}"
 
 if [ "$DO_RESET" -eq 1 ]; then
   echo "Resetting ${MILVUS_DIR} to clean v2.5.4..."
-  git fetch origin 2>/dev/null || true
+  git fetch origin tag v2.5.4 --no-tags 2>/dev/null || git fetch origin 2>/dev/null || true
   git reset --hard HEAD
   git clean -fd
-  if git show-ref --verify --quiet refs/remotes/origin/v2.5.4; then
-    git checkout -B v2.5.4 origin/v2.5.4
-    git reset --hard origin/v2.5.4
-  elif git describe --tags --exact-match HEAD 2>/dev/null | grep -q 'v2.5.4'; then
-    git reset --hard HEAD
-  elif git show-ref --verify --quiet refs/tags/v2.5.4; then
+  if git show-ref --verify --quiet refs/tags/v2.5.4; then
     git checkout -B v2.5.4 v2.5.4
     git reset --hard v2.5.4
+  elif git show-ref --verify --quiet refs/remotes/origin/v2.5.4; then
+    git checkout -B v2.5.4 origin/v2.5.4
+    git reset --hard origin/v2.5.4
   else
-    echo "WARNING: could not hard-reset to v2.5.4; continuing on current HEAD=$(git log -1 --oneline)" >&2
+    # Shallow clone of tag may be detached at the tag commit — stay there.
+    echo "NOTE: no v2.5.4 branch/tag ref; using current HEAD=$(git log -1 --oneline)" >&2
+    git checkout -B v2.5.4 HEAD
   fi
   git clean -fd
   echo "Reset complete: $(git log -1 --oneline)"
@@ -122,6 +139,10 @@ shopt -s nullglob
 patches=("${PATCH_DIR}"/[0-9]*.patch)
 IFS=$'\n' patches=($(printf '%s\n' "${patches[@]}" | sort))
 unset IFS
+if [ "${#patches[@]}" -eq 0 ]; then
+  echo "ERROR: no patches in ${PATCH_DIR}" >&2
+  exit 1
+fi
 for p in "${patches[@]}"; do
   apply_patch "$p"
 done
