@@ -119,17 +119,31 @@ if [ -x "${MILVUS_DIR}/scripts/install_deps.sh" ]; then
   bash "${MILVUS_DIR}/scripts/install_deps.sh" || true
 fi
 
+# Stale/incomplete cmake_build (failed configure) has no 'install' target; core_build.sh
+# still runs `make install` and reports a misleading "No rule to make target".
+_cmake_build="${MILVUS_DIR}/cmake_build"
+if [ "${FORCE_CLEAN_CMAKE:-0}" = "1" ] || \
+   { [ -d "${_cmake_build}" ] && ! grep -q '^install:' "${_cmake_build}/Makefile" 2>/dev/null; }; then
+  echo "==> wiping incomplete cmake_build: ${_cmake_build}"
+  rm -rf "${_cmake_build}"
+fi
+
 echo "==> build Milvus GPU/HIP (log: ${LOG})"
 echo "    CMAKE_EXTRA_ARGS=${CMAKE_EXTRA_ARGS}"
+echo "    MILVUS_HIP_INSTALL_PREFIX=${MILVUS_HIP_INSTALL_PREFIX}"
 cd "${MILVUS_DIR}"
 
 # Makefile target milvus-gpu → build-cpp-gpu → core_build.sh -g (MILVUS_GPU_VERSION=ON).
 # CMAKE_EXTRA_ARGS is consumed by core_build.sh (-DMILVUS_KNOWHERE_SOURCE_DIR=...).
+# Unset INSTALL_PREFIX so core_build.sh uses its default (internal/core/output) and does
+# not inherit the hipVS prefix (which would break Milvus install layout).
+# hipVS path is passed via MILVUS_HIP_INSTALL_PREFIX / ROCMDS_INSTALL_PREFIX only.
+unset INSTALL_PREFIX
 set +e
 {
   echo "==== $(date -Is) Layer3 milvus build ===="
   echo "MILVUS_DIR=${MILVUS_DIR}"
-  echo "INSTALL_PREFIX=${INSTALL_PREFIX}"
+  echo "MILVUS_HIP_INSTALL_PREFIX=${MILVUS_HIP_INSTALL_PREFIX}"
   echo "ROCM_PATH=${ROCM_PATH}"
   echo "CMAKE_EXTRA_ARGS=${CMAKE_EXTRA_ARGS}"
   export MILVUS_GPU_VERSION=ON
@@ -145,8 +159,12 @@ set -e
 
 if [ "${_build_rc}" -ne 0 ]; then
   echo ""
-  echo "BUILD FAILED (exit ${_build_rc}). Last errors:" >&2
-  grep -iE 'error:|fatal error:|FAILED:|undefined reference' "${LOG}" | tail -40 >&2 || tail -50 "${LOG}" >&2
+  echo "BUILD FAILED (exit ${_build_rc}). CMake / make errors:" >&2
+  grep -iE 'CMake Error|Configuring incomplete|No rule to make target|fatal error:|undefined reference|ConanException|Error downloading' \
+    "${LOG}" | tail -50 >&2 || true
+  echo "" >&2
+  echo "Full log: ${LOG}" >&2
+  echo "Tip: FORCE_CLEAN_CMAKE=1 SKIP_CLONE=1 bash scripts/build_milvus_layer3.sh" >&2
   exit "${_build_rc}"
 fi
 
