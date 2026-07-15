@@ -108,9 +108,10 @@ set( GIT_REPOSITORY ${MILVUS_KNOWHERE_GIT_REPOSITORY} )
         raise SystemExit("missing prometheus COMPILE_OPTIONS marker")
 
     replacement = """# Prefer hipVS/hipRAFT + ROCm ahead of Conan boost for find_package(cuvs/raft/hip).
-# Also prepend Layer-2 Knowhere Conan generators (xxHash, etc.) when present.
 # Do NOT read ENV{INSTALL_PREFIX}: Milvus core_build.sh overwrites it to the Milvus
 # output tree, which hides hipVS/xxHash under ~/rocmds_check_gfx1100/install.
+# Do NOT prepend Knowhere Conan CMakeDeps generators — their xxHashConfig.cmake
+# calls check_build_type_defined and breaks configure outside conan toolchain.
 set(_milvus_hip_prefix "$ENV{MILVUS_HIP_INSTALL_PREFIX}")
 if(_milvus_hip_prefix STREQUAL "")
   set(_milvus_hip_prefix "$ENV{ROCMDS_INSTALL_PREFIX}")
@@ -122,22 +123,9 @@ set(_milvus_rocm "$ENV{ROCM_PATH}")
 if(_milvus_rocm STREQUAL "")
   set(_milvus_rocm "/opt/rocm")
 endif()
-set(_kh_conan_gen "$ENV{KNOWHERE_CONAN_GENERATORS}")
-if(_kh_conan_gen STREQUAL "")
-  set(_kh_dir "$ENV{KNOWHERE_DIR}")
-  if(_kh_dir STREQUAL "")
-    set(_kh_dir "$ENV{HOME}/rocmds_check_gfx1100/knowhere")
-  endif()
-  set(_kh_conan_gen "${_kh_dir}/build/Release/generators")
-endif()
-if(EXISTS "${_kh_conan_gen}")
-  set(CMAKE_PREFIX_PATH "${_kh_conan_gen};${_milvus_hip_prefix};${_milvus_rocm};${CONAN_BOOST_ROOT};${CMAKE_PREFIX_PATH}")
-else()
-  set(CMAKE_PREFIX_PATH "${_milvus_hip_prefix};${_milvus_rocm};${CONAN_BOOST_ROOT};${CMAKE_PREFIX_PATH}")
-endif()
-# Force CONFIG package path: make cmake_check_build_system does not re-pass CMAKE_EXTRA_ARGS.
+set(CMAKE_PREFIX_PATH "${_milvus_hip_prefix};${_milvus_rocm};${CONAN_BOOST_ROOT};${CMAKE_PREFIX_PATH}")
+# Standalone xxHash only (installed under hip prefix), never Conan generators.
 foreach(_xx_cand
-    "${_kh_conan_gen}"
     "${_milvus_hip_prefix}/lib/cmake/xxHash"
     "${_milvus_hip_prefix}/lib64/cmake/xxHash")
   if(EXISTS "${_xx_cand}/xxHashConfig.cmake" OR EXISTS "${_xx_cand}/xxhash-config.cmake")

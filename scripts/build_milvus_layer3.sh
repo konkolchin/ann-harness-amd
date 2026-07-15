@@ -38,43 +38,35 @@ if [ ! -f "${INSTALL_PREFIX}/lib/cmake/cuvs/cuvs-config.cmake" ]; then
   exit 1
 fi
 
-# Knowhere libfaiss.cmake requires CONFIG-mode xxHash. Prefer Layer-2 Conan
-# generators; otherwise install xxHash into INSTALL_PREFIX (already on prefix path).
-KNOWHERE_CONAN_GENERATORS="${KNOWHERE_CONAN_GENERATORS:-${KNOWHERE_DIR}/build/Release/generators}"
-if [ -f "${KNOWHERE_CONAN_GENERATORS}/xxHashConfig.cmake" ] || \
-   [ -f "${KNOWHERE_CONAN_GENERATORS}/xxhash-config.cmake" ]; then
-  echo "==> xxHash from Knowhere Conan: ${KNOWHERE_CONAN_GENERATORS}"
-  export KNOWHERE_CONAN_GENERATORS
-elif [ -f "${INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" ]; then
-  echo "==> xxHash already in INSTALL_PREFIX"
+# Knowhere libfaiss.cmake needs CONFIG-mode xxHash. Use a *standalone* install under
+# MILVUS_HIP_INSTALL_PREFIX — do NOT use Knowhere Conan CMakeDeps generators
+# (xxHashConfig.cmake there calls check_build_type_defined and breaks Milvus configure).
+if [ -f "${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" ] || \
+   [ -f "${MILVUS_HIP_INSTALL_PREFIX}/lib64/cmake/xxHash/xxHashConfig.cmake" ]; then
+  echo "==> xxHash already in MILVUS_HIP_INSTALL_PREFIX"
 else
-  _xx=$(find "${KNOWHERE_DIR}/build" "${HOME}/.conan/data" -name 'xxHashConfig.cmake' 2>/dev/null | head -1 || true)
-  if [ -n "${_xx}" ]; then
-    KNOWHERE_CONAN_GENERATORS="$(cd "$(dirname "${_xx}")" && pwd)"
-    echo "==> xxHash found: ${KNOWHERE_CONAN_GENERATORS}"
-    export KNOWHERE_CONAN_GENERATORS
-  else
-    echo "==> installing xxHash into ${INSTALL_PREFIX} (Knowhere FAISS needs CONFIG package)"
-    _xx_src="${WORKDIR}/src/xxHash"
-    mkdir -p "${WORKDIR}/src"
-    if [ ! -d "${_xx_src}/.git" ]; then
-      git clone --depth 1 --branch v0.8.2 https://github.com/Cyan4973/xxHash.git "${_xx_src}"
-    fi
-    cmake -S "${_xx_src}/cmake_unofficial" -B "${_xx_src}/build" \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
-      -DBUILD_SHARED_LIBS=ON
-    cmake --build "${_xx_src}/build" -j"$(nproc)"
-    cmake --install "${_xx_src}/build"
-    if [ ! -f "${INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" ]; then
-      echo "ERROR: xxHashConfig.cmake missing after install under ${INSTALL_PREFIX}" >&2
-      exit 1
-    fi
+  echo "==> installing xxHash into ${MILVUS_HIP_INSTALL_PREFIX} (standalone, not Conan)"
+  _xx_src="${WORKDIR}/src/xxHash"
+  mkdir -p "${WORKDIR}/src"
+  if [ ! -d "${_xx_src}/.git" ]; then
+    git clone --depth 1 --branch v0.8.2 https://github.com/Cyan4973/xxHash.git "${_xx_src}"
+  fi
+  cmake -S "${_xx_src}/cmake_unofficial" -B "${_xx_src}/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${MILVUS_HIP_INSTALL_PREFIX}" \
+    -DBUILD_SHARED_LIBS=ON
+  cmake --build "${_xx_src}/build" -j"$(nproc)"
+  cmake --install "${_xx_src}/build"
+  if [ ! -f "${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" ] && \
+     [ ! -f "${MILVUS_HIP_INSTALL_PREFIX}/lib64/cmake/xxHash/xxHashConfig.cmake" ]; then
+    echo "ERROR: xxHashConfig.cmake missing after install under ${MILVUS_HIP_INSTALL_PREFIX}" >&2
+    exit 1
   fi
 fi
-export CMAKE_PREFIX_PATH="${KNOWHERE_CONAN_GENERATORS:-};${INSTALL_PREFIX};${ROCM_PATH};${CMAKE_PREFIX_PATH:-}"
-# Drop leading empty segment if generators unset
-export CMAKE_PREFIX_PATH="$(echo "${CMAKE_PREFIX_PATH}" | sed 's/^;//')"
+# Never prepend Knowhere Conan generators — they poison find_package(xxHash).
+export CMAKE_PREFIX_PATH="${MILVUS_HIP_INSTALL_PREFIX};${ROCM_PATH};${CMAKE_PREFIX_PATH:-}"
+# Explicitly clear so milvus Knowhere CMakeLists does not pick Conan xxHash.
+export KNOWHERE_CONAN_GENERATORS=""
 
 if [ "${SKIP_CLONE:-0}" != "1" ]; then
   if [ ! -d "${MILVUS_DIR}/.git" ]; then
@@ -96,10 +88,9 @@ if [ -f "${KNOWHERE_DIR}/CMakeLists.txt" ] && grep -q 'Early WITH_HIP before pro
 else
   echo "==> FetchContent will pull DXC Knowhere 2.5 (set KNOWHERE_DIR to override)"
 fi
-# Force CONFIG-mode xxHash even when INSTALL_PREFIX is clobbered by core_build.sh.
+# Force standalone xxHash_DIR (never Knowhere Conan generators).
 _xx_cfg=""
 for _c in \
-  "${KNOWHERE_CONAN_GENERATORS:-}/xxHashConfig.cmake" \
   "${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" \
   "${MILVUS_HIP_INSTALL_PREFIX}/lib64/cmake/xxHash/xxHashConfig.cmake"
 do
@@ -107,9 +98,9 @@ do
 done
 if [ -n "${_xx_cfg}" ]; then
   CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -DxxHash_DIR=$(dirname "${_xx_cfg}")"
-  echo "==> CMAKE xxHash_DIR=$(dirname "${_xx_cfg}")"
+  echo "==> CMAKE xxHash_DIR=$(dirname "${_xx_cfg}") (standalone)"
 else
-  echo "ERROR: xxHashConfig.cmake not found; cannot configure Knowhere FAISS" >&2
+  echo "ERROR: standalone xxHashConfig.cmake not found under ${MILVUS_HIP_INSTALL_PREFIX}" >&2
   exit 1
 fi
 export CMAKE_EXTRA_ARGS
