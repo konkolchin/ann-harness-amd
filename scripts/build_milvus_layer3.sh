@@ -21,10 +21,13 @@ MILVUS_TAG="${MILVUS_TAG:-v2.5.4}"
 LOG="${WORKDIR}/milvus_layer3_build.log"
 SHIM_DIR="${SHIM_DIR:-${WORKDIR}/libshims}"
 
+# hipVS/xxHash live under INSTALL_PREFIX. Milvus core_build.sh overwrites
+# INSTALL_PREFIX for its own output tree — keep the ROCmDS prefix separately.
+export MILVUS_HIP_INSTALL_PREFIX="${MILVUS_HIP_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
+export ROCMDS_INSTALL_PREFIX="${ROCMDS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
 export INSTALL_PREFIX ROCM_PATH HIP_PATH="${HIP_PATH:-${ROCM_PATH}}"
 export PATH="${ROCM_PATH}/llvm/bin:${HOME}/.local/bin:${PATH}"
-export CMAKE_PREFIX_PATH="${INSTALL_PREFIX};${ROCM_PATH};${CMAKE_PREFIX_PATH:-}"
-export LD_LIBRARY_PATH="${INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${MILVUS_HIP_INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}"
 # core_build.sh defaults CUDA_COMPILER to /usr/local/cuda/bin/nvcc; AMD HIP builds
 # must not require nvcc (src CMakeLists is patched to skip CUDA language).
 export CUDA_COMPILER="${CUDA_COMPILER:-$(command -v hipcc 2>/dev/null || echo /bin/true)}"
@@ -34,6 +37,44 @@ if [ ! -f "${INSTALL_PREFIX}/lib/cmake/cuvs/cuvs-config.cmake" ]; then
   echo "  Complete Layer 1 / 1.5 first." >&2
   exit 1
 fi
+
+# Knowhere libfaiss.cmake requires CONFIG-mode xxHash. Prefer Layer-2 Conan
+# generators; otherwise install xxHash into INSTALL_PREFIX (already on prefix path).
+KNOWHERE_CONAN_GENERATORS="${KNOWHERE_CONAN_GENERATORS:-${KNOWHERE_DIR}/build/Release/generators}"
+if [ -f "${KNOWHERE_CONAN_GENERATORS}/xxHashConfig.cmake" ] || \
+   [ -f "${KNOWHERE_CONAN_GENERATORS}/xxhash-config.cmake" ]; then
+  echo "==> xxHash from Knowhere Conan: ${KNOWHERE_CONAN_GENERATORS}"
+  export KNOWHERE_CONAN_GENERATORS
+elif [ -f "${INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" ]; then
+  echo "==> xxHash already in INSTALL_PREFIX"
+else
+  _xx=$(find "${KNOWHERE_DIR}/build" "${HOME}/.conan/data" -name 'xxHashConfig.cmake' 2>/dev/null | head -1 || true)
+  if [ -n "${_xx}" ]; then
+    KNOWHERE_CONAN_GENERATORS="$(cd "$(dirname "${_xx}")" && pwd)"
+    echo "==> xxHash found: ${KNOWHERE_CONAN_GENERATORS}"
+    export KNOWHERE_CONAN_GENERATORS
+  else
+    echo "==> installing xxHash into ${INSTALL_PREFIX} (Knowhere FAISS needs CONFIG package)"
+    _xx_src="${WORKDIR}/src/xxHash"
+    mkdir -p "${WORKDIR}/src"
+    if [ ! -d "${_xx_src}/.git" ]; then
+      git clone --depth 1 --branch v0.8.2 https://github.com/Cyan4973/xxHash.git "${_xx_src}"
+    fi
+    cmake -S "${_xx_src}/cmake_unofficial" -B "${_xx_src}/build" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
+      -DBUILD_SHARED_LIBS=ON
+    cmake --build "${_xx_src}/build" -j"$(nproc)"
+    cmake --install "${_xx_src}/build"
+    if [ ! -f "${INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" ]; then
+      echo "ERROR: xxHashConfig.cmake missing after install under ${INSTALL_PREFIX}" >&2
+      exit 1
+    fi
+  fi
+fi
+export CMAKE_PREFIX_PATH="${KNOWHERE_CONAN_GENERATORS:-};${INSTALL_PREFIX};${ROCM_PATH};${CMAKE_PREFIX_PATH:-}"
+# Drop leading empty segment if generators unset
+export CMAKE_PREFIX_PATH="$(echo "${CMAKE_PREFIX_PATH}" | sed 's/^;//')"
 
 if [ "${SKIP_CLONE:-0}" != "1" ]; then
   if [ ! -d "${MILVUS_DIR}/.git" ]; then
@@ -54,6 +95,22 @@ if [ -f "${KNOWHERE_DIR}/CMakeLists.txt" ] && grep -q 'Early WITH_HIP before pro
   CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -DMILVUS_KNOWHERE_SOURCE_DIR=${KNOWHERE_DIR}"
 else
   echo "==> FetchContent will pull DXC Knowhere 2.5 (set KNOWHERE_DIR to override)"
+fi
+# Force CONFIG-mode xxHash even when INSTALL_PREFIX is clobbered by core_build.sh.
+_xx_cfg=""
+for _c in \
+  "${KNOWHERE_CONAN_GENERATORS:-}/xxHashConfig.cmake" \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/xxHash/xxHashConfig.cmake" \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib64/cmake/xxHash/xxHashConfig.cmake"
+do
+  if [ -f "${_c}" ]; then _xx_cfg="${_c}"; break; fi
+done
+if [ -n "${_xx_cfg}" ]; then
+  CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -DxxHash_DIR=$(dirname "${_xx_cfg}")"
+  echo "==> CMAKE xxHash_DIR=$(dirname "${_xx_cfg}")"
+else
+  echo "ERROR: xxHashConfig.cmake not found; cannot configure Knowhere FAISS" >&2
+  exit 1
 fi
 export CMAKE_EXTRA_ARGS
 

@@ -8,6 +8,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATCH_DIR="${REPO_ROOT}/patches/milvus"
+NORM_PY="${REPO_ROOT}/scripts/_normalize_milvus_patch.py"
 DO_RESET=1
 MILVUS_DIR=""
 
@@ -21,8 +22,6 @@ for arg in "$@"; do
 done
 MILVUS_DIR="${MILVUS_DIR:-${HOME}/rocmds_check_gfx1100/milvus}"
 
-# Prefer python3, then python (single interpreter — no broken double-heredoc).
-# Reject Windows Store python stubs that print a redirect and exit non-zero.
 _PY="$(command -v python3 || true)"
 if [ -z "${_PY}" ]; then
   _PY="$(command -v python || true)"
@@ -34,49 +33,11 @@ fi
 normalize_patch() {
   local src="$1"
   local dst="$2"
-  if [ -n "${_PY}" ]; then
-    "${_PY}" - "${src}" "${dst}" <<'PY'
-import sys
-from pathlib import Path
-
-src, dst = Path(sys.argv[1]), Path(sys.argv[2])
-text = src.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n").decode("utf-8", errors="replace")
-lines = text.splitlines(True)
-out = []
-i = 0
-while i < len(lines):
-    line = lines[i]
-    if line.startswith("diff --git "):
-        parts = line.strip().split()
-        a = parts[2][2:] if len(parts) > 2 and parts[2].startswith("a/") else (parts[2] if len(parts) > 2 else "")
-        b = parts[3][2:] if len(parts) > 3 and parts[3].startswith("b/") else (parts[3] if len(parts) > 3 else a)
-        out.append(line if line.endswith("\n") else line + "\n")
-        i += 1
-        saw_paths = False
-        while i < len(lines) and not lines[i].startswith("diff --git "):
-            cur = lines[i]
-            if cur.startswith("--- ") or cur.startswith("+++ "):
-                saw_paths = True
-                out.append(cur if cur.endswith("\n") else cur + "\n")
-                i += 1
-                continue
-            if cur.startswith("@@") and not saw_paths and a:
-                out.append(f"--- a/{a}\n")
-                out.append(f"+++ b/{b}\n")
-                saw_paths = True
-                out.append(cur if cur.endswith("\n") else cur + "\n")
-                i += 1
-                continue
-            out.append(cur if cur.endswith("\n") else cur + "\n")
-            i += 1
-        continue
-    out.append(line if line.endswith("\n") else line + "\n")
-    i += 1
-dst.write_text("".join(out), encoding="utf-8", newline="\n")
-PY
+  # Prefer external helper (no bash heredoc — avoids truncated-script EOF bugs).
+  if [ -n "${_PY}" ] && [ -f "${NORM_PY}" ]; then
+    "${_PY}" "${NORM_PY}" "${src}" "${dst}"
   else
     # Fallback: strip CR only (patches already ship with ---/+++).
-    # Use $'\r' — plain '\r' can delete the letter r on some tr/MSYS builds.
     tr -d $'\r' <"${src}" >"${dst}"
   fi
 }
@@ -114,30 +75,32 @@ apply_patch() {
 
 if [ ! -d "${MILVUS_DIR}/.git" ]; then
   echo "milvus git checkout not found: ${MILVUS_DIR}" >&2
-  echo "  git clone -b v2.5.4 --depth 1 https://github.com/milvus-io/milvus.git ${MILVUS_DIR}" >&2
+  echo "  git clone --depth 1 --branch v2.5.4 https://github.com/milvus-io/milvus.git ${MILVUS_DIR}" >&2
   exit 1
 fi
 
 cd "${MILVUS_DIR}"
 
 if [ "$DO_RESET" -eq 1 ]; then
-  echo "Resetting ${MILVUS_DIR} to clean v2.5.4..."
+  # Unambiguous local branch: a branch named "v2.5.4" collides with the tag.
+  _MILVUS_LOCAL_BRANCH="${MILVUS_LOCAL_BRANCH:-milvus-v2.5.4}"
+  echo "Resetting ${MILVUS_DIR} to clean refs/tags/v2.5.4 (branch ${_MILVUS_LOCAL_BRANCH})..."
   git fetch origin tag v2.5.4 --no-tags 2>/dev/null || git fetch origin 2>/dev/null || true
   git reset --hard HEAD
   git clean -fd
   if git show-ref --verify --quiet refs/tags/v2.5.4; then
-    git checkout -B v2.5.4 v2.5.4
-    git reset --hard v2.5.4
+    git checkout -B "${_MILVUS_LOCAL_BRANCH}" refs/tags/v2.5.4
+    git reset --hard refs/tags/v2.5.4
   elif git show-ref --verify --quiet refs/remotes/origin/v2.5.4; then
-    git checkout -B v2.5.4 origin/v2.5.4
-    git reset --hard origin/v2.5.4
+    git checkout -B "${_MILVUS_LOCAL_BRANCH}" refs/remotes/origin/v2.5.4
+    git reset --hard refs/remotes/origin/v2.5.4
   else
-    # Shallow clone of tag may be detached at the tag commit — stay there.
-    echo "NOTE: no v2.5.4 branch/tag ref; using current HEAD=$(git log -1 --oneline)" >&2
-    git checkout -B v2.5.4 HEAD
+    echo "NOTE: no v2.5.4 tag/remote ref; using current HEAD=$(git log -1 --oneline)" >&2
+    git checkout -B "${_MILVUS_LOCAL_BRANCH}" HEAD
   fi
   git clean -fd
-  echo "Reset complete: $(git log -1 --oneline)"
+  echo "Reset complete: $(git log -1 --oneline) (on ${_MILVUS_LOCAL_BRANCH})"
+  unset _MILVUS_LOCAL_BRANCH
 fi
 
 shopt -s nullglob
