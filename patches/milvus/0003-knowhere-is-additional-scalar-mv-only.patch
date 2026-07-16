@@ -1,0 +1,37 @@
+diff --git a/internal/core/src/index/VectorDiskIndex.cpp b/internal/core/src/index/VectorDiskIndex.cpp
+index 2821d07..67a3461 100644
+--- a/internal/core/src/index/VectorDiskIndex.cpp
++++ b/internal/core/src/index/VectorDiskIndex.cpp
+@@ -159,7 +159,12 @@ VectorDiskAnnIndex<T>::Build(const Config& config) {
+     }
+ 
+     auto opt_fields = GetValueFromConfig<OptFieldT>(config, VEC_OPT_FIELDS);
+-    if (opt_fields.has_value() && index_.IsAdditionalScalarSupported()) {
++    // Knowhere 2.5+: IsAdditionalScalarSupported(bool is_mv_only)
++    auto is_partition_key_isolation =
++        GetValueFromConfig<bool>(build_config, "partition_key_isolation");
++    if (opt_fields.has_value() &&
++        index_.IsAdditionalScalarSupported(
++            is_partition_key_isolation.value_or(false))) {
+         build_config[VEC_OPT_FIELDS_PATH] =
+             file_manager_->CacheOptFieldToDisk(opt_fields.value());
+         // `partition_key_isolation` is already in the config, so it falls through
+diff --git a/internal/core/src/index/VectorMemIndex.cpp b/internal/core/src/index/VectorMemIndex.cpp
+index cec3c05..3c8693e 100644
+--- a/internal/core/src/index/VectorMemIndex.cpp
++++ b/internal/core/src/index/VectorMemIndex.cpp
+@@ -287,8 +287,12 @@ VectorMemIndex<T>::Build(const Config& config) {
+ 
+     auto opt_fields = GetValueFromConfig<OptFieldT>(config, VEC_OPT_FIELDS);
+     std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info;
+-    if (opt_fields.has_value() && index_.IsAdditionalScalarSupported() &&
+-        config.value("partition_key_isolation", false)) {
++    // Knowhere 2.5+: IsAdditionalScalarSupported(bool is_mv_only)
++    auto is_partition_key_isolation =
++        GetValueFromConfig<bool>(config, "partition_key_isolation");
++    if (opt_fields.has_value() &&
++        index_.IsAdditionalScalarSupported(
++            is_partition_key_isolation.value_or(false))) {
+         scalar_info = file_manager_->CacheOptFieldToMemory(opt_fields.value());
+     }
+ 
