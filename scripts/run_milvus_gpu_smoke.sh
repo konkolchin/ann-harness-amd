@@ -1,152 +1,137 @@
 #!/usr/bin/env bash
-# Run Layer 3 Milvus GPU smoke: start deps + HIP milvus, then GPU_IVF_FLAT client.
+# Layer-3 smoke: start HIP Milvus Standalone and run GPU_IVF_FLAT on a SIFT slice.
+#
+# Prerequisites:
+#   - bin/milvus from scripts/build_milvus_layer3.sh
+#   - Layer 1.5 libs under $INSTALL_PREFIX
+#   - etcd + minio reachable (default: start via docker compose in milvus/)
+#   - data/sift-128-euclidean.hdf5 (or DATA_PATH)
 #
 # Usage:
 #   bash scripts/run_milvus_gpu_smoke.sh
-#   bash scripts/run_milvus_gpu_smoke.sh --skip-client   # only start server
-#   MILVUS_BIN=/path/to/milvus bash scripts/run_milvus_gpu_smoke.sh
+#   SKIP_START=1 bash scripts/run_milvus_gpu_smoke.sh   # milvus already running
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="${WORKDIR:-${HOME}/rocmds_check_gfx1100}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-${WORKDIR}/install}"
-ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 MILVUS_DIR="${MILVUS_DIR:-${WORKDIR}/milvus}"
+ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 SHIM_DIR="${SHIM_DIR:-${WORKDIR}/libshims}"
-COMPOSE_DIR="${COMPOSE_DIR:-${REPO_ROOT}/milvus-docker}"
 URI="${MILVUS_URI:-http://127.0.0.1:19530}"
-SKIP_CLIENT=0
-for a in "$@"; do
-  case "$a" in
-    --skip-client) SKIP_CLIENT=1 ;;
-  esac
-done
+DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/sift-128-euclidean.hdf5}"
+LOG_DIR="${LOG_DIR:-${WORKDIR}/logs}"
+MILVUS_LOG="${LOG_DIR}/milvus_gpu_standalone.log"
+PID_FILE="${LOG_DIR}/milvus_gpu_standalone.pid"
 
-export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
-export INSTALL_PREFIX ROCM_PATH
-export LD_LIBRARY_PATH="${INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}:/usr/lib/x86_64-linux-gnu"
-
-# Reuse Layer-2 gflags shim if present (Conan glog / gflags namespace).
-_gflags_preload="${SHIM_DIR}/libgflags_gflagsns.so"
-if [ -e "${_gflags_preload}" ]; then
-  export LD_PRELOAD="${_gflags_preload}${LD_PRELOAD:+:${LD_PRELOAD}}"
-  echo "Using gflags preload: ${_gflags_preload}"
+export MILVUS_HIP_INSTALL_PREFIX="${MILVUS_HIP_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
+export ROCM_PATH
+export PATH="${ROCM_PATH}/llvm/bin:${PATH}"
+export LD_LIBRARY_PATH="${MILVUS_HIP_INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${MILVUS_DIR}/internal/core/output/lib:${LD_LIBRARY_PATH:-}"
+if [ -d "${SHIM_DIR}" ]; then
+  export LD_LIBRARY_PATH="${SHIM_DIR}:${LD_LIBRARY_PATH}"
+fi
+# Prefer apt spdlog over incomplete hipRAFT copy if both exist.
+if [ -e /usr/lib/x86_64-linux-gnu/libspdlog.so ]; then
+  export LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libspdlog.so${LD_PRELOAD:+:$LD_PRELOAD}"
+fi
+if [ -e "${SHIM_DIR}/libgflags_gflagsns.so" ]; then
+  export LD_PRELOAD="${SHIM_DIR}/libgflags_gflagsns.so${LD_PRELOAD:+:$LD_PRELOAD}"
 fi
 
-find_milvus_bin() {
-  if [ -n "${MILVUS_BIN:-}" ] && [ -x "${MILVUS_BIN}" ]; then
-    echo "${MILVUS_BIN}"
-    return 0
-  fi
-  local c
-  for c in \
-    "${MILVUS_DIR}/bin/milvus" \
-    "${MILVUS_DIR}/cmake_build/milvus" \
-    "${MILVUS_DIR}/internal/core/output/bin/milvus" \
-    "${MILVUS_DIR}/out/bin/milvus"
-  do
-    if [ -x "$c" ]; then echo "$c"; return 0; fi
-  done
-  # last resort
-  find "${MILVUS_DIR}" -name milvus -type f -executable 2>/dev/null | head -1
-}
+mkdir -p "${LOG_DIR}"
 
-MILVUS_BIN="$(find_milvus_bin || true)"
-if [ -z "${MILVUS_BIN}" ]; then
+_milvus_bin=""
+for c in \
+  "${MILVUS_DIR}/bin/milvus" \
+  "${MILVUS_DIR}/internal/core/output/bin/milvus"
+do
+  if [ -x "$c" ]; then _milvus_bin="$c"; break; fi
+done
+if [ -z "${_milvus_bin}" ]; then
   echo "ERROR: milvus binary not found under ${MILVUS_DIR}" >&2
   echo "  Build first: bash scripts/build_milvus_layer3.sh" >&2
   exit 1
 fi
-echo "milvus binary: ${MILVUS_BIN}"
+echo "==> milvus: ${_milvus_bin}"
 
-# Start etcd + minio from harness compose; leave stock milvus-standalone stopped.
-if [ -f "${COMPOSE_DIR}/docker-compose.yml" ]; then
-  echo "==> ensure etcd/minio (stop stock milvus-standalone if running)"
-  cd "${COMPOSE_DIR}"
-  docker-compose stop standalone 2>/dev/null || true
-  docker-compose up -d etcd minio
-  sleep 5
-  docker-compose ps
-else
-  echo "WARNING: ${COMPOSE_DIR}/docker-compose.yml missing; assume etcd/minio already up" >&2
+if [ ! -f "${DATA_PATH}" ]; then
+  echo "ERROR: SIFT hdf5 not found: ${DATA_PATH}" >&2
+  echo "  wget --no-proxy https://ann-benchmarks.com/sift-128-euclidean.hdf5 -O ${DATA_PATH}" >&2
+  exit 1
 fi
 
-# Minimal milvus.yaml / env for standalone (use milvus defaults + user.yaml simd if present)
-_cfg_dir="${WORKDIR}/milvus_gpu_config"
-mkdir -p "${_cfg_dir}"
-if [ -f "${COMPOSE_DIR}/user.yaml" ]; then
-  cp -f "${COMPOSE_DIR}/user.yaml" "${_cfg_dir}/user.yaml"
+# Stop stock Docker standalone if it holds :19530
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'milvus-standalone'; then
+  echo "==> stopping docker milvus-standalone (frees :19530)"
+  docker stop milvus-standalone >/dev/null || true
 fi
 
-_log="${WORKDIR}/milvus_gpu_standalone.log"
-echo "==> start HIP milvus standalone (log: ${_log})"
-# Common Milvus env for docker-compose parity
-export ETCD_ENDPOINTS="${ETCD_ENDPOINTS:-127.0.0.1:2379}"
-export MINIO_ADDRESS="${MINIO_ADDRESS:-127.0.0.1:9000}"
-export MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
-export MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
+# Start etcd/minio via milvus docker-compose if present
+_compose="${MILVUS_DIR}/deployments/docker/dev/docker-compose.yml"
+if [ ! -f "${_compose}" ]; then
+  _compose="${MILVUS_DIR}/docker-compose.yml"
+fi
+if [ "${SKIP_DEPS:-0}" != "1" ] && [ -f "${_compose}" ] && command -v docker >/dev/null; then
+  echo "==> ensuring etcd/minio from ${_compose}"
+  (cd "$(dirname "${_compose}")" && docker compose -f "$(basename "${_compose}")" up -d etcd minio 2>/dev/null) \
+    || (cd "$(dirname "${_compose}")" && docker-compose -f "$(basename "${_compose}")" up -d etcd minio 2>/dev/null) \
+    || echo "NOTE: could not start etcd/minio via compose; ensure they are already running" >&2
+fi
 
-# Kill previous HIP milvus if we started one
-if [ -f "${WORKDIR}/milvus_gpu.pid" ]; then
-  _old="$(cat "${WORKDIR}/milvus_gpu.pid" || true)"
-  if [ -n "${_old}" ] && kill -0 "${_old}" 2>/dev/null; then
-    echo "Stopping previous milvus pid ${_old}"
-    kill "${_old}" || true
+wait_ready() {
+  local i
+  for i in $(seq 1 90); do
+    if curl -sf "${URI%/}/v1/vector/collections" >/dev/null 2>&1 \
+      || curl -sf "http://127.0.0.1:9091/healthz" >/dev/null 2>&1; then
+      echo "==> milvus healthy (${i}s)"
+      return 0
+    fi
+    # pymilvus ping alternative: TCP
+    if (echo >/dev/tcp/127.0.0.1/19530) >/dev/null 2>&1; then
+      # port open; give it a few more seconds for ready
+      sleep 2
+      echo "==> port 19530 open (${i}s)"
+      return 0
+    fi
     sleep 2
+  done
+  echo "ERROR: milvus not ready; see ${MILVUS_LOG}" >&2
+  tail -80 "${MILVUS_LOG}" >&2 || true
+  return 1
+}
+
+if [ "${SKIP_START:-0}" != "1" ]; then
+  if [ -f "${PID_FILE}" ] && kill -0 "$(cat "${PID_FILE}")" 2>/dev/null; then
+    echo "==> milvus already running pid=$(cat "${PID_FILE}")"
+  else
+    echo "==> starting milvus standalone (log: ${MILVUS_LOG})"
+    cd "${MILVUS_DIR}"
+    # shellcheck disable=SC2086
+    nohup env LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" LD_PRELOAD="${LD_PRELOAD:-}" \
+      "${_milvus_bin}" run standalone >"${MILVUS_LOG}" 2>&1 &
+    echo $! >"${PID_FILE}"
+    echo "    pid=$(cat "${PID_FILE}")"
   fi
+  wait_ready
+else
+  echo "==> SKIP_START=1; assuming milvus at ${URI}"
 fi
 
-# Docker etcd/minio publish to host; milvus binary must reach them on localhost.
-# If compose only exposes inside network, map ports — stock compose publishes 9000.
-nohup "${MILVUS_BIN}" run standalone >"${_log}" 2>&1 &
-echo $! >"${WORKDIR}/milvus_gpu.pid"
-echo "milvus pid $(cat "${WORKDIR}/milvus_gpu.pid")"
-
-echo "==> wait for healthz"
-_ok=0
-for _i in $(seq 1 60); do
-  if curl -sf http://127.0.0.1:9091/healthz >/dev/null 2>&1; then
-    echo "healthz OK"
-    _ok=1
-    break
-  fi
-  sleep 3
-done
-if [ "${_ok}" -ne 1 ]; then
-  echo "ERROR: milvus healthz not up; last log lines:" >&2
-  tail -80 "${_log}" >&2 || true
-  exit 1
-fi
-
-if [ "${SKIP_CLIENT}" -eq 1 ]; then
-  echo "Server up; skipping client (--skip-client)."
-  echo "  python ${REPO_ROOT}/scripts/run_milvus_hdf5.py --uri ${URI} --index-type GPU_IVF_FLAT --nlist 128 --nprobes 8,16"
-  exit 0
-fi
-
-echo "==> GPU_IVF_FLAT smoke via run_milvus_hdf5.py"
-_data="${REPO_ROOT}/data/sift-128-euclidean.hdf5"
-if [ ! -f "${_data}" ]; then
-  _data="${WORKDIR}/sift-128-euclidean.hdf5"
-fi
-if [ ! -f "${_data}" ]; then
-  echo "WARNING: SIFT hdf5 not found; creating tiny random smoke is not supported here." >&2
-  echo "  Place sift-128-euclidean.hdf5 under ${REPO_ROOT}/data/ or set --data" >&2
-  exit 1
-fi
-
-python3 "${REPO_ROOT}/scripts/run_milvus_hdf5.py" \
+echo "==> GPU_IVF_FLAT smoke (SIFT slice)"
+cd "${REPO_ROOT}"
+python3 scripts/run_milvus_hdf5.py \
   --uri "${URI}" \
-  --collection sift_gpu_smoke \
-  --data "${_data}" \
   --index-type GPU_IVF_FLAT \
   --nlist 128 \
   --nprobes 8,16 \
-  --insert-batch 10000 \
   --max-train-rows 50000 \
   --max-query-rows 500 \
-  --k 10
+  --data "${DATA_PATH}" \
+  --collection sift_gpu_ivf_smoke
 
 echo ""
-echo "Layer 3 smoke finished. Check ${_log} for HIP/Knowhere GPU lines."
-echo "Stop server: kill \$(cat ${WORKDIR}/milvus_gpu.pid)"
+echo "SMOKE OK"
+echo "  log: ${MILVUS_LOG}"
+echo "  Confirm HIP/Knowhere activity: grep -iE 'hip|cuvs|gpu_ivf|knowhere' ${MILVUS_LOG} | tail"
+echo "  Stop: kill \$(cat ${PID_FILE})"
