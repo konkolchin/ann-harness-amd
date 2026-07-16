@@ -110,7 +110,7 @@ set( GIT_REPOSITORY ${MILVUS_KNOWHERE_GIT_REPOSITORY} )
     replacement = """# Prefer hipVS/hipRAFT + ROCm ahead of Conan boost for find_package(cuvs/raft/hip).
 # Do NOT read ENV{INSTALL_PREFIX}: Milvus core_build.sh overwrites it to the Milvus
 # output tree, which hides hipVS/xxHash under ~/rocmds_check_gfx1100/install.
-# Do NOT prepend Knowhere Conan CMakeDeps generators — their xxHashConfig.cmake
+# Do NOT prepend Knowhere Conan CMakeDeps generators - their xxHashConfig.cmake
 # calls check_build_type_defined and breaks configure outside conan toolchain.
 set(_milvus_hip_prefix "$ENV{MILVUS_HIP_INSTALL_PREFIX}")
 if(_milvus_hip_prefix STREQUAL "")
@@ -186,7 +186,7 @@ def main() -> None:
         OUT.write_text(diff, encoding="utf-8", newline="\n")
         print(f"wrote {OUT} ({len(diff.splitlines())} lines)")
     finally:
-        shutil.rmtree(td)
+        shutil.rmtree(td, ignore_errors=True)
 
 
 if __name__ == "__main__":

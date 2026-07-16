@@ -1,5 +1,5 @@
 diff --git a/internal/core/thirdparty/knowhere/CMakeLists.txt b/internal/core/thirdparty/knowhere/CMakeLists.txt
-index bef8d2f..429c465 100644
+index bef8d2f..5ec4ee4 100644
 --- a/internal/core/thirdparty/knowhere/CMakeLists.txt
 +++ b/internal/core/thirdparty/knowhere/CMakeLists.txt
 @@ -14,10 +14,22 @@
@@ -27,7 +27,7 @@ index bef8d2f..429c465 100644
  
  message(STATUS "Building knowhere-${KNOWHERE_SOURCE_VER} from source")
  message(STATUS ${CMAKE_BUILD_TYPE})
-@@ -35,11 +47,48 @@ else ()
+@@ -35,11 +47,50 @@ else ()
  endif()
  
  if ( MILVUS_GPU_VERSION STREQUAL "ON" )
@@ -45,7 +45,7 @@ index bef8d2f..429c465 100644
 +# Prefer hipVS/hipRAFT + ROCm ahead of Conan boost for find_package(cuvs/raft/hip).
 +# Do NOT read ENV{INSTALL_PREFIX}: Milvus core_build.sh overwrites it to the Milvus
 +# output tree, which hides hipVS/xxHash under ~/rocmds_check_gfx1100/install.
-+# Do NOT prepend Knowhere Conan CMakeDeps generators — their xxHashConfig.cmake
++# Do NOT prepend Knowhere Conan CMakeDeps generators - their xxHashConfig.cmake
 +# calls check_build_type_defined and breaks configure outside conan toolchain.
 +set(_milvus_hip_prefix "$ENV{MILVUS_HIP_INSTALL_PREFIX}")
 +if(_milvus_hip_prefix STREQUAL "")
@@ -81,7 +81,7 @@ index bef8d2f..429c465 100644
          knowhere
          GIT_REPOSITORY  ${GIT_REPOSITORY}
          GIT_TAG         ${KNOWHERE_VERSION}
-@@ -47,14 +96,15 @@ FetchContent_Declare(
+@@ -47,14 +98,15 @@ FetchContent_Declare(
          BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/knowhere-build
          DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )
  
