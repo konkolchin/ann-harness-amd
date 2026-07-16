@@ -151,8 +151,11 @@ set -e
 if [ "${_build_rc}" -ne 0 ]; then
   echo ""
   echo "BUILD FAILED (exit ${_build_rc}). CMake / make errors:" >&2
-  grep -iE 'CMake Error|Configuring incomplete|No rule to make target|fatal error:|undefined reference|ConanException|Error downloading' \
-    "${LOG}" | tail -50 >&2 || true
+  grep -iE 'CMake Error|Configuring incomplete|No rule to make target|fatal error:|error:|undefined reference|ld\.lld:|linker command failed|ConanException|Error downloading|FAILED:|Stop\.' \
+    "${LOG}" | grep -viE 'deprecated|FMT_DEPRECATED|-Wdeprecated|note:|warning:' | tail -60 >&2 || true
+  echo "" >&2
+  echo "---- last 40 log lines ----" >&2
+  tail -40 "${LOG}" >&2
   echo "" >&2
   echo "Full log: ${LOG}" >&2
   echo "Tip: FORCE_CLEAN_CMAKE=1 SKIP_CLONE=1 bash scripts/build_milvus_layer3.sh" >&2
