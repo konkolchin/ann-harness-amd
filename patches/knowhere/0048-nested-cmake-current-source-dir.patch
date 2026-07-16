@@ -1,0 +1,29 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 1111111..2222222 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -88,9 +88,11 @@
+   target_compile_options(knowhere PRIVATE "SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+   message(STATUS "KNOWHERE WITH_HIP: knowhere SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+ 
+-  # Single .cu TU: -fgpu-rdc + --hip-link deduplicates raft device templates once.
++  # Single .cu TU: -fgpu-rdc + --hip-link deduplicates raft device templates once.
++  # Use CMAKE_CURRENT_SOURCE_DIR (Knowhere root), not CMAKE_SOURCE_DIR — when Milvus
++  # add_subdirectory()'s Knowhere, CMAKE_SOURCE_DIR is Milvus internal/core.
+   set(_knowhere_cuvs_cu
+-    "${CMAKE_SOURCE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu")
++    "${CMAKE_CURRENT_SOURCE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu")
+   if(_knowhere_cuvs_cu)
+     add_library(knowhere_cuvs_hip STATIC ${_knowhere_cuvs_cu})
+     set_source_files_properties(${_knowhere_cuvs_cu} PROPERTIES LANGUAGE CXX)
+@@ -102,8 +104,8 @@
+       THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP
+       _LIBCUDACXX_ALLOW_UNSUPPORTED_ARCHITECTURE)
+     target_include_directories(knowhere_cuvs_hip PRIVATE
+-      "${CMAKE_SOURCE_DIR}/src"
+-      "${CMAKE_SOURCE_DIR}/include")
++      "${CMAKE_CURRENT_SOURCE_DIR}/src"
++      "${CMAKE_CURRENT_SOURCE_DIR}/include")
+     if(EXISTS "${_knowhere_fixup_rocm}/include/hipcub")
+       target_include_directories(knowhere_cuvs_hip SYSTEM PRIVATE
+         "${_knowhere_fixup_rocm}/include/hipcub")

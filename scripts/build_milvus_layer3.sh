@@ -84,6 +84,29 @@ bash "${REPO_ROOT}/scripts/apply_milvus_layer3_patches.sh" "${MILVUS_DIR}"
 CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS:-}"
 if [ -f "${KNOWHERE_DIR}/CMakeLists.txt" ] && grep -q 'Early WITH_HIP before project' "${KNOWHERE_DIR}/CMakeLists.txt" 2>/dev/null; then
   echo "==> using local HIP Knowhere: ${KNOWHERE_DIR}"
+  # Nested under Milvus: CMAKE_SOURCE_DIR is Milvus internal/core, not Knowhere.
+  # Patch 0034 used CMAKE_SOURCE_DIR for cuvs_knowhere_index_hip.cu — fix in place.
+  _kh_fixup="${KNOWHERE_DIR}/cmake/libs/knowhere_hip_host_fixup.cmake"
+  if [ -f "${_kh_fixup}" ] && grep -q 'CMAKE_SOURCE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu' "${_kh_fixup}"; then
+    echo "==> fixing nested CMAKE_SOURCE_DIR -> CMAKE_CURRENT_SOURCE_DIR in knowhere_hip_host_fixup.cmake"
+    sed -i 's|${CMAKE_SOURCE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu|${CMAKE_CURRENT_SOURCE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu|g' "${_kh_fixup}"
+    sed -i 's|"${CMAKE_SOURCE_DIR}/src"|"${CMAKE_CURRENT_SOURCE_DIR}/src"|g' "${_kh_fixup}"
+    sed -i 's|"${CMAKE_SOURCE_DIR}/include"|"${CMAKE_CURRENT_SOURCE_DIR}/include"|g' "${_kh_fixup}"
+  fi
+  if [ -f "${KNOWHERE_DIR}/cmake/libs/knowhere_hip_link.cmake" ]; then
+    # Some Layer-2 patches include hip_link via CMAKE_SOURCE_DIR.
+    find "${KNOWHERE_DIR}/cmake" -name '*.cmake' -print0 2>/dev/null \
+      | xargs -0 grep -l 'include(\${CMAKE_SOURCE_DIR}/cmake/libs/knowhere_hip_link.cmake)' 2>/dev/null \
+      | while read -r _f; do
+          sed -i 's|include(${CMAKE_SOURCE_DIR}/cmake/libs/knowhere_hip_link.cmake)|include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/libs/knowhere_hip_link.cmake)|g' "${_f}"
+          echo "==> fixed hip_link include in ${_f}"
+        done || true
+  fi
+  if [ ! -f "${KNOWHERE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu" ]; then
+    echo "ERROR: missing ${KNOWHERE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu" >&2
+    echo "  Re-apply Layer-2 patches (0034) on knowhere." >&2
+    exit 1
+  fi
   CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -DMILVUS_KNOWHERE_SOURCE_DIR=${KNOWHERE_DIR}"
 else
   echo "==> FetchContent will pull DXC Knowhere 2.5 (set KNOWHERE_DIR to override)"
