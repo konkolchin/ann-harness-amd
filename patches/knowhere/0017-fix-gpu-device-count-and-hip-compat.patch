@@ -1,0 +1,171 @@
+diff --git a/src/common/cuvs/integration/cuda_compat.hpp b/src/common/cuvs/integration/cuda_compat.hpp
+index 0000000..1111111 100644
+@@ -1,31 +1,15 @@
+ /**
+- * CUDA runtime shims for knowhere cuVS host code on ROCm.
+- * No HIP headers here — avoids pulling device bf16/fp16 into every TU.
+- * Symbols resolve via libamdhip64 (pulled in through raft/cuvs).
++ * CUDA runtime shims for knowhere cuVS host code on ROCm (clang++).
+  */
+ #pragma once
+ 
+ #ifdef KNOWHERE_WITH_HIP
+-#include <cstddef>
++#ifndef warpSize
++#define warpSize 64
++#endif
++#include <hip/hip_runtime_api.h>
+ 
+-using hipError_t = int;
+-using cudaError_t = hipError_t;
+-constexpr hipError_t hipSuccess = 0;
+ #define cudaSuccess hipSuccess
+-
+-extern "C" {
+-hipError_t hipGetDeviceCount(int* count);
+-const char* hipGetErrorString(hipError_t error);
+-hipError_t hipMemGetInfo(std::size_t* free, std::size_t* total);
+-hipError_t hipSetDevice(int deviceId);
+-hipError_t hipGetDevice(int* deviceId);
+-hipError_t hipDeviceSynchronize(void);
+-hipError_t hipMalloc(void** ptr, std::size_t size);
+-hipError_t hipFree(void* ptr);
+-hipError_t hipMemcpy(void* dst, const void* src, std::size_t sizeBytes, int kind);
+-hipError_t hipMemcpyAsync(void* dst, const void* src, std::size_t sizeBytes, int kind, void* stream);
+-}
+-
+ #define cudaGetDeviceCount hipGetDeviceCount
+ #define cudaGetErrorString hipGetErrorString
+ #define cudaSetDevice hipSetDevice
+@@ -36,6 +20,7 @@
+ #define cudaMemcpy hipMemcpy
+ #define cudaMemcpyAsync hipMemcpyAsync
+ #define cudaMemGetInfo hipMemGetInfo
++typedef hipError_t cudaError_t;
+ 
+ #else
+ #include <cuda_runtime_api.h>
+diff --git a/src/common/cuvs/integration/knowhere_gpu_device_count.hpp b/src/common/cuvs/integration/knowhere_gpu_device_count.hpp
+index 0000000..1111111 100644
+@@ -0,0 +1,12 @@
++#pragma once
++
++#ifdef KNOWHERE_WITH_HIP
++#ifndef warpSize
++#define warpSize 64
++#endif
++#include "common/cuvs/integration/cuda_compat.hpp"
++#define KNOWHERE_GPU_GET_DEVICE_COUNT(count)     do {                                             if (cudaGetDeviceCount(count) != cudaSuccess) {             *(count) = 0;                            }                                        } while (0)
++#else
++#include <raft/util/cuda_rt_essentials.hpp>
++#define KNOWHERE_GPU_GET_DEVICE_COUNT(count) RAFT_CUDA_TRY(cudaGetDeviceCount(count))
++#endif
+diff --git a/src/common/cuvs/integration/type_mappers.hpp b/src/common/cuvs/integration/type_mappers.hpp
+index 0000000..1111111 100644
+@@ -22,12 +22,6 @@
+ #include "common/cuvs/proto/cuvs_index_kind.hpp"
+ #include "knowhere/operands.h"
+ 
+-#ifdef KNOWHERE_WITH_HIP
+-// Host tag for fp16 templates; fp16 kernels live in libcuvs.so
+-using half = std::uint16_t;
+-#else
+-#include <cuda_fp16.h>
+-#endif
+ 
+ namespace cuvs_knowhere {
+ 
+@@ -83,7 +77,11 @@
+ };
+ template <>
+ struct cuvs_data_type_mapper<knowhere::fp16> : std::true_type {
++#ifdef KNOWHERE_WITH_HIP
++    using data_type = std::uint16_t;
++#else
+     using data_type = half;
++#endif
+ };
+ template <>
+ struct cuvs_data_type_mapper<knowhere::int8> : std::true_type {
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_brute_force.cc b/src/index/gpu_cuvs/gpu_cuvs_brute_force.cc
+index 0000000..1111111 100644
+@@ -15,13 +15,13 @@
+  * limitations under the License.
+  */
+ 
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ #include <vector>
+ 
+ #include "common/cuvs/proto/cuvs_index_kind.hpp"
+ #include "gpu_cuvs.h"
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+-#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ 
+ namespace knowhere {
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_BRUTE_FORCE, GpuCuvsBruteForceIndexNode, fp32,
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_ivf_pq.cc b/src/index/gpu_cuvs/gpu_cuvs_ivf_pq.cc
+index 0000000..1111111 100644
+@@ -15,13 +15,13 @@
+  * limitations under the License.
+  */
+ 
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ #include <vector>
+ 
+ #include "common/cuvs/proto/cuvs_index_kind.hpp"
+ #include "gpu_cuvs.h"
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+-#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ 
+ namespace knowhere {
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_PQ, GpuCuvsIvfPqIndexNode, fp32,
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_cagra.cc b/src/index/gpu_cuvs/gpu_cuvs_cagra.cc
+index 0000000..1111111 100644
+@@ -15,6 +15,7 @@
+  * limitations under the License.
+  */
+ 
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ #include <vector>
+ 
+ #include "common/cuvs/proto/cuvs_index_kind.hpp"
+@@ -24,7 +25,6 @@
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+ #include "raft/core/device_resources.hpp"
+-#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ namespace knowhere {
+ 
+ template <typename DataType>
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc b/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc
+index 0000000..1111111 100644
+@@ -15,6 +15,7 @@
+  * limitations under the License.
+  */
+ 
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ #include <vector>
+ 
+ #include "common/cuvs/proto/cuvs_index_kind.hpp"
+@@ -22,7 +23,6 @@
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+ 
+-#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ 
+ namespace knowhere {
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_FLAT, GpuCuvsIvfFlatIndexNode, fp32,
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0000000..1111111 100644
+@@ -89,7 +89,8 @@
+   target_compile_definitions(knowhere PRIVATE
+     KNOWHERE_WITH_HIP
+     THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP
+-    THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP)
++    THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP
++    warpSize=64)
+   if(EXISTS "${_knowhere_fixup_rocm}/include/hipcub")
+     target_include_directories(knowhere SYSTEM PRIVATE "${_knowhere_fixup_rocm}/include/hipcub")
+   endif()

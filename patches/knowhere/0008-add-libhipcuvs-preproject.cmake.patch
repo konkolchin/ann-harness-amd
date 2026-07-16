@@ -1,0 +1,24 @@
+diff --git a/cmake/libs/libhipcuvs_preproject.cmake b/cmake/libs/libhipcuvs_preproject.cmake
+new file mode 100644
+index 0000000..fc951e4
+--- /dev/null
++++ b/cmake/libs/libhipcuvs_preproject.cmake
+@@ -0,0 +1,18 @@
++# Must run before project(): host g++ wrapper strips HIP --offload-arch flags.
++find_program(_knowhere_real_cxx NAMES g++ c++ REQUIRED)
++set(_knowhere_gxx_wrapper "${CMAKE_CURRENT_BINARY_DIR}/knowhere-g++-host.sh")
++file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
++set -euo pipefail
++_real_cxx=\"${_knowhere_real_cxx}\"
++args=()
++for arg in \"\$@\"; do
++  case \"\$arg\" in
++    --offload-arch=*| -offload-arch=*) continue ;;
++  esac
++  args+=(\"\$arg\")
++done
++exec \"\${_real_cxx}\" \"\${args[@]}\"
++")
++file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
++set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips --offload-arch)" FORCE)
++message(STATUS "KNOWHERE WITH_HIP: pre-project CXX=${CMAKE_CXX_COMPILER}")

@@ -1,0 +1,19 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 1317b76..2c4fbba 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -57,7 +57,13 @@ if(TARGET knowhere AND _knowhere_fixup_rocm)
+   find_package(OpenMP REQUIRED)
+   if(OpenMP_CXX_FLAGS)
+     target_compile_options(knowhere PRIVATE "SHELL:${OpenMP_CXX_FLAGS}")
+-    target_link_options(knowhere PUBLIC "SHELL:${OpenMP_CXX_FLAGS}")
++  endif()
++  if(TARGET OpenMP::OpenMP_CXX)
++    target_link_libraries(knowhere PUBLIC OpenMP::OpenMP_CXX)
++  elseif(OpenMP_CXX_LIBRARIES)
++    target_link_libraries(knowhere PUBLIC ${OpenMP_CXX_LIBRARIES})
++  else()
++    target_link_libraries(knowhere PUBLIC gomp)
+   endif()
+   target_compile_definitions(knowhere PRIVATE
+     KNOWHERE_WITH_HIP

@@ -1,0 +1,44 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index d91b5ed..1d9f917 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -116,10 +116,27 @@ function(knowhere_hip_link_rmm _target)
+     endforeach()
+     list(REMOVE_DUPLICATES _knowhere_logger_cpp_files)
+     if(_knowhere_logger_cpp_files)
+-      target_sources(${_target} PRIVATE ${_knowhere_logger_cpp_files})
+-      foreach(_knowhere_logger_cpp IN LISTS _knowhere_logger_cpp_files)
+-        message(STATUS "KNOWHERE WITH_HIP: ${_target} compiles logger from ${_knowhere_logger_cpp}")
+-      endforeach()
++      # knowhere itself is built with -x hip; logger.cpp must stay host C++ or
++      # raft::logger / rmm::logger symbols never appear in libknowhere.so.
++      set(_knowhere_logger_obj "knowhere_hip_loggers_${_target}")
++      string(REPLACE "::" "_" _knowhere_logger_obj "${_knowhere_logger_obj}")
++      if(NOT TARGET ${_knowhere_logger_obj})
++        add_library(${_knowhere_logger_obj} STATIC ${_knowhere_logger_cpp_files})
++        set_target_properties(${_knowhere_logger_obj} PROPERTIES
++          POSITION_INDEPENDENT_CODE ON
++          LINKER_LANGUAGE CXX)
++        foreach(_knowhere_logger_cpp IN LISTS _knowhere_logger_cpp_files)
++          set_source_files_properties("${_knowhere_logger_cpp}" TARGET_DIRECTORY
++            ${_knowhere_logger_obj} PROPERTIES LANGUAGE CXX)
++          message(STATUS
++            "KNOWHERE WITH_HIP: ${_target} host-compiles logger via ${_knowhere_logger_obj} from ${_knowhere_logger_cpp}")
++        endforeach()
++      endif()
++      target_link_libraries(${_target} PRIVATE "-Wl,--push-state"
++                            "$<LINK_LIBRARY:WHOLE_ARCHIVE,${_knowhere_logger_obj}>"
++                            "-Wl,--pop-state")
++      message(STATUS
++        "KNOWHERE WITH_HIP: ${_target} WHOLE_ARCHIVE host logger lib ${_knowhere_logger_obj}")
+       set(_knowhere_logger_resolved TRUE)
+     elseif(_knowhere_legacy_rmm_logger)
+       message(WARNING
+@@ -129,6 +146,7 @@ function(knowhere_hip_link_rmm _target)
+         "KNOWHERE WITH_HIP: rmm logger impl not found; libknowhere may have undefined rmm::logger symbols")
+     endif()
+     unset(_knowhere_logger_candidates)
++    unset(_knowhere_logger_obj)
+   endif()
+ 
+   if(_knowhere_logger_resolved OR _knowhere_librapids_logger OR _knowhere_librmm OR _knowhere_libraft)

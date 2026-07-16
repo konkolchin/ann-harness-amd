@@ -1,0 +1,46 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0000000..1111111 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -20,12 +20,26 @@
+   set(_knowhere_want_hip OFF)
+   if(DEFINED ENV{KNOWHERE_WITH_HIP} AND NOT "$ENV{KNOWHERE_WITH_HIP}" STREQUAL "0")
+     set(_knowhere_want_hip ON)
+-  elseif(DEFINED ENV{INSTALL_PREFIX}
+-         AND EXISTS "$ENV{INSTALL_PREFIX}/lib/cmake/cuvs/cuvs-config.cmake")
+-    set(_knowhere_want_hip ON)
++  elseif(DEFINED ENV{INSTALL_PREFIX})
++    set(_knowhere_install_prefix "$ENV{INSTALL_PREFIX}")
++    if(_knowhere_install_prefix MATCHES "^~")
++      if(DEFINED ENV{HOME})
++        string(REPLACE "~" "$ENV{HOME}" _knowhere_install_prefix "${_knowhere_install_prefix}")
++      endif()
++    endif()
++    get_filename_component(_knowhere_install_prefix "${_knowhere_install_prefix}" ABSOLUTE)
++    if(EXISTS "${_knowhere_install_prefix}/lib/cmake/cuvs/cuvs-config.cmake")
++      set(_knowhere_want_hip ON)
++    endif()
+   endif()
+   set(WITH_HIP ${_knowhere_want_hip} CACHE BOOL
+       "Link prebuilt hipVS/hipRAFT (ROCm) instead of CUDA cuVS")
++  if(DEFINED _knowhere_install_prefix)
++    message(STATUS "KNOWHERE: INSTALL_PREFIX=${_knowhere_install_prefix} -> WITH_HIP=${WITH_HIP}")
++    unset(_knowhere_install_prefix)
++  else()
++    message(STATUS "KNOWHERE: WITH_HIP=${WITH_HIP}")
++  endif()
+   unset(_knowhere_want_hip)
+ endif()
+ if(WITH_HIP)
+@@ -44,6 +58,11 @@
+ 
+ knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
+ knowhere_option(WITH_HIP "Link prebuilt hipVS/hipRAFT (ROCm) instead of CUDA cuVS" OFF)
++message(STATUS "KNOWHERE: WITH_CUVS=${WITH_CUVS} WITH_HIP=${WITH_HIP}")
++if(WITH_HIP AND NOT WITH_CUVS)
++  message(FATAL_ERROR
++    "WITH_HIP=ON but WITH_CUVS=OFF. Re-run: conan install .. -o with_cuvs=True ; cmake -DWITH_CUVS=ON")
++endif()
+ if(WITH_CUVS AND WITH_HIP)
+   include(cmake/libs/libhipcuvs.cmake)
+ elseif(WITH_CUVS)

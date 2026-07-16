@@ -1,0 +1,313 @@
+diff --git a/src/common/cuvs/integration/cuda_compat.hpp b/src/common/cuvs/integration/cuda_compat.hpp
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/common/cuvs/integration/cuda_compat.hpp
++/**
++ * CUDA runtime / fp16 headers for knowhere cuVS integration.
++ * On ROCm (KNOWHERE_WITH_HIP) map to HIP equivalents used by prebuilt hipRAFT/hipVS.
++ */
++#pragma once
++
++#ifdef KNOWHERE_WITH_HIP
++#include <hip/hip_runtime.h>
++
++#ifndef cudaSuccess
++#define cudaSuccess hipSuccess
++#endif
++#ifndef cudaError_t
++typedef hipError_t cudaError_t;
++#endif
++#ifndef cudaGetDeviceCount
++#define cudaGetDeviceCount hipGetDeviceCount
++#endif
++#ifndef cudaGetErrorString
++#define cudaGetErrorString hipGetErrorString
++#endif
++#ifndef cudaSetDevice
++#define cudaSetDevice hipSetDevice
++#endif
++#ifndef cudaGetDevice
++#define cudaGetDevice hipGetDevice
++#endif
++#ifndef cudaDeviceSynchronize
++#define cudaDeviceSynchronize hipDeviceSynchronize
++#endif
++#ifndef cudaMalloc
++#define cudaMalloc hipMalloc
++#endif
++#ifndef cudaFree
++#define cudaFree hipFree
++#endif
++#ifndef cudaMemcpy
++#define cudaMemcpy hipMemcpy
++#endif
++#ifndef cudaMemcpyAsync
++#define cudaMemcpyAsync hipMemcpyAsync
++#endif
++#ifndef cudaMemGetInfo
++#define cudaMemGetInfo hipMemGetInfo
++#endif
++
++#include <hip/hip_fp16.h>
++#ifndef half
++typedef __half half;
++#endif
++
++#else
++#include <cuda_runtime_api.h>
++#include <cuda_fp16.h>
++#endif
+
+diff --git a/src/common/cuvs/integration/knowhere_gpu_device_count.hpp b/src/common/cuvs/integration/knowhere_gpu_device_count.hpp
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/common/cuvs/integration/knowhere_gpu_device_count.hpp
++#pragma once
++
++#ifdef KNOWHERE_WITH_HIP
++#include "common/cuvs/integration/cuda_compat.hpp"
++#define KNOWHERE_GPU_GET_DEVICE_COUNT(count) \
++    do {                                     \
++        if (cudaGetDeviceCount(count) != cudaSuccess) { \
++            *(count) = 0;                    \
++        }                                    \
++    } while (0)
++#else
++#include <raft/util/cuda_rt_essentials.hpp>
++#define KNOWHERE_GPU_GET_DEVICE_COUNT(count) RAFT_CUDA_TRY(cudaGetDeviceCount(count))
++#endif
+
+diff --git a/src/common/cuvs/integration/raft_initialization.cc b/src/common/cuvs/integration/raft_initialization.cc
+index 0000000..1111111 100644
+@@ -16,7 +16,7 @@
+  */
+ #include "common/cuvs/integration/raft_initialization.hpp"
+ 
+-#include <cuda_runtime_api.h>
++#include "common/cuvs/integration/cuda_compat.hpp"
+ 
+ #include <cstddef>
+ #include <raft/core/device_resources_manager.hpp>
+diff --git a/src/common/cuvs/integration/type_mappers.hpp b/src/common/cuvs/integration/type_mappers.hpp
+index 0000000..1111111 100644
+@@ -15,7 +15,7 @@
+  * limitations under the License.
+  */
+ #pragma once
+-#include <cuda_fp16.h>
++#include "common/cuvs/integration/cuda_compat.hpp"
+ 
+ #include <cstdint>
+ #include <type_traits>
+diff --git a/src/common/comp/knowhere_config.cc b/src/common/comp/knowhere_config.cc
+index 0000000..1111111 100644
+@@ -25,7 +25,7 @@
+ #endif
+ #ifdef KNOWHERE_WITH_CUVS
+ #include "common/cuvs/integration/raft_initialization.hpp"
+-#include "cuda_runtime_api.h"
++#include "common/cuvs/integration/cuda_compat.hpp"
+ #endif
+ #include "simd/hook.h"
+ 
+diff --git a/src/index/index_factory.cc b/src/index/index_factory.cc
+index 0000000..1111111 100644
+@@ -15,7 +15,7 @@
+ #include "simd/hook.h"
+ 
+ #ifdef KNOWHERE_WITH_CUVS
+-#include <cuda_runtime_api.h>
++#include "common/cuvs/integration/cuda_compat.hpp"
+ #endif
+ 
+ namespace knowhere {
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_brute_force.cc b/src/index/gpu_cuvs/gpu_cuvs_brute_force.cc
+index 0000000..1111111 100644
+@@ -21,31 +21,31 @@
+ #include "gpu_cuvs.h"
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+-#include "raft/util/cuda_rt_essentials.hpp"
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ 
+ namespace knowhere {
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_BRUTE_FORCE, GpuCuvsBruteForceIndexNode, fp32,
+                                           knowhere::feature::GPU_KNN_FLOAT_INDEX, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_BRUTE_FORCE, GpuCuvsBruteForceIndexNode, fp32,
+                                           knowhere::feature::GPU_KNN_FLOAT_INDEX, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_BRUTE_FORCE, GpuCuvsBruteForceIndexNode, fp16,
+                                           knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_BRUTE_FORCE, GpuCuvsBruteForceIndexNode, fp16,
+                                           knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ }  // namespace knowhere
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_cagra.cc b/src/index/gpu_cuvs/gpu_cuvs_cagra.cc
+index 0000000..1111111 100644
+@@ -24,7 +24,7 @@
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+ #include "raft/core/device_resources.hpp"
+-#include "raft/util/cuda_rt_essentials.hpp"
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ namespace knowhere {
+ 
+ template <typename DataType>
+@@ -168,51 +168,51 @@
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, fp32,
+                                           knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, fp32,
+                                           knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ 
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
+                                           knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
+                                           knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ // TODO: Add HNSW support for INT8. Not using the hybrid CAGRA+HNSW for INT8
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraIndexNode, int8,
+                                           knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraIndexNode, int8,
+                                           knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, bin1,
+                                           knowhere::feature::GPU | knowhere::feature::BINARY, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, bin1,
+                                           knowhere::feature::GPU | knowhere::feature::BINARY, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ 
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc b/src/index/gpu_cuvs/gpu_cuvs_ivf_flat.cc
+index 0000000..1111111 100644
+@@ -22,18 +22,7 @@
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+ 
+-#ifdef KNOWHERE_WITH_HIP
+-#include <hip/hip_runtime.h>
+-#define KNOWHERE_GPU_GET_DEVICE_COUNT(count) \
+-  do {                                       \
+-    if (hipGetDeviceCount(count) != hipSuccess) { \
+-      *(count) = 0;                          \
+-    }                                        \
+-  } while (0)
+-#else
+-#include "raft/util/cuda_rt_essentials.hpp"
+-#define KNOWHERE_GPU_GET_DEVICE_COUNT(count) RAFT_CUDA_TRY(cudaGetDeviceCount(count))
+-#endif
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ 
+ namespace knowhere {
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_FLAT, GpuCuvsIvfFlatIndexNode, fp32,
+diff --git a/src/index/gpu_cuvs/gpu_cuvs_ivf_pq.cc b/src/index/gpu_cuvs/gpu_cuvs_ivf_pq.cc
+index 0000000..1111111 100644
+@@ -21,14 +21,14 @@
+ #include "gpu_cuvs.h"
+ #include "knowhere/index/index_factory.h"
+ #include "knowhere/index/index_node_thread_pool_wrapper.h"
+-#include "raft/util/cuda_rt_essentials.hpp"
++#include "common/cuvs/integration/knowhere_gpu_device_count.hpp"
+ 
+ namespace knowhere {
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_PQ, GpuCuvsIvfPqIndexNode, fp32,
+                                           knowhere::feature::GPU_ANN_FLOAT_INDEX,
+                                           []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }()
+ 
+@@ -36,31 +36,31 @@
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_PQ, GpuCuvsIvfPqIndexNode, fp32,
+                                           knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_PQ, GpuCuvsIvfPqIndexNode, fp16,
+                                           knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_PQ, GpuCuvsIvfPqIndexNode, fp16,
+                                           knowhere::feature::GPU | knowhere::feature::FP16, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_IVF_PQ, GpuCuvsIvfPqIndexNode, int8,
+                                           knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_IVF_PQ, GpuCuvsIvfPqIndexNode, int8,
+                                           knowhere::feature::GPU | knowhere::feature::INT8, []() {
+                                               int count;
+-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
++                                              KNOWHERE_GPU_GET_DEVICE_COUNT(&count);
+                                               return count * cuda_concurrent_size_per_device;
+                                           }());
+ }  // namespace knowhere

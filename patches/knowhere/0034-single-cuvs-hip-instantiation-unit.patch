@@ -1,0 +1,47 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0000000..1111111 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -88,7 +88,9 @@
+   target_compile_options(knowhere PRIVATE "SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+   message(STATUS "KNOWHERE WITH_HIP: knowhere SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+ 
+-  knowhere_file_glob(GLOB_RECURSE _knowhere_cuvs_cu src/common/cuvs/*.cu)
++  # Single .cu TU: -fgpu-rdc + --hip-link deduplicates raft device templates once.
++  set(_knowhere_cuvs_cu
++    "${CMAKE_SOURCE_DIR}/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu")
+   if(_knowhere_cuvs_cu)
+     add_library(knowhere_cuvs_hip STATIC ${_knowhere_cuvs_cu})
+     set_source_files_properties(${_knowhere_cuvs_cu} PROPERTIES LANGUAGE CXX)
+diff --git a/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu b/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/common/cuvs/integration/cuvs_knowhere_index_hip.cu
+@@ -0,0 +1,26 @@
++/**
++ * HIP-only explicit instantiations for cuvs_knowhere_index.
++ * Keep all template struct exports in one .cu so -fgpu-rdc/--hip-link does not
++ * emit duplicate raft::convert_to_device_type device symbols across TUs.
++ */
++#include "common/cuvs/integration/cuvs_knowhere_index.cuh"
++#include "common/cuvs/proto/cuvs_index_kind.hpp"
++
++namespace cuvs_knowhere {
++
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, knowhere::fp32>;
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::brute_force, knowhere::fp16>;
++
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::fp32>;
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_flat, knowhere::int8>;
++
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, knowhere::fp32>;
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, knowhere::fp16>;
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::ivf_pq, knowhere::int8>;
++
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp32>;
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::fp16>;
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::int8>;
++template struct cuvs_knowhere_index<cuvs_proto::cuvs_index_kind::cagra, knowhere::bin1>;
++
++}  // namespace cuvs_knowhere

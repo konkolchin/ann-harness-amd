@@ -1,0 +1,26 @@
+diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
+index 7122e12..c39ed06 100644
+--- a/cmake/libs/libhipcuvs.cmake
++++ b/cmake/libs/libhipcuvs.cmake
+@@ -63,3 +63,21 @@ message(STATUS "KNOWHERE WITH_HIP: ROCm prefix ${_knowhere_rocm_prefix}")
+ message(STATUS "KNOWHERE WITH_HIP: hip from ${hip_DIR}")
+ message(STATUS "KNOWHERE WITH_HIP: raft from ${raft_DIR}")
+ message(STATUS "KNOWHERE WITH_HIP: cuvs from ${cuvs_DIR}")
++
++find_program(_knowhere_real_cxx NAMES g++ c++ REQUIRED)
++set(_knowhere_gxx_wrapper "${CMAKE_BINARY_DIR}/knowhere-g++-host.sh")
++file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
++set -euo pipefail
++_real_cxx=\"${_knowhere_real_cxx}\"
++args=()
++for arg in \"\$@\"; do
++  case \"\$arg\" in
++    --offload-arch=*| -offload-arch=*) continue ;;
++  esac
++  args+=(\"\$arg\")
++done
++exec \"\${_real_cxx}\" \"\${args[@]}\"
++")
++file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
++set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips --offload-arch)" FORCE)
++message(STATUS "KNOWHERE WITH_HIP: host C++ via ${_knowhere_gxx_wrapper}")

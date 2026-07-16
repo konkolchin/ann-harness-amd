@@ -1,0 +1,43 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index 6849901..bf43502 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -125,16 +125,25 @@ function(knowhere_hip_link_rmm _target)
+         set_target_properties(${_knowhere_logger_obj} PROPERTIES
+           POSITION_INDEPENDENT_CODE ON
+           LINKER_LANGUAGE CXX)
++        # Instantiate spdlog in this TU (matching Knowhere ABI). Avoids runtime
++        # lookup into incomplete hipRAFT libspdlog.so.1.14 or ABI-mismatched apt.
++        target_compile_definitions(${_knowhere_logger_obj} PRIVATE
++          SPDLOG_HEADER_ONLY
++          SPDLOG_FMT_EXTERNAL=0)
+         foreach(_prefix IN LISTS _knowhere_prefixes)
+           if(EXISTS "${_prefix}/include")
+             target_include_directories(${_knowhere_logger_obj} PRIVATE "${_prefix}/include")
+           endif()
+         endforeach()
+-        # Conan / system spdlog (logger_impl.hpp needs spdlog/details/log_msg.h).
+-        if(TARGET spdlog::spdlog)
+-          target_link_libraries(${_knowhere_logger_obj} PRIVATE spdlog::spdlog)
+-        elseif(TARGET spdlog::spdlog_header_only)
++        # Conan / system spdlog headers only (implementations come from HEADER_ONLY).
++        if(TARGET spdlog::spdlog_header_only)
+           target_link_libraries(${_knowhere_logger_obj} PRIVATE spdlog::spdlog_header_only)
++        elseif(TARGET spdlog::spdlog)
++          get_target_property(_knowhere_spdlog_incs spdlog::spdlog INTERFACE_INCLUDE_DIRECTORIES)
++          if(_knowhere_spdlog_incs)
++            target_include_directories(${_knowhere_logger_obj} PRIVATE ${_knowhere_spdlog_incs})
++          endif()
++          unset(_knowhere_spdlog_incs)
+         else()
+           set(_knowhere_spdlog_inc "")
+           foreach(_prefix IN LISTS _knowhere_prefixes)
+@@ -181,6 +190,8 @@ function(knowhere_hip_link_rmm _target)
+                             "-Wl,--pop-state")
+       message(STATUS
+         "KNOWHERE WITH_HIP: ${_target} WHOLE_ARCHIVE host logger lib ${_knowhere_logger_obj}")
++      message(STATUS
++        "KNOWHERE WITH_HIP: ${_knowhere_logger_obj} uses SPDLOG_HEADER_ONLY (embed set_pattern)")
+       set(_knowhere_logger_resolved TRUE)
+     elseif(_knowhere_legacy_rmm_logger)
+       message(WARNING

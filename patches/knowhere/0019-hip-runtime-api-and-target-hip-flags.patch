@@ -1,0 +1,64 @@
+diff --git a/src/common/cuvs/integration/cuda_compat.hpp b/src/common/cuvs/integration/cuda_compat.hpp
+index 0000000..1111111 100644
+@@ -1,31 +1,14 @@
+ /**
+- * CUDA runtime shims for knowhere cuVS host code on ROCm.
+- * No HIP headers here — avoids pulling device bf16/fp16 into every TU.
+- * Symbols resolve via libamdhip64 (pulled in through raft/cuvs).
++ * CUDA runtime shims for knowhere cuVS on ROCm.
++ * Uses hip_runtime_api.h (host API only). Knowhere .cc/.cu compile with
++ * clang++ -x hip so raft/cuvs headers share one HIP compilation mode.
+  */
+ #pragma once
+ 
+ #ifdef KNOWHERE_WITH_HIP
+-#include <cstddef>
++#include <hip/hip_runtime_api.h>
+ 
+-using hipError_t = int;
+-using cudaError_t = hipError_t;
+-constexpr hipError_t hipSuccess = 0;
+ #define cudaSuccess hipSuccess
+-
+-extern "C" {
+-hipError_t hipGetDeviceCount(int* count);
+-const char* hipGetErrorString(hipError_t error);
+-hipError_t hipMemGetInfo(std::size_t* free, std::size_t* total);
+-hipError_t hipSetDevice(int deviceId);
+-hipError_t hipGetDevice(int* deviceId);
+-hipError_t hipDeviceSynchronize(void);
+-hipError_t hipMalloc(void** ptr, std::size_t size);
+-hipError_t hipFree(void* ptr);
+-hipError_t hipMemcpy(void* dst, const void* src, std::size_t sizeBytes, int kind);
+-hipError_t hipMemcpyAsync(void* dst, const void* src, std::size_t sizeBytes, int kind, void* stream);
+-}
+-
+ #define cudaGetDeviceCount hipGetDeviceCount
+ #define cudaGetErrorString hipGetErrorString
+ #define cudaSetDevice hipSetDevice
+@@ -36,6 +19,7 @@
+ #define cudaMemcpy hipMemcpy
+ #define cudaMemcpyAsync hipMemcpyAsync
+ #define cudaMemGetInfo hipMemGetInfo
++typedef hipError_t cudaError_t;
+ 
+ #else
+ #include <cuda_runtime_api.h>
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0000000..1111111 100644
+@@ -65,13 +65,8 @@
+   if(DEFINED ENV{HIP_ARCH})
+     set(_knowhere_gfx "$ENV{HIP_ARCH}")
+   endif()
+-  knowhere_file_glob(GLOB_RECURSE _knowhere_cuvs_cu src/common/cuvs/*.cu)
+-  if(_knowhere_cuvs_cu)
+-    set_source_files_properties(${_knowhere_cuvs_cu} PROPERTIES
+-      COMPILE_OPTIONS "-x;hip;--offload-arch=${_knowhere_gfx}")
+-    message(STATUS "KNOWHERE WITH_HIP: cuVS .cu via clang++ -x hip --offload-arch=${_knowhere_gfx}")
+-  endif()
+-  unset(_knowhere_cuvs_cu)
++  target_compile_options(knowhere PRIVATE "-x" "hip" "--offload-arch=${_knowhere_gfx}")
++  message(STATUS "KNOWHERE WITH_HIP: knowhere via clang++ -x hip --offload-arch=${_knowhere_gfx}")
+   unset(_knowhere_gfx)
+ endif()
+ unset(_knowhere_fixup_rocm)

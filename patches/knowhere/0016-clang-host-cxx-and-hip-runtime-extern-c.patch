@@ -1,0 +1,84 @@
+diff --git a/src/common/cuvs/integration/cuda_compat.hpp b/src/common/cuvs/integration/cuda_compat.hpp
+index 0000000..1111111 100644
+@@ -1,16 +1,31 @@
+ /**
+  * CUDA runtime shims for knowhere cuVS host code on ROCm.
+- * Use hip_runtime_api.h only (not hip_runtime.h) so g++ never pulls
+- * device-only fp16/bf16 headers.
++ * No HIP headers here — avoids pulling device bf16/fp16 into every TU.
++ * Symbols resolve via libamdhip64 (pulled in through raft/cuvs).
+  */
+ #pragma once
+ 
+ #ifdef KNOWHERE_WITH_HIP
+-#include <hip/hip_runtime_api.h>
++#include <cstddef>
+ 
++using hipError_t = int;
++using cudaError_t = hipError_t;
++constexpr hipError_t hipSuccess = 0;
+ #define cudaSuccess hipSuccess
+-#define cudaErrorUnknown hipErrorUnknown
+-typedef hipError_t cudaError_t;
++
++extern "C" {
++hipError_t hipGetDeviceCount(int* count);
++const char* hipGetErrorString(hipError_t error);
++hipError_t hipMemGetInfo(std::size_t* free, std::size_t* total);
++hipError_t hipSetDevice(int deviceId);
++hipError_t hipGetDevice(int* deviceId);
++hipError_t hipDeviceSynchronize(void);
++hipError_t hipMalloc(void** ptr, std::size_t size);
++hipError_t hipFree(void* ptr);
++hipError_t hipMemcpy(void* dst, const void* src, std::size_t sizeBytes, int kind);
++hipError_t hipMemcpyAsync(void* dst, const void* src, std::size_t sizeBytes, int kind, void* stream);
++}
++
+ #define cudaGetDeviceCount hipGetDeviceCount
+ #define cudaGetErrorString hipGetErrorString
+ #define cudaSetDevice hipSetDevice
+diff --git a/cmake/libs/libhipcuvs_preproject.cmake b/cmake/libs/libhipcuvs_preproject.cmake
+index 0000000..1111111 100644
+@@ -1,5 +1,5 @@
+ # Must run before project(): host g++ wrapper strips HIP-only flags.
+-find_program(_knowhere_real_cxx NAMES g++ c++ REQUIRED)
++find_program(_knowhere_real_cxx NAMES clang++ g++ c++ REQUIRED)
+ set(_knowhere_gxx_wrapper "${CMAKE_CURRENT_BINARY_DIR}/knowhere-g++-host.sh")
+ file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
+ set -euo pipefail
+@@ -20,5 +20,5 @@
+ exec \"\${_real_cxx}\" \"\${args[@]}\"
+ ")
+ file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+-set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips HIP flags)" FORCE)
++set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ via clang++/g++ (strips HIP flags)" FORCE)
+ message(STATUS "KNOWHERE WITH_HIP: pre-project CXX=${CMAKE_CXX_COMPILER}")
+diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
+index 0000000..1111111 100644
+@@ -81,7 +81,7 @@
+ message(STATUS "KNOWHERE WITH_HIP: raft from ${raft_DIR}")
+ message(STATUS "KNOWHERE WITH_HIP: cuvs from ${cuvs_DIR}")
+ 
+-find_program(_knowhere_real_cxx NAMES g++ c++ REQUIRED)
++find_program(_knowhere_real_cxx NAMES clang++ g++ c++ REQUIRED)
+ set(_knowhere_gxx_wrapper "${CMAKE_BINARY_DIR}/knowhere-g++-host.sh")
+ file(WRITE "${_knowhere_gxx_wrapper}" "#!/usr/bin/env bash
+ set -euo pipefail
+@@ -102,5 +102,5 @@
+ exec \"\${_real_cxx}\" \"\${args[@]}\"
+ ")
+ file(CHMOD "${_knowhere_gxx_wrapper}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+-set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ (strips HIP flags)" FORCE)
++set(CMAKE_CXX_COMPILER "${_knowhere_gxx_wrapper}" CACHE FILEPATH "Knowhere host C++ via clang++/g++ (strips HIP flags)" FORCE)
+ message(STATUS "KNOWHERE WITH_HIP: host C++ via ${_knowhere_gxx_wrapper}")
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0000000..1111111 100644
+@@ -51,7 +51,7 @@
+   endforeach()
+ endif()
+ 
+-message(STATUS "KNOWHERE WITH_HIP: host C++ build (no HIP lang / --offload-arch on g++)")
++message(STATUS "KNOWHERE WITH_HIP: host C++ via clang++ (ROCm headers; strips HIP lang / --offload-arch)")
+ 
+ set(_knowhere_strip_launcher "${CMAKE_BINARY_DIR}/knowhere-strip-offload.sh")
+ file(WRITE "${_knowhere_strip_launcher}" "#!/usr/bin/env bash

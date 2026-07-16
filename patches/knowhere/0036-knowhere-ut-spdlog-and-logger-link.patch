@@ -1,0 +1,60 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index 5543557..c4d5e6f 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -47,15 +47,4 @@ function(knowhere_hip_link_rmm _target)
+     message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_librapids_logger}")
+   endif()
+ 
+-  if(_knowhere_has_logger_target)
+-    unset(_knowhere_has_logger_target)
+-    unset(_knowhere_prefixes)
+-    unset(_knowhere_librmm)
+-    unset(_knowhere_librapids_logger)
+-    unset(_prefix)
+-    unset(_candidate)
+-    unset(_rmm_dep)
+-    return()
+-  endif()
+-
+   set(_knowhere_logger_cpp "")
+@@ -78,7 +67,15 @@ function(knowhere_hip_link_rmm _target)
+     message(STATUS "KNOWHERE WITH_HIP: ${_target} compiles rmm logger from ${_knowhere_logger_cpp}")
+     if(TARGET spdlog::spdlog)
+       target_link_libraries(${_target} PUBLIC spdlog::spdlog)
+-    elseif(TARGET spdlog::spdlog_header_only)
+-      target_link_libraries(${_target} PUBLIC spdlog::spdlog_header_only)
++    else()
++      find_library(_knowhere_libspdlog NAMES spdlog PATHS ${_knowhere_prefixes}
++                   PATH_SUFFIXES lib NO_DEFAULT_PATH)
++      if(_knowhere_libspdlog)
++        target_link_libraries(${_target} PUBLIC "${_knowhere_libspdlog}")
++        message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_libspdlog}")
++      elseif(TARGET spdlog::spdlog_header_only)
++        target_link_libraries(${_target} PUBLIC spdlog::spdlog_header_only)
++      endif()
++      unset(_knowhere_libspdlog)
+     endif()
+   else()
+diff --git a/tests/ut/CMakeLists.txt b/tests/ut/CMakeLists.txt
+index 1111111..2222222 100644
+--- a/tests/ut/CMakeLists.txt
++++ b/tests/ut/CMakeLists.txt
+@@ -50,5 +50,17 @@
+ target_link_libraries(knowhere_tests PRIVATE
+         Catch2::Catch2WithMain
+         atomic
+         stdc++fs
+         knowhere)
++
++# HIP cuVS: UT may compile rmm logger.cpp; link libspdlog explicitly.
++if(WITH_HIP AND WITH_CUVS)
++  if(TARGET spdlog::spdlog)
++    target_link_libraries(knowhere_tests PRIVATE spdlog::spdlog)
++  else()
++    find_library(_knowhere_ut_spdlog NAMES spdlog PATHS ${CMAKE_PREFIX_PATH} PATH_SUFFIXES lib)
++    if(_knowhere_ut_spdlog)
++      target_link_libraries(knowhere_tests PRIVATE ${_knowhere_ut_spdlog})
++    endif()
++  endif()
++endif()

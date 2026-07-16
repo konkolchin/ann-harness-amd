@@ -33,7 +33,9 @@ python scripts/investigate_milvus_nprobe.py
 
 ## Notes
 
-- Milvus script uses local Milvus Lite DB: `./milvus_sift.db`.
+- Milvus Lite (`./milvus_sift.db`) is a smoke test only; runbook Table 2 shows flat
+  recall across `nprobe` (known Lite limitation).
+- Use **FAISS** for recall-vs-`nprobe` ground truth until standalone Milvus is available.
+- Standalone Milvus needs Docker on a host with **8 GB+ RAM**; use `--uri` from a
+  smaller client machine (see `docs/QUICKSTART.md` §7.2).
 - Insert is chunked to avoid gRPC max-message limit.
-- `nprobe` sweeps are included for both FAISS and Milvus.
-- If Milvus Lite shows no `nprobe` effect while FAISS does, verify on standalone Milvus via `--uri`.

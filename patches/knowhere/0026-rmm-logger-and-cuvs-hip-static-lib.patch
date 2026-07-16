@@ -1,0 +1,107 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 68103d8..e4ba04a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -225,6 +225,12 @@ if(NOT WITH_CUVS)
+   knowhere_file_glob(GLOB_RECURSE KNOWHERE_CUVS_SRCS src/common/cuvs/*.cu
+                      src/common/cuvs/*.cc src/index/gpu_cuvs/*.cc)
+   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_CUVS_SRCS})
++elseif(WITH_HIP)
++  knowhere_file_glob(GLOB_RECURSE KNOWHERE_CUVS_CU_SRCS src/common/cuvs/*.cu)
++  if(KNOWHERE_CUVS_CU_SRCS)
++    list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_CUVS_CU_SRCS})
++  endif()
++  unset(KNOWHERE_CUVS_CU_SRCS)
+ endif()
+ 
+ include_directories(src)
+@@ -272,6 +278,36 @@ if(WITH_CUVS AND WITH_HIP)
+     endif()
+   endforeach()
+   target_link_libraries(knowhere PUBLIC raft::raft cuvs::cuvs rmm::rmm)
++  foreach(_rmm_dep rmm::rmm_logger_impl rmm::rmm_logger rapids_logger::rapids_logger)
++    if(TARGET ${_rmm_dep})
++      target_link_libraries(knowhere PUBLIC ${_rmm_dep})
++      message(STATUS "KNOWHERE WITH_HIP: linked ${_rmm_dep}")
++    endif()
++  endforeach()
++  if(DEFINED ENV{INSTALL_PREFIX})
++    set(_knowhere_install_prefix "$ENV{INSTALL_PREFIX}")
++    if(_knowhere_install_prefix MATCHES "^~")
++      if(DEFINED ENV{HOME})
++        string(REPLACE "~" "$ENV{HOME}" _knowhere_install_prefix "${_knowhere_install_prefix}")
++      endif()
++    endif()
++    find_library(_knowhere_librmm NAMES rmm PATHS "${_knowhere_install_prefix}/lib"
++                 NO_DEFAULT_PATH)
++    if(_knowhere_librmm)
++      target_link_libraries(knowhere PUBLIC "${_knowhere_librmm}")
++      message(STATUS "KNOWHERE WITH_HIP: linked ${_knowhere_librmm}")
++    endif()
++    find_library(_knowhere_librapids_logger NAMES rapids_logger PATHS
++                 "${_knowhere_install_prefix}/lib" NO_DEFAULT_PATH)
++    if(_knowhere_librapids_logger)
++      target_link_libraries(knowhere PUBLIC "${_knowhere_librapids_logger}")
++      message(STATUS "KNOWHERE WITH_HIP: linked ${_knowhere_librapids_logger}")
++    endif()
++    unset(_knowhere_install_prefix)
++  endif()
++  unset(_rmm_dep)
++  unset(_knowhere_librmm)
++  unset(_knowhere_librapids_logger)
+ endif()
+ unset(_hip_dep)
+ unset(_hip_inc)
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 2c4fbba..975620f 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -87,6 +87,48 @@ if(TARGET knowhere AND _knowhere_fixup_rocm)
+   endforeach()
+   target_compile_options(knowhere PRIVATE "SHELL:-x hip --offload-arch=${_knowhere_gfx}")
+   message(STATUS "KNOWHERE WITH_HIP: knowhere SHELL:-x hip --offload-arch=${_knowhere_gfx}")
++
++  knowhere_file_glob(GLOB_RECURSE _knowhere_cuvs_cu src/common/cuvs/*.cu)
++  if(_knowhere_cuvs_cu)
++    add_library(knowhere_cuvs_hip STATIC ${_knowhere_cuvs_cu})
++    set_target_properties(knowhere_cuvs_hip PROPERTIES POSITION_INDEPENDENT_CODE ON)
++    target_compile_definitions(knowhere_cuvs_hip PRIVATE
++      KNOWHERE_WITH_CUVS
++      KNOWHERE_WITH_HIP
++      THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP
++      THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP
++      _LIBCUDACXX_ALLOW_UNSUPPORTED_ARCHITECTURE)
++    target_include_directories(knowhere_cuvs_hip PRIVATE
++      "${CMAKE_SOURCE_DIR}/src"
++      "${CMAKE_SOURCE_DIR}/include")
++    if(EXISTS "${_knowhere_fixup_rocm}/include/hipcub")
++      target_include_directories(knowhere_cuvs_hip SYSTEM PRIVATE
++        "${_knowhere_fixup_rocm}/include/hipcub")
++    endif()
++    foreach(_hip_dep raft::raft cuvs::cuvs rmm::rmm)
++      if(TARGET ${_hip_dep})
++        get_target_property(_hip_inc ${_hip_dep} INTERFACE_INCLUDE_DIRECTORIES)
++        if(_hip_inc)
++          target_include_directories(knowhere_cuvs_hip PRIVATE ${_hip_inc})
++        endif()
++        target_link_libraries(knowhere_cuvs_hip PUBLIC ${_hip_dep})
++      endif()
++    endforeach()
++    foreach(_rmm_dep rmm::rmm_logger_impl rmm::rmm_logger rapids_logger::rapids_logger)
++      if(TARGET ${_rmm_dep})
++        target_link_libraries(knowhere_cuvs_hip PUBLIC ${_rmm_dep})
++      endif()
++    endforeach()
++    target_compile_options(knowhere_cuvs_hip PRIVATE
++      "SHELL:-x hip --offload-arch=${_knowhere_gfx}")
++    target_link_libraries(knowhere PRIVATE
++      "$<LINK_LIBRARY:WHOLE_ARCHIVE,knowhere_cuvs_hip>")
++    message(STATUS "KNOWHERE WITH_HIP: knowhere_cuvs_hip WHOLE_ARCHIVE (${_knowhere_cuvs_cu})")
++  endif()
++  unset(_knowhere_cuvs_cu)
++  unset(_hip_dep)
++  unset(_hip_inc)
++  unset(_rmm_dep)
+   unset(_knowhere_gfx)
+ endif()
+ unset(_knowhere_fixup_rocm)

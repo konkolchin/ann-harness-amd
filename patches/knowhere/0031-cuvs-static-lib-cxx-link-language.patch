@@ -1,0 +1,16 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 1b81feb..4335ff4 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -91,7 +91,10 @@ if(TARGET knowhere AND _knowhere_fixup_rocm)
+   knowhere_file_glob(GLOB_RECURSE _knowhere_cuvs_cu src/common/cuvs/*.cu)
+   if(_knowhere_cuvs_cu)
+     add_library(knowhere_cuvs_hip STATIC ${_knowhere_cuvs_cu})
+-    set_target_properties(knowhere_cuvs_hip PROPERTIES POSITION_INDEPENDENT_CODE ON)
++    set_source_files_properties(${_knowhere_cuvs_cu} PROPERTIES LANGUAGE CXX)
++    set_target_properties(knowhere_cuvs_hip PROPERTIES
++      POSITION_INDEPENDENT_CODE ON
++      LINKER_LANGUAGE CXX)
+     target_compile_definitions(knowhere_cuvs_hip PRIVATE
+       KNOWHERE_WITH_CUVS
+       KNOWHERE_WITH_HIP

@@ -1,0 +1,79 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 62224c7..9879a0d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -203,16 +203,29 @@ endif()
+ add_library(knowhere SHARED ${KNOWHERE_SRCS})
+ add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
+ if(WITH_CUVS)
+-  list(
+-    APPEND
+-    KNOWHERE_LINKER_LIBS
+-    raft::raft
+-    cuvs::cuvs)
+   if(NOT WITH_HIP)
+-    list(APPEND KNOWHERE_LINKER_LIBS CUDA::cublas CUDA::cusparse CUDA::cusolver)
++    list(
++      APPEND
++      KNOWHERE_LINKER_LIBS
++      raft::raft
++      cuvs::cuvs
++      CUDA::cublas
++      CUDA::cusparse
++      CUDA::cusolver)
+   endif()
+ endif()
+ target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
++if(WITH_CUVS AND WITH_HIP)
++  foreach(_hip_dep raft::raft cuvs::cuvs)
++    get_target_property(_hip_inc ${_hip_dep} INTERFACE_INCLUDE_DIRECTORIES)
++    if(_hip_inc)
++      target_include_directories(knowhere PRIVATE ${_hip_inc})
++    endif()
++  endforeach()
++  target_link_libraries(knowhere PRIVATE raft::raft cuvs::cuvs)
++endif()
++unset(_hip_dep)
++unset(_hip_inc)
+ target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ 
+ if(WITH_UT)
+diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
+index 718207a..69f4e42 100644
+--- a/cmake/libs/libhipcuvs.cmake
++++ b/cmake/libs/libhipcuvs.cmake
+@@ -29,6 +29,34 @@ find_package(hip CONFIG REQUIRED)
+ find_package(raft CONFIG REQUIRED)
+ find_package(cuvs CONFIG REQUIRED)
+ 
++# libcuvs.so is already device-built; host .cc files must compile with g++, not hipcc.
++foreach(_knowhere_flag_var IN ITEMS CMAKE_CXX_FLAGS CMAKE_C_FLAGS
++    CMAKE_CXX_FLAGS_RELEASE CMAKE_C_FLAGS_RELEASE CMAKE_CXX_FLAGS_DEBUG
++    CMAKE_C_FLAGS_DEBUG)
++  if(DEFINED ${_knowhere_flag_var})
++    string(REGEX REPLACE " *--offload-arch=[^ ]+" "" _knowhere_clean
++                         "${${_knowhere_flag_var}}")
++    string(STRIP "${_knowhere_clean}" _knowhere_clean)
++    set(${_knowhere_flag_var} "${_knowhere_clean}" CACHE STRING "" FORCE)
++  endif()
++endforeach()
++unset(_knowhere_flag_var)
++unset(_knowhere_clean)
++
++get_property(_knowhere_dir_opts DIRECTORY PROPERTY COMPILE_OPTIONS)
++if(_knowhere_dir_opts)
++  set(_knowhere_new_dir_opts)
++  foreach(_opt IN LISTS _knowhere_dir_opts)
++    if(NOT _opt MATCHES "^--offload-arch=")
++      list(APPEND _knowhere_new_dir_opts "${_opt}")
++    endif()
++  endforeach()
++  set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "${_knowhere_new_dir_opts}")
++endif()
++unset(_knowhere_dir_opts)
++unset(_knowhere_new_dir_opts)
++unset(_opt)
++
+ message(STATUS "KNOWHERE WITH_HIP: ROCm prefix ${_knowhere_rocm_prefix}")
+ message(STATUS "KNOWHERE WITH_HIP: hip from ${hip_DIR}")
+ message(STATUS "KNOWHERE WITH_HIP: raft from ${raft_DIR}")

@@ -1,0 +1,159 @@
+diff --git a/src/common/cuvs/integration/cuda_compat.hpp b/src/common/cuvs/integration/cuda_compat.hpp
+index 0000000..1111111 100644
+@@ -1,15 +1,31 @@
+ /**
+- * CUDA runtime shims for knowhere cuVS host code on ROCm (clang++).
++ * CUDA runtime shims for knowhere cuVS host code on ROCm.
++ * No HIP headers here — avoids pulling device bf16/fp16 into every TU.
++ * Symbols resolve via libamdhip64 (pulled in through raft/cuvs).
+  */
+ #pragma once
+ 
+ #ifdef KNOWHERE_WITH_HIP
+-#ifndef warpSize
+-#define warpSize 64
+-#endif
+-#include <hip/hip_runtime_api.h>
++#include <cstddef>
+ 
++using hipError_t = int;
++using cudaError_t = hipError_t;
++constexpr hipError_t hipSuccess = 0;
+ #define cudaSuccess hipSuccess
++
++extern "C" {
++hipError_t hipGetDeviceCount(int* count);
++const char* hipGetErrorString(hipError_t error);
++hipError_t hipMemGetInfo(std::size_t* free, std::size_t* total);
++hipError_t hipSetDevice(int deviceId);
++hipError_t hipGetDevice(int* deviceId);
++hipError_t hipDeviceSynchronize(void);
++hipError_t hipMalloc(void** ptr, std::size_t size);
++hipError_t hipFree(void* ptr);
++hipError_t hipMemcpy(void* dst, const void* src, std::size_t sizeBytes, int kind);
++hipError_t hipMemcpyAsync(void* dst, const void* src, std::size_t sizeBytes, int kind, void* stream);
++}
++
+ #define cudaGetDeviceCount hipGetDeviceCount
+ #define cudaGetErrorString hipGetErrorString
+ #define cudaSetDevice hipSetDevice
+@@ -20,7 +36,6 @@
+ #define cudaMemcpy hipMemcpy
+ #define cudaMemcpyAsync hipMemcpyAsync
+ #define cudaMemGetInfo hipMemGetInfo
+-typedef hipError_t cudaError_t;
+ 
+ #else
+ #include <cuda_runtime_api.h>
+diff --git a/src/common/cuvs/integration/knowhere_gpu_device_count.hpp b/src/common/cuvs/integration/knowhere_gpu_device_count.hpp
+index 0000000..1111111 100644
+@@ -1,11 +1,13 @@
+ #pragma once
+ 
+ #ifdef KNOWHERE_WITH_HIP
+-#ifndef warpSize
+-#define warpSize 64
+-#endif
+ #include "common/cuvs/integration/cuda_compat.hpp"
+-#define KNOWHERE_GPU_GET_DEVICE_COUNT(count)     do {                                             if (cudaGetDeviceCount(count) != cudaSuccess) {             *(count) = 0;                            }                                        } while (0)
++#define KNOWHERE_GPU_GET_DEVICE_COUNT(count) \
++    do { \
++        if (cudaGetDeviceCount(count) != cudaSuccess) { \
++            *(count) = 0; \
++        } \
++    } while (0)
+ #else
+ #include <raft/util/cuda_rt_essentials.hpp>
+ #define KNOWHERE_GPU_GET_DEVICE_COUNT(count) RAFT_CUDA_TRY(cudaGetDeviceCount(count))
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0000000..1111111 100644
+@@ -135,6 +135,9 @@
+ 
+ include(cmake/utils/platform_check.cmake)
+ include(cmake/utils/compile_flags.cmake)
++
++find_package(OpenMP REQUIRED)
++
+ include(cmake/libs/libfaiss.cmake)
+ include(cmake/libs/libhnsw.cmake)
+ 
+@@ -142,8 +145,6 @@
+ 
+ find_package(Boost REQUIRED)
+ include_directories(${Boost_INCLUDE_DIRS})
+-
+-find_package(OpenMP REQUIRED)
+ 
+ find_package(folly REQUIRED)
+ include_directories(${folly_INCLUDE_DIRS})
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 0000000..1111111 100644
+@@ -41,42 +41,9 @@
+   set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "${_dir_clean}")
+ endif()
+ 
+-if(TARGET knowhere)
+-  foreach(_prop COMPILE_OPTIONS INTERFACE_COMPILE_OPTIONS)
+-    get_target_property(_opts knowhere ${_prop})
+-    if(_opts)
+-      knowhere_strip_offload_opts(_opts _opts_clean)
+-      set_target_properties(knowhere PROPERTIES ${_prop} "${_opts_clean}")
+-    endif()
+-  endforeach()
+-endif()
+ 
+-message(STATUS "KNOWHERE WITH_HIP: host C++ via clang++ (ROCm headers; strips HIP lang / --offload-arch)")
++message(STATUS "KNOWHERE WITH_HIP: faiss uses plain host C++; knowhere keeps raft HIP flags (clang++)")
+ 
+-set(_knowhere_strip_launcher "${CMAKE_BINARY_DIR}/knowhere-strip-offload.sh")
+-file(WRITE "${_knowhere_strip_launcher}" "#!/usr/bin/env bash
+-set -euo pipefail
+-args=()
+-skip=0
+-for arg in \"\$@\"; do
+-  if [ \"\$skip\" -eq 1 ]; then
+-    skip=0
+-    continue
+-  fi
+-  case \"\$arg\" in
+-    -x) skip=1; continue ;;
+-    -xhip|--offload-arch=*| -offload-arch=*|--cuda-gpu-arch=*) continue ;;
+-  esac
+-  args+=(\"\$arg\")
+-done
+-exec \"\${args[@]}\"
+-")
+-file(CHMOD "${_knowhere_strip_launcher}" FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+-if(TARGET knowhere)
+-  set_property(TARGET knowhere PROPERTY RULE_LAUNCH_COMPILE "${_knowhere_strip_launcher}")
+-endif()
+-set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${_knowhere_strip_launcher}")
+-message(STATUS "KNOWHERE WITH_HIP: RULE_LAUNCH_COMPILE=${_knowhere_strip_launcher}")
+ 
+ if(DEFINED ENV{ROCM_PATH})
+   set(_knowhere_fixup_rocm "$ENV{ROCM_PATH}")
+@@ -89,11 +56,22 @@
+   target_compile_definitions(knowhere PRIVATE
+     KNOWHERE_WITH_HIP
+     THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP
+-    THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP
+-    warpSize=64)
++    THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP)
+   if(EXISTS "${_knowhere_fixup_rocm}/include/hipcub")
+     target_include_directories(knowhere SYSTEM PRIVATE "${_knowhere_fixup_rocm}/include/hipcub")
+   endif()
+   message(STATUS "KNOWHERE WITH_HIP: Thrust/HIP + hipcub from ${_knowhere_fixup_rocm}")
++  set(_knowhere_gfx "gfx1100")
++  if(DEFINED ENV{HIP_ARCH})
++    set(_knowhere_gfx "$ENV{HIP_ARCH}")
++  endif()
++  knowhere_file_glob(GLOB_RECURSE _knowhere_cuvs_cu src/common/cuvs/*.cu)
++  if(_knowhere_cuvs_cu)
++    set_source_files_properties(${_knowhere_cuvs_cu} PROPERTIES
++      COMPILE_OPTIONS "-x;hip;--offload-arch=${_knowhere_gfx}")
++    message(STATUS "KNOWHERE WITH_HIP: cuVS .cu via clang++ -x hip --offload-arch=${_knowhere_gfx}")
++  endif()
++  unset(_knowhere_cuvs_cu)
++  unset(_knowhere_gfx)
+ endif()
+ unset(_knowhere_fixup_rocm)

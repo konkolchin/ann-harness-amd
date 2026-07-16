@@ -1,0 +1,14 @@
+diff --git a/cmake/libs/knowhere_hip_host_fixup.cmake b/cmake/libs/knowhere_hip_host_fixup.cmake
+index 1a5c8a3..aeaf892 100644
+--- a/cmake/libs/knowhere_hip_host_fixup.cmake
++++ b/cmake/libs/knowhere_hip_host_fixup.cmake
+@@ -56,7 +56,8 @@ if(TARGET knowhere AND _knowhere_fixup_rocm)
+   target_compile_definitions(knowhere PRIVATE
+     KNOWHERE_WITH_HIP
+     THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP
+-    THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP)
++    THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP
++    _LIBCUDACXX_ALLOW_UNSUPPORTED_ARCHITECTURE)
+   if(EXISTS "${_knowhere_fixup_rocm}/include/hipcub")
+     target_include_directories(knowhere SYSTEM PRIVATE "${_knowhere_fixup_rocm}/include/hipcub")
+   endif()

@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Apply Layer 2 Knowhere patches (HIP CMake + GPU device shim).
+#
+# Usage:
+#   bash scripts/apply_knowhere_layer2_patches.sh [path/to/knowhere]
+#   bash scripts/apply_knowhere_layer2_patches.sh --no-reset [path/to/knowhere]
+#
+# By default the script hard-resets knowhere to branch 2.5 and removes untracked
+# files left by prior patch attempts (git checkout -- . is NOT enough).
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PATCH_DIR="${REPO_ROOT}/patches/knowhere"
+DO_RESET=1
+KNOWHERE_DIR=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --no-reset) DO_RESET=0 ;;
+    --reset) DO_RESET=1 ;;
+    -*) echo "Unknown option: $arg" >&2; exit 1 ;;
+    *) KNOWHERE_DIR="$arg" ;;
+  esac
+done
+KNOWHERE_DIR="${KNOWHERE_DIR:-${HOME}/rocmds_check_gfx1100/knowhere}"
+
+apply_patch() {
+  local patch="$1"
+  local name
+  name="$(basename "$patch")"
+
+  if git apply --check "$patch" 2>/dev/null; then
+    git apply "$patch"
+    echo "Applied: ${name}"
+    return 0
+  fi
+
+  if git apply --reverse --check "$patch" 2>/dev/null; then
+    echo "Already applied: ${name}"
+    return 0
+  fi
+
+  echo "ERROR: cannot apply ${name}." >&2
+  echo "  Re-run without --no-reset to hard-reset knowhere to branch 2.5." >&2
+  exit 1
+}
+
+verify_patches() {
+  local ok=1
+  if ! grep -q 'libhipcuvs_preproject.cmake' CMakeLists.txt; then
+    echo "VERIFY FAIL: CMakeLists.txt missing libhipcuvs_preproject include" >&2
+    ok=0
+  fi
+  if ! grep -q 'Early WITH_HIP before project' CMakeLists.txt; then
+    echo "VERIFY FAIL: CMakeLists.txt missing patch 0010 early WITH_HIP block" >&2
+    ok=0
+  fi
+  if ! grep -q 'knowhere_cuvs_hip WHOLE_ARCHIVE' cmake/libs/knowhere_hip_host_fixup.cmake; then
+    echo "VERIFY FAIL: missing patch 0030 knowhere_cuvs_hip WHOLE_ARCHIVE + --hip-link" >&2
+    ok=0
+  fi
+  if ! grep -q 'CUDA_R_32F HIP_R_32F' src/common/cuvs/integration/cuda_compat.hpp 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0032 CUDA dtype shims in cuda_compat.hpp" >&2
+    ok=0
+  fi
+  if grep -q 'std::uint16_t' src/common/cuvs/integration/type_mappers.hpp 2>/dev/null; then
+    echo "VERIFY FAIL: patch 0032 fp16 __half mapping not applied (still std::uint16_t)" >&2
+    ok=0
+  fi
+  if ! grep -q 'KNOWHERE_WITH_HIP' src/common/cuvs/integration/ivf_flat_index.cu 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0033 HIP-guarded ivf_flat fp16 instantiation" >&2
+    ok=0
+  fi
+  if ! grep -q 'cuvs_knowhere_index_hip.cu' cmake/libs/knowhere_hip_host_fixup.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0034 single HIP cuVS instantiation unit" >&2
+    ok=0
+  fi
+  if ! grep -q '_knowhere_libraft' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0037 libraft link in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
+  if ! grep -q 'LINK_LIBRARY:WHOLE_ARCHIVE,\${_logger_impl}' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0038 WHOLE_ARCHIVE logger impl link in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
+  if ! grep -q 'include/rapids_logger/logger_impl/logger.cpp' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0038 rapids_logger logger.cpp preference" >&2
+    ok=0
+  fi
+  if ! grep -q 'include/raft/core/logger_impl/logger.cpp' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0041 raft core logger.cpp compile in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
+  if ! grep -q 'knowhere_hip_loggers_' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0042 host-only logger object library" >&2
+    ok=0
+  fi
+  if ! grep -q 'spdlog includes' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0043 host logger spdlog includes" >&2
+    ok=0
+  fi
+  if ! grep -q 'Bust stale NOTFOUND from configures before apt install libspdlog' cmake/libs/knowhere_hip_link.cmake 2>/dev/null \
+     && ! grep -q 'hipRAFT install/lib/libspdlog.so is often incomplete' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0045/0046 libspdlog force-link" >&2
+    ok=0
+  fi
+  if ! grep -q '/usr/lib/x86_64-linux-gnu/libspdlog.so' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing absolute libspdlog.so path (0045/0046)" >&2
+    ok=0
+  fi
+  if ! grep -q 'Prefer apt libspdlog over incomplete' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0046 apt libspdlog preference" >&2
+    ok=0
+  fi
+  if ! grep -q 'SPDLOG_HEADER_ONLY' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0047 SPDLOG_HEADER_ONLY in host logger lib" >&2
+    ok=0
+  fi
+  if ! grep -q 'skip logger_impl WHOLE_ARCHIVE targets' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0040 skip legacy logger_impl WHOLE_ARCHIVE in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
+  if ! grep -q 'knowhere_hip_link_ut_logger_deps' cmake/libs/knowhere_hip_link.cmake 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0037 UT logger link helper in knowhere_hip_link.cmake" >&2
+    ok=0
+  fi
+  if ! grep -q 'knowhere_hip_link_ut_logger_deps(knowhere_tests)' tests/ut/CMakeLists.txt 2>/dev/null; then
+    echo "VERIFY FAIL: missing patch 0037 UT logger link in tests/ut/CMakeLists.txt" >&2
+    ok=0
+  fi
+  for f in cmake/libs/libhipcuvs.cmake \
+           cmake/libs/libhipcuvs_preproject.cmake \
+           cmake/libs/knowhere_hip_host_fixup.cmake \
+           cmake/libs/knowhere_hip_link.cmake; do
+    if [ ! -f "$f" ]; then
+      echo "VERIFY FAIL: missing $f" >&2
+      ok=0
+    fi
+  done
+  if [ "$ok" -eq 0 ]; then
+    exit 1
+  fi
+  echo "VERIFY OK: all Layer 2 patch markers present"
+}
+
+if [ ! -d "${KNOWHERE_DIR}/.git" ]; then
+  echo "knowhere git checkout not found: ${KNOWHERE_DIR}" >&2
+  echo "  git clone -b 2.5 --depth 1 https://github.com/zilliztech/knowhere.git ${KNOWHERE_DIR}" >&2
+  exit 1
+fi
+
+cd "${KNOWHERE_DIR}"
+
+if [ "$DO_RESET" -eq 1 ]; then
+  echo "Resetting ${KNOWHERE_DIR} to clean upstream knowhere branch 2.5..."
+  git fetch origin 2>/dev/null || true
+  # Discard local edits first — checkout fails on dirty CMakeLists.txt otherwise.
+  git reset --hard HEAD
+  git clean -fd
+  if git show-ref --verify --quiet refs/remotes/origin/2.5; then
+    git checkout -B 2.5 origin/2.5
+    git reset --hard origin/2.5
+  elif git show-ref --verify --quiet refs/heads/2.5; then
+    git checkout -f 2.5
+    git reset --hard HEAD
+  else
+    echo "ERROR: branch 2.5 not found in ${KNOWHERE_DIR}" >&2
+    exit 1
+  fi
+  # Remove untracked patch artifacts (libhipcuvs.cmake etc.) that break git apply.
+  git clean -fd
+  echo "Reset complete: $(git log -1 --oneline)"
+fi
+
+shopt -s nullglob
+patches=( "${PATCH_DIR}"/[0-9]*.patch )
+IFS=$'\n' patches=( $(printf '%s\n' "${patches[@]}" | sort) )
+unset IFS
+for patch in "${patches[@]}"; do
+  apply_patch "$patch"
+done
+
+verify_patches
+
+echo ""
+echo "Layer 2 patches applied under ${KNOWHERE_DIR}"
+echo "Next:"
+echo "  bash ${REPO_ROOT}/scripts/configure_knowhere_hip.sh"
+echo "  # or manually: export INSTALL_PREFIX=\$HOME/rocmds_check_gfx1100/install"
+echo "  # cmake .. -DWITH_CUVS=ON -DWITH_HIP=ON -DCMAKE_PREFIX_PATH=\"\$INSTALL_PREFIX;/opt/rocm\" ..."

@@ -1,0 +1,42 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index 1d9f917..016b196 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -125,6 +125,37 @@ function(knowhere_hip_link_rmm _target)
+         set_target_properties(${_knowhere_logger_obj} PROPERTIES
+           POSITION_INDEPENDENT_CODE ON
+           LINKER_LANGUAGE CXX)
++        foreach(_prefix IN LISTS _knowhere_prefixes)
++          if(EXISTS "${_prefix}/include")
++            target_include_directories(${_knowhere_logger_obj} PRIVATE "${_prefix}/include")
++          endif()
++        endforeach()
++        # Conan / system spdlog (logger_impl.hpp needs spdlog/details/log_msg.h).
++        if(TARGET spdlog::spdlog)
++          target_link_libraries(${_knowhere_logger_obj} PRIVATE spdlog::spdlog)
++        elseif(TARGET spdlog::spdlog_header_only)
++          target_link_libraries(${_knowhere_logger_obj} PRIVATE spdlog::spdlog_header_only)
++        else()
++          set(_knowhere_spdlog_inc "")
++          foreach(_prefix IN LISTS _knowhere_prefixes)
++            if(EXISTS "${_prefix}/include/spdlog/spdlog.h")
++              set(_knowhere_spdlog_inc "${_prefix}/include")
++              break()
++            endif()
++          endforeach()
++          if(NOT _knowhere_spdlog_inc AND EXISTS "/usr/include/spdlog/spdlog.h")
++            set(_knowhere_spdlog_inc "/usr/include")
++          endif()
++          if(_knowhere_spdlog_inc)
++            target_include_directories(${_knowhere_logger_obj} PRIVATE "${_knowhere_spdlog_inc}")
++            message(STATUS
++              "KNOWHERE WITH_HIP: ${_knowhere_logger_obj} spdlog includes ${_knowhere_spdlog_inc}")
++          else()
++            message(WARNING
++              "KNOWHERE WITH_HIP: spdlog headers not found for ${_knowhere_logger_obj}")
++          endif()
++          unset(_knowhere_spdlog_inc)
++        endif()
+         foreach(_knowhere_logger_cpp IN LISTS _knowhere_logger_cpp_files)
+           set_source_files_properties("${_knowhere_logger_cpp}" TARGET_DIRECTORY
+             ${_knowhere_logger_obj} PROPERTIES LANGUAGE CXX)

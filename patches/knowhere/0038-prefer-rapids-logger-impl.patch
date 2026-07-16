@@ -1,0 +1,112 @@
+diff --git a/cmake/libs/knowhere_hip_link.cmake b/cmake/libs/knowhere_hip_link.cmake
+index 8fc78e0..54478cf 100644
+--- a/cmake/libs/knowhere_hip_link.cmake
++++ b/cmake/libs/knowhere_hip_link.cmake
+@@ -1,16 +1,5 @@
+ # Resolve RMM / rapids-logger symbols inside libknowhere.so (HIP cuVS path).
+ function(knowhere_hip_link_rmm _target)
+-  set(_knowhere_has_logger_target FALSE)
+-  foreach(_rmm_dep rmm::rmm_logger_impl rmm::rmm_logger rapids_logger::rapids_logger)
+-    if(TARGET ${_rmm_dep})
+-      target_link_libraries(${_target} PRIVATE ${_rmm_dep})
+-      message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_rmm_dep}")
+-      if(_rmm_dep MATCHES "logger")
+-        set(_knowhere_has_logger_target TRUE)
+-      endif()
+-    endif()
+-  endforeach()
+-
+   set(_knowhere_prefixes ${CMAKE_PREFIX_PATH})
+   if(DEFINED ENV{INSTALL_PREFIX})
+     set(_knowhere_install_prefix "$ENV{INSTALL_PREFIX}")
+@@ -56,24 +45,56 @@ function(knowhere_hip_link_rmm _target)
+     message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_knowhere_libraft}")
+   endif()
+ 
++  set(_knowhere_logger_resolved FALSE)
++  foreach(_logger_impl IN ITEMS rmm::rmm_logger_impl raft::raft_logger_impl)
++    if(TARGET ${_logger_impl})
++      target_link_libraries(${_target} PRIVATE "-Wl,--push-state"
++                            "$<LINK_LIBRARY:WHOLE_ARCHIVE,${_logger_impl}>"
++                            "-Wl,--pop-state")
++      message(STATUS "KNOWHERE WITH_HIP: ${_target} WHOLE_ARCHIVE ${_logger_impl}")
++      set(_knowhere_logger_resolved TRUE)
++      break()
++    endif()
++  endforeach()
++
++  foreach(_rmm_dep IN ITEMS rmm::rmm_logger rapids_logger::rapids_logger raft::raft_logger)
++    if(TARGET ${_rmm_dep})
++      target_link_libraries(${_target} PRIVATE ${_rmm_dep})
++      message(STATUS "KNOWHERE WITH_HIP: ${_target} linked ${_rmm_dep}")
++    endif()
++  endforeach()
++
+   set(_knowhere_logger_cpp "")
+-  foreach(_prefix IN LISTS _knowhere_prefixes)
+-    foreach(_candidate IN ITEMS
+-        "include/rmm/logger_impl/logger.cpp"
+-        "include/rmm/detail/logger_impl/logger.cpp"
+-        "include/rapids_logger/logger_impl/logger.cpp")
+-      if(EXISTS "${_prefix}/${_candidate}")
+-        set(_knowhere_logger_cpp "${_prefix}/${_candidate}")
++  if(NOT _knowhere_logger_resolved)
++    foreach(_prefix IN LISTS _knowhere_prefixes)
++      foreach(_candidate IN ITEMS
++          "include/rapids_logger/logger_impl/logger.cpp"
++          "include/rmm/logger_impl/logger.cpp"
++          "include/rmm/detail/logger_impl/logger.cpp")
++        if(EXISTS "${_prefix}/${_candidate}")
++          set(_knowhere_logger_cpp "${_prefix}/${_candidate}")
++          break()
++        endif()
++      endforeach()
++      if(_knowhere_logger_cpp)
+         break()
+       endif()
+     endforeach()
+     if(_knowhere_logger_cpp)
+-      break()
++      target_sources(${_target} PRIVATE "${_knowhere_logger_cpp}")
++      message(STATUS "KNOWHERE WITH_HIP: ${_target} compiles rmm logger from ${_knowhere_logger_cpp}")
++      if(_knowhere_logger_cpp MATCHES "/rmm/logger_impl/")
++        message(WARNING
++          "KNOWHERE WITH_HIP: legacy rmm logger.cpp uses removed raft::logger API; prefer rapids_logger logger.cpp")
++      endif()
++      set(_knowhere_logger_resolved TRUE)
++    else()
++      message(WARNING
++        "KNOWHERE WITH_HIP: rmm logger impl not found; libknowhere may have undefined rmm::logger symbols")
+     endif()
+-  endforeach()
+-  if(_knowhere_logger_cpp)
+-    target_sources(${_target} PRIVATE "${_knowhere_logger_cpp}")
+-    message(STATUS "KNOWHERE WITH_HIP: ${_target} compiles rmm logger from ${_knowhere_logger_cpp}")
++  endif()
++
++  if(_knowhere_logger_resolved)
+     find_library(_knowhere_libspdlog NAMES spdlog PATHS ${_knowhere_prefixes}
+                  PATH_SUFFIXES lib NO_DEFAULT_PATH)
+     if(_knowhere_libspdlog)
+@@ -87,12 +108,9 @@ function(knowhere_hip_link_rmm _target)
+         "KNOWHERE WITH_HIP: spdlog header-only cannot satisfy compiled logger.cpp for ${_target}")
+     endif()
+     unset(_knowhere_libspdlog)
+-  else()
+-    message(WARNING
+-      "KNOWHERE WITH_HIP: rmm logger impl not found; libknowhere may have undefined rmm::logger symbols")
+   endif()
+ 
+-  unset(_knowhere_has_logger_target)
++  unset(_knowhere_logger_resolved)
+   unset(_knowhere_prefixes)
+   unset(_knowhere_librmm)
+   unset(_knowhere_librapids_logger)
+@@ -100,6 +118,7 @@ function(knowhere_hip_link_rmm _target)
+   unset(_knowhere_logger_cpp)
+   unset(_prefix)
+   unset(_candidate)
++  unset(_logger_impl)
+   unset(_rmm_dep)
+ endfunction()
+ 
