@@ -31,12 +31,18 @@ export LD_LIBRARY_PATH="${MILVUS_HIP_INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${MILV
 if [ -d "${SHIM_DIR}" ]; then
   export LD_LIBRARY_PATH="${SHIM_DIR}:${LD_LIBRARY_PATH}"
 fi
-# Prefer apt spdlog over incomplete hipRAFT copy if both exist.
-if [ -e /usr/lib/x86_64-linux-gnu/libspdlog.so ]; then
-  export LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libspdlog.so${LD_PRELOAD:+:$LD_PRELOAD}"
+
+# Duplicate gflags (Milvus Conan + Knowhere Conan) aborts before main with:
+#   flag 'help' was defined more than once
+# Prepare a single threaded libgflags LD_PRELOAD target (helps dynamic case).
+if [ -x "${REPO_ROOT}/scripts/prepare_milvus_gflags.sh" ]; then
+  bash "${REPO_ROOT}/scripts/prepare_milvus_gflags.sh" || true
 fi
-if [ -e "${SHIM_DIR}/libgflags_gflagsns.so" ]; then
-  export LD_PRELOAD="${SHIM_DIR}/libgflags_gflagsns.so${LD_PRELOAD:+:$LD_PRELOAD}"
+# Do NOT preload apt spdlog by default — it can mask/conflict with Knowhere.
+# Only preload gflags shim unless the caller already set LD_PRELOAD.
+if [ -z "${LD_PRELOAD:-}" ] && [ -e "${SHIM_DIR}/libgflags_gflagsns.so" ]; then
+  export LD_PRELOAD="${SHIM_DIR}/libgflags_gflagsns.so"
+  echo "==> LD_PRELOAD=${LD_PRELOAD}"
 fi
 
 mkdir -p "${LOG_DIR}"
@@ -97,6 +103,14 @@ wait_ready() {
     sleep 2
   done
   echo "ERROR: milvus not ready; see ${MILVUS_LOG}" >&2
+  if grep -q "defined more than once" "${MILVUS_LOG}" 2>/dev/null; then
+    echo "" >&2
+    echo "GFLAGS DUPLICATE: two Conan gflags copies registered DEFINE_string(help)." >&2
+    echo "  Run: bash ${REPO_ROOT}/scripts/prepare_milvus_gflags.sh" >&2
+    echo "  Then try: unset LD_PRELOAD; export LD_PRELOAD=${SHIM_DIR}/libgflags_gflagsns.so" >&2
+    echo "  If still failing, both copies are static — rebuild Knowhere with shared gflags" >&2
+    echo "  matching Milvus Conan package_id (see prepare script output)." >&2
+  fi
   tail -80 "${MILVUS_LOG}" >&2 || true
   return 1
 }
@@ -107,11 +121,25 @@ if [ "${SKIP_START:-0}" != "1" ]; then
   else
     echo "==> starting milvus standalone (log: ${MILVUS_LOG})"
     cd "${MILVUS_DIR}"
-    # shellcheck disable=SC2086
+    set +e
     nohup env LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" LD_PRELOAD="${LD_PRELOAD:-}" \
       "${_milvus_bin}" run standalone >"${MILVUS_LOG}" 2>&1 &
     echo $! >"${PID_FILE}"
-    echo "    pid=$(cat "${PID_FILE}")"
+    _pid=$(cat "${PID_FILE}")
+    echo "    pid=${_pid}"
+    sleep 2
+    if ! kill -0 "${_pid}" 2>/dev/null; then
+      echo "ERROR: milvus exited immediately; log:" >&2
+      cat "${MILVUS_LOG}" >&2 || true
+      if grep -q "defined more than once" "${MILVUS_LOG}" 2>/dev/null; then
+        echo "" >&2
+        echo "This is the duplicate-gflags abort. Diagnose:" >&2
+        echo "  bash ${REPO_ROOT}/scripts/prepare_milvus_gflags.sh" >&2
+      fi
+      set -e
+      exit 1
+    fi
+    set -e
   fi
   wait_ready
 else
