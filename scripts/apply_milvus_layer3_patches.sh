@@ -127,5 +127,14 @@ if ! grep -q 'without CUDA language' internal/core/src/CMakeLists.txt; then
   echo "VERIFY FAIL: CUDA language skip patch missing in src/CMakeLists.txt" >&2
   exit 1
 fi
+if ! grep -q 'IsAdditionalScalarSupported(' internal/core/src/index/VectorDiskIndex.cpp \
+  || ! grep -q 'is_partition_key_isolation' internal/core/src/index/VectorDiskIndex.cpp; then
+  echo "VERIFY FAIL: IsAdditionalScalarSupported(bool) compat patch missing" >&2
+  exit 1
+fi
+if grep -q 'wrapper_->template add_multi_data' internal/core/src/index/InvertedIndexTantivy.cpp; then
+  echo "VERIFY FAIL: Tantivy clang template-kw patch not applied" >&2
+  exit 1
+fi
 echo "VERIFY OK: Layer 3 Milvus patches present"
 echo "Next: bash ${REPO_ROOT}/scripts/build_milvus_layer3.sh"
