@@ -31,11 +31,10 @@ runbook (\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU 
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
 
-\textbf{Status (2026-07-17):} Layers~\textbf{0--3 done} on the 7900 XTX lab host
+\textbf{Status (2026-07-17):} Layers~\textbf{0--4 done} on the 7900 XTX lab host
 (ROCm~7.0.2; hipVS IVF packer fixed; Knowhere HIP L2 search 108 assertions; DXC Knowhere
-\texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT}
-build/load). Layer~\textbf{4 in progress} (full SIFT-1M harness:
-\texttt{scripts/run\_milvus\_layer4.sh}).
+\texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT};
+full SIFT-1M recall@10 $0.38\rightarrow0.98$ vs FAISS Table~5).
 See Section~\ref{sec:layer-progress}.
 \end{abstract}
 
@@ -95,8 +94,7 @@ current layer passes.
 \subsection{Progress at a glance (lab host \texttt{amd-rx7900xtx})}
 \label{sec:layer-progress}
 
-\textbf{Completed (gate passed):} Layers~\textbf{0}, \textbf{1}, \textbf{1.5}, \textbf{2}, and \textbf{3}.
-\textbf{In progress:} Layer~\textbf{4} (full SIFT-1M GPU harness ready; lab results pending).
+\textbf{Completed (gate passed):} Layers~\textbf{0}, \textbf{1}, \textbf{1.5}, \textbf{2}, \textbf{3}, and \textbf{4}.
 
 \begin{table}[h]
 \centering
@@ -110,7 +108,7 @@ current layer passes.
 1.5 & IVF packer fix (gfx1100) & \textbf{Done} & Float IVF gtests 98/98 (2026-07-05) \\
 2 & Knowhere + HIP & \textbf{Done} & Catch2 \texttt{Test Gpu Index Search}: 108 assertions (2026-07-09); DXC \texttt{2.5} merged \\
 3 & Milvus source + GPU & \textbf{Done} & Sealed \texttt{GPU\_IVF\_FLAT}: IndexNode \texttt{GPU\_CUVS\_IVF\_FLAT}; QueryNode load OK (2026-07-17) \\
-4 & Harness benchmarks & \textbf{In progress} & Full SIFT-1M \texttt{nprobe} grid vs Tables~5--7; \texttt{run\_milvus\_layer4.sh} \\
+4 & Harness benchmarks & \textbf{Done} & Full SIFT-1M: recall@10 $0.3824\rightarrow0.9803$; sealed \texttt{GPU\_CUVS} (2026-07-17) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1090,7 +1088,7 @@ DXC merge & squash \texttt{bd82ff28} on \texttt{2.5} (PR~\#2) \\
 \label{sec:layer3-milvus-hip}
 
 \noindent\textit{Status: \textbf{Done} (2026-07-17) --- sealed \texttt{GPU\_IVF\_FLAT} build/load on
-\texttt{amd-rx7900xtx}; DXC branch \texttt{amd-hip-gfx1100-layer3} (merge after Layer~4 tests).}
+\texttt{amd-rx7900xtx}; DXC branch \texttt{amd-hip-gfx1100-layer3} (Layer~4 green --- merge ready).}
 
 \subsection{Goal}
 
@@ -1218,8 +1216,8 @@ clang~19 Tantivy \texttt{template} keyword fix.
 \section{Layer 4 --- Harness benchmarks (comparison science)}
 \label{sec:layer4-benchmarks}
 
-\noindent\textit{Status: \textbf{In progress} --- harness ready (\texttt{scripts/run\_milvus\_layer4.sh});
-lab full-SIFT results pending. Checklist: \texttt{docs/layer4\_run\_checklist.md}.}
+\noindent\textit{Status: \textbf{Done} (2026-07-17) --- full SIFT-1M sealed \texttt{GPU\_IVF\_FLAT};
+Table~\ref{tab:layer4-measured}. Checklist: \texttt{docs/layer4\_run\_checklist.md}.}
 
 \subsection{Goal}
 
@@ -1276,34 +1274,44 @@ bash scripts/run_milvus_layer4.sh
   \item Results JSON under \texttt{\$WORKDIR/logs/}; fill Table~\ref{tab:layer4-measured}.
 \end{itemize}
 
-\subsection{Measured on lab host (Layer~4 --- fill after run)}
+\subsection{Measured on lab host (Layer~4)}
 \label{sec:layer4-measured}
+
+Host: \texttt{amd-rx7900xtx}, Milvus \texttt{v2.5.4} HIP Standalone,
+\texttt{ROCR\_VISIBLE\_DEVICES=0}, collection \texttt{sift\_gpu\_l4\_20260717\_200716},
+\texttt{scripts/run\_milvus\_layer4.sh}.
+Results JSON: \texttt{\$WORKDIR/logs/layer4\_gpu\_ivf\_20260717\_200716.json}.
+
+Timings: insert $14.16$\,s, flush $3.02$\,s, index build $16.06$\,s;
+\texttt{indexed\_rows=1000000}, load \texttt{Finished}/\texttt{Loaded}.
+IndexNode saved multi-slice \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
+\texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_FLAT}; no \texttt{InvalidDeviceFunction}.
 
 \begin{table}[h]
 \centering
-\caption{Layer~4 GPU Milvus SIFT-1M (\texttt{k=10}, \texttt{nlist=1024}, RX 7900 XTX) --- \emph{pending}}
+\caption{Layer~4 GPU Milvus SIFT-1M (\texttt{k=10}, \texttt{nlist=1024}, RX 7900 XTX, 2026-07-17)}
 \label{tab:layer4-measured}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
 \textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} \\
 \midrule
-1  & --- & --- & --- \\
-4  & --- & --- & --- \\
-8  & --- & --- & --- \\
-16 & --- & --- & --- \\
-32 & --- & --- & --- \\
+1  & 16981.8 & 2.59 & 0.3824 \\
+4  & 21881.7 & 2.49 & 0.7091 \\
+8  & 21838.3 & 2.76 & 0.8436 \\
+16 & 26181.3 & 2.76 & 0.9337 \\
+32 & 19578.4 & 2.81 & 0.9803 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Compare to runbook Table~5 (FAISS) and Tables~6--7 (CPU Milvus) on the same host.
-
-\textbf{Compare:}
+\textbf{Compare} to runbook Table~5 (FAISS) and Tables~6--7 (CPU Milvus) on the same host:
 \begin{enumerate}[leftmargin=*]
-  \item Recall vs \texttt{nprobe} must rise like FAISS (correctness).
-  \item QPS vs \texttt{nprobe}---GPU should beat CPU Milvus at some operating points
-        (performance).
-  \item Index build time---often where GPU wins first.
+  \item Recall vs \texttt{nprobe} matches the FAISS ladder shape ($\sim$0.37$\rightarrow$0.98) ---
+        Layer~4 correctness gate \textbf{passed}.
+  \item Search QPS stays $\sim$17k--26k across the grid (p99 $\sim$2.5--2.8\,ms), well above
+        CPU Milvus Standalone at similar recall (Tables~6--7); FAISS in-process QPS remains
+        the absolute ceiling (Table~5).
+  \item Index build $\sim$16\,s for full 1M sealed GPU IVF is a clear GPU win vs typical CPU IVF builds.
 \end{enumerate}
 
 \section{Metrics matrix}
@@ -1348,7 +1356,8 @@ Recommended flow:
 \end{enumerate}
 
 \textbf{Branching:} DXC Knowhere \texttt{2.5} (Layer~2 merged); Milvus branch
-\texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus} (open until Layer~4).
+\texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus} --- ready to merge after
+Layer~4 (Table~\ref{tab:layer4-measured}).
 Pin versions: Milvus tag $\leftrightarrow$ Knowhere tag $\leftrightarrow$ hipVS
 release $\leftrightarrow$ ROCm version in a single compatibility table per experiment.
 
@@ -1375,29 +1384,16 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 
 \section{Immediate next steps (lab host)}
 
-\textbf{Where we are:} Layers~0--3 complete (Section~\ref{sec:layer3-measured}).
-\textbf{What remains:} Layer~4 full-SIFT recall/QPS; then merge DXC Milvus PR.
+\textbf{Where we are:} Layers~0--4 complete (Section~\ref{sec:layer4-measured}).
+\textbf{What remains:} merge DXC Milvus Layer~3 branch; optional wider indexes / VectorDBBench.
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Layer~4 (now):} full SIFT-1M (or large subset with matching GT) with
-        \texttt{--flush}, \texttt{ROCR\_VISIBLE\_DEVICES=0}:
-\begin{verbatim}
-cd ~/ann-harness-amd && git pull
-export WORKDIR=~/rocmds_check_gfx1100 ROCM_PATH=/opt/rocm
-export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
-export MILVUS_HIP_INSTALL_PREFIX=$WORKDIR/install
-# HIP Milvus already running on :19530
-python3 scripts/run_milvus_hdf5.py --uri http://127.0.0.1:19530 \
-  --index-type GPU_IVF_FLAT --flush --nlist 1024 \
-  --nprobes 1,4,8,16,32 --collection sift_gpu_l4_$(date +%s) \
-  --data data/sift-128-euclidean.hdf5
-# Confirm sealed HIP path in logs (no IVF_FLAT_CC for search; no InvalidDeviceFunction)
-\end{verbatim}
-  \item Compare recall/QPS to runbook Tables~5--6 (CPU FAISS / CPU Milvus).
-  \item \textbf{Merge DXC} \texttt{amd-hip-gfx1100-layer3} after clean rebuild from the branch
-        + Layer~4 evidence; optional Knowhere nested-\texttt{.cu} follow-up if not landed.
-  \item \textbf{Optional triage} (does not block Layer~4 start): CAGRA bitset recall$=0$;
-        IVF\_PQ TopK threshold flakes on gfx1100.
+  \item \textbf{Merge DXC} \texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus}
+        (Layer~4 sealed full-SIFT evidence in Table~\ref{tab:layer4-measured}); optional
+        Knowhere nested-\texttt{.cu} follow-up if not landed.
+  \item Re-run: \texttt{bash scripts/run\_milvus\_layer4.sh} (tmux) after rebuilds.
+  \item Optional: VectorDBBench \texttt{milvusgpu*} cases; \texttt{GPU\_IVF\_PQ} / CAGRA.
+  \item Optional triage: CAGRA bitset recall$=0$; IVF\_PQ TopK threshold flakes on gfx1100.
 \end{enumerate}
 
 \section{References}
