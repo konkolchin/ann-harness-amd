@@ -3,6 +3,8 @@
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{booktabs}
 \usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{float}
 \usepackage{array}
 \usepackage{hyperref}
 \usepackage{enumitem}
@@ -1304,15 +1306,48 @@ IndexNode saved multi-slice \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
 \end{tabular}
 \end{table}
 
-\textbf{Compare} to runbook Table~5 (FAISS) and Tables~6--7 (CPU Milvus) on the same host:
+\subsection{CPU vs GPU comparison (same host)}
+\label{sec:layer4-cpu-gpu}
+
+Same host \texttt{amd-rx7900xtx}, SIFT-1M L2, IVF \texttt{nlist=1024}, \texttt{k=10}.
+CPU numbers from \texttt{ann\_framework\_runbook.tex}: FAISS Table~5 (2026-06-30) and
+Milvus Standalone CPU VectorDBBench Table~6 (2026-06-30). GPU: Layer~4 HIP Milvus
+(Table~\ref{tab:layer4-measured}, 2026-07-17).
+
+\begin{table}[H]
+\centering
+\caption{FAISS CPU vs Milvus CPU vs Milvus GPU HIP (7900 XTX, SIFT-1M, \texttt{k=10})}
+\label{tab:layer4-cpu-gpu}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{\textbf{FAISS CPU}} & \multicolumn{2}{c}{\textbf{Milvus CPU}} & \multicolumn{2}{c}{\textbf{Milvus GPU HIP}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+\textbf{nprobe} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} \\
+\midrule
+1  & 89993.4 & 0.3711 & 1589.0 & 0.3704 & 16981.8 & 0.3824 \\
+4  & 24484.8 & 0.6983 & 1219.4 & 0.7017 & 21881.7 & 0.7091 \\
+8  & 12510.7 & 0.8337 &  937.4 & 0.8390 & 21838.3 & 0.8436 \\
+16 &  6408.9 & 0.9273 &  630.1 & 0.9312 & 26181.3 & 0.9337 \\
+32 &  3298.5 & 0.9760 &  375.9 & 0.9790 & 19578.4 & 0.9803 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\textbf{Read-out:}
 \begin{enumerate}[leftmargin=*]
-  \item Recall vs \texttt{nprobe} matches the FAISS ladder shape ($\sim$0.37$\rightarrow$0.98) ---
-        Layer~4 correctness gate \textbf{passed}.
-  \item Search QPS stays $\sim$17k--26k across the grid (p99 $\sim$2.5--2.8\,ms), well above
-        CPU Milvus Standalone at similar recall (Tables~6--7); FAISS in-process QPS remains
-        the absolute ceiling (Table~5).
+  \item Recall@10 agrees across all three backends (FAISS-shaped ladder
+        $\sim$0.37$\rightarrow$0.98) --- Layer~4 correctness gate \textbf{passed}.
+  \item GPU Milvus QPS is $\sim$11--52$\times$ CPU Milvus Standalone (VDBBench) at the same
+        \texttt{nprobe}; at \texttt{nprobe}$\ge$8 it also exceeds FAISS in-process QPS
+        (FAISS still wins at low \texttt{nprobe} where IVF is cheap on CPU).
   \item Index build $\sim$16\,s for full 1M sealed GPU IVF is a clear GPU win vs typical CPU IVF builds.
 \end{enumerate}
+
+\noindent\textit{Note:} Runbook Table~7 (Milvus Standalone diagnostic script, 2026-07-07) reports
+higher CPU Milvus QPS ($\sim$22k$\rightarrow$2.7k for \texttt{nprobe} $1\rightarrow$32) with the
+same recall ladder; GPU still beats that path at \texttt{nprobe}$\ge$4 while matching recall.
 
 \section{Metrics matrix}
 
