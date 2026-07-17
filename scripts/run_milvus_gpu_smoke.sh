@@ -146,20 +146,23 @@ else
   echo "==> SKIP_START=1; assuming milvus at ${URI}"
 fi
 
-echo "==> GPU_IVF_FLAT smoke (SIFT slice)"
+echo "==> GPU_IVF_FLAT smoke (SIFT slice; flush seals segments for real GPU index)"
 cd "${REPO_ROOT}"
 python3 scripts/run_milvus_hdf5.py \
   --uri "${URI}" \
   --index-type GPU_IVF_FLAT \
+  --flush \
+  --index-wait-s "${INDEX_WAIT_S:-180}" \
   --nlist 128 \
   --nprobes 8,16 \
   --max-train-rows 50000 \
   --max-query-rows 500 \
   --data "${DATA_PATH}" \
-  --collection sift_gpu_ivf_smoke
+  --collection "${SMOKE_COLLECTION:-sift_gpu_ivf_smoke}"
 
 echo ""
 echo "SMOKE OK"
 echo "  log: ${MILVUS_LOG}"
-echo "  Confirm HIP/Knowhere activity: grep -iE 'hip|cuvs|gpu_ivf|knowhere' ${MILVUS_LOG} | tail"
+echo "  Confirm sealed HIP path (want GPU_CUVS_IVF_FLAT, NOT IVF_FLAT_CC / InvalidDeviceFunction):"
+echo "    grep -a -iE 'InvalidDeviceFunction|IVF_FLAT_CC|GPU_CUVS_IVF_FLAT|origin_index|DeserializeFromStream' ${MILVUS_LOG} | tail -40"
 echo "  Stop: kill \$(cat ${PID_FILE})"
