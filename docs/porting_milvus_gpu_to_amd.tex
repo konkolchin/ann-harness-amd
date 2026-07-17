@@ -31,10 +31,10 @@ runbook (\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU 
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
 
-\textbf{Status (2026-07-13):} Layers~\textbf{0--2 done} on the 7900 XTX lab host
+\textbf{Status (2026-07-17):} Layers~\textbf{0--3 done} on the 7900 XTX lab host
 (ROCm~7.0.2; hipVS IVF packer fixed; Knowhere HIP L2 search 108 assertions; DXC Knowhere
-\texttt{2.5} merged). Layer~\textbf{3 in progress} (Milvus HIP patches/scripts in
-\texttt{ann-harness-amd}; lab smoke pending). Layer~\textbf{4 not started}.
+\texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT}
+build/load). Layer~\textbf{4 not started} (full SIFT-1M recall/QPS).
 See Section~\ref{sec:layer-progress}.
 \end{abstract}
 
@@ -94,13 +94,12 @@ current layer passes.
 \subsection{Progress at a glance (lab host \texttt{amd-rx7900xtx})}
 \label{sec:layer-progress}
 
-\textbf{Completed (gate passed):} Layers~\textbf{0}, \textbf{1}, \textbf{1.5}, and \textbf{2}.
-\textbf{In progress:} Layer~\textbf{3} (harness scripts ready; lab smoke pending).
+\textbf{Completed (gate passed):} Layers~\textbf{0}, \textbf{1}, \textbf{1.5}, \textbf{2}, and \textbf{3}.
 \textbf{Not started:} Layer~\textbf{4}.
 
 \begin{table}[h]
 \centering
-\caption{Layer status and pass criteria (as of 2026-07-13)}
+\caption{Layer status and pass criteria (as of 2026-07-17)}
 \begin{tabular}{@{}cllp{0.38\textwidth}@{}}
 \toprule
 \textbf{Layer} & \textbf{Name} & \textbf{Status} & \textbf{Pass criterion / evidence} \\
@@ -109,7 +108,7 @@ current layer passes.
 1 & hipRAFT / hipVS alone & \textbf{Done} & Build + \texttt{BRUTEFORCE\_C\_TEST}; IVF packer issues deferred to 1.5 \\
 1.5 & IVF packer fix (gfx1100) & \textbf{Done} & Float IVF gtests 98/98 (2026-07-05) \\
 2 & Knowhere + HIP & \textbf{Done} & Catch2 \texttt{Test Gpu Index Search}: 108 assertions (2026-07-09); DXC \texttt{2.5} merged \\
-3 & Milvus source + GPU & \textbf{In progress} & Scripts ready; lab \texttt{GPU\_IVF\_FLAT} smoke not yet green \\
+3 & Milvus source + GPU & \textbf{Done} & Sealed \texttt{GPU\_IVF\_FLAT}: IndexNode \texttt{GPU\_CUVS\_IVF\_FLAT}; QueryNode load OK (2026-07-17) \\
 4 & Harness benchmarks & \textbf{Not started} & SIFT-1M \texttt{nprobe} grid: recall + QPS vs CPU baselines \\
 \bottomrule
 \end{tabular}
@@ -117,7 +116,8 @@ current layer passes.
 
 \noindent\textit{Note:} Layer~2 ``Done'' means the Knowhere HIP L2-search gate passed. The full
 Catch2 GPU suite still has known gaps (CAGRA bitset, IVF\_PQ TopK); those are not Layer~2
-blockers. Layer~3 is the next required step for end-to-end Milvus on AMD GPU.
+blockers. Layer~3 ``Done'' means Milvus HIP Standalone can \textbf{build and load} a sealed
+\texttt{GPU\_IVF\_FLAT} index on gfx1100 (not a full-SIFT recall/QPS claim---that is Layer~4).
 
 \section{Layer 0 --- Machine, ROCm, and CPU Milvus sanity}
 
@@ -1088,8 +1088,8 @@ DXC merge & squash \texttt{bd82ff28} on \texttt{2.5} (PR~\#2) \\
 \section{Layer 3 --- Milvus from source (end-to-end)}
 \label{sec:layer3-milvus-hip}
 
-\noindent\textit{Status: \textbf{In progress} --- harness patches/scripts ready (2026-07-13);
-lab \texttt{GPU\_IVF\_FLAT} smoke still pending on \texttt{amd-rx7900xtx}.}
+\noindent\textit{Status: \textbf{Done} (2026-07-17) --- sealed \texttt{GPU\_IVF\_FLAT} build/load on
+\texttt{amd-rx7900xtx}; DXC branch \texttt{amd-hip-gfx1100-layer3} (merge after Layer~4 tests).}
 
 \subsection{Goal}
 
@@ -1106,11 +1106,13 @@ is \emph{not} the Layer~3 binary.
 Milvus tag & \texttt{v2.5.4} (\texttt{milvus-io/milvus}) \\
 Knowhere & Local \texttt{\$WORKDIR/knowhere} (HIP) or DXC \texttt{llmkb-internal/knowhere} \texttt{2.5} \\
 hipVS/hipRAFT & \texttt{\$INSTALL\_PREFIX} (Layer~1.5) \\
-Harness patch & \texttt{patches/milvus/0001-knowhere-hip-dxc-fetchcontent.patch},
-                  \texttt{0002-skip-cuda-language-for-hip.patch} \\
+DXC Milvus & \url{https://github.dxc.com/llmkb-internal/milvus} branch \texttt{amd-hip-gfx1100-layer3} \\
+Harness patches & \texttt{patches/milvus/0001}--\texttt{0004} (Knowhere HIP FetchContent,
+                  skip CUDA language, Knowhere API, clang~19 Tantivy) \\
 Build & \texttt{scripts/build\_milvus\_layer3.sh} ($\rightarrow$ \texttt{make milvus-gpu}) \\
-Smoke & \texttt{scripts/run\_milvus\_gpu\_smoke.sh} \\
-Client & \texttt{scripts/run\_milvus\_hdf5.py --index-type GPU\_IVF\_FLAT} \\
+Smoke & \texttt{scripts/run\_milvus\_gpu\_smoke.sh} (passes \texttt{--flush}) \\
+Client & \texttt{scripts/run\_milvus\_hdf5.py --index-type GPU\_IVF\_FLAT --flush} \\
+PR notes & \texttt{docs/PR\_milvus\_amd\_hip\_gfx1100\_layer3.md} \\
 \bottomrule
 \end{tabularx}
 
@@ -1127,24 +1129,57 @@ ls $HOME/rocmds_check_gfx1100/knowhere/build/libknowhere.so
 cd ~/ann-harness-amd && git pull
 export WORKDIR=~/rocmds_check_gfx1100
 export INSTALL_PREFIX=$WORKDIR/install
+export MILVUS_HIP_INSTALL_PREFIX=$INSTALL_PREFIX
 export ROCM_PATH=/opt/rocm
+# Pin discrete GPU (hide Raphael iGPU gfx1036)
+export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
 # uses local HIP Knowhere when present; else FetchContent DXC 2.5
 SKIP_CLONE=1 bash scripts/build_milvus_layer3.sh
 \end{verbatim}
-  \item Smoke: etcd/minio from compose (stops stock \texttt{standalone}), start HIP milvus,
-        \texttt{GPU\_IVF\_FLAT} on a SIFT slice:
+  \item Start HIP Milvus with writable rocksmq/runtime paths (not \texttt{/var/lib/milvus}),
+        etcd/minio up, then smoke with \textbf{flush} so IndexNode seals GPU indexes:
 \begin{verbatim}
 bash scripts/run_milvus_gpu_smoke.sh
-# or manually:
+# or manually (unique collection avoids stale etcd node IDs):
 # python scripts/run_milvus_hdf5.py --uri http://127.0.0.1:19530 \
-#   --index-type GPU_IVF_FLAT --nlist 128 --nprobes 8,16 \
-#   --max-train-rows 50000 --max-query-rows 500
+#   --index-type GPU_IVF_FLAT --flush --nlist 128 --nprobes 8,16 \
+#   --max-train-rows 50000 --max-query-rows 500 \
+#   --collection sift_gpu_ivf_smoke_$(date +%s)
 \end{verbatim}
 \end{enumerate}
 
-\textbf{Pass:} \texttt{create\_index}, \texttt{load}, and \texttt{search} succeed with
-\texttt{GPU\_IVF\_FLAT}; \texttt{milvus\_gpu\_standalone.log} shows HIP/Knowhere GPU activity
-(not CPU SSE-only Docker Knowhere).
+\textbf{Pass (Layer~3):}
+\begin{itemize}[leftmargin=*]
+  \item Client: insert $\rightarrow$ flush $\rightarrow$ \texttt{GPU\_IVF\_FLAT} index
+        (\texttt{indexed\_rows} complete, \texttt{LoadState: Loaded}) $\rightarrow$ search.
+  \item Logs: IndexNode writes \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
+        \texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_FLAT}; \textbf{no}
+        \texttt{hipErrorInvalidDeviceFunction}.
+  \item Do \emph{not} treat growing-path \texttt{IVF\_FLAT\_CC} remap alone as failure---that
+        is the interim CPU index before seal. Without \texttt{--flush}, search often stays on
+        \texttt{IVF\_FLAT\_CC} and is \emph{not} a HIP proof.
+\end{itemize}
+
+\subsection{Measured on lab host (Layer~3 pass)}
+\label{sec:layer3-measured}
+
+\begin{table}[h]
+\centering
+\caption{Layer~3 results (\texttt{amd-rx7900xtx}, 2026-07-17)}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Item} & \textbf{Result} \\
+\midrule
+ROCm / arch & 7.0.2 / \texttt{gfx1100} (pin \texttt{ROCR\_VISIBLE\_DEVICES=0}) \\
+Milvus & \texttt{v2.5.4} HIP Standalone (\texttt{bin/milvus}) \\
+Knowhere & Nested Layer~2 HIP tree / DXC \texttt{2.5} \\
+Index build & IndexNode: \texttt{GPU\_CUVS\_IVF\_FLAT\_0/1} + \texttt{SLICE\_META} \\
+Sealed load & QueryNode \texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_FLAT}; no \texttt{InvalidDeviceFunction} \\
+Client gate & 50k SIFT slice, \texttt{--flush}: \texttt{indexed\_rows=50000}, \texttt{Loaded} \\
+DXC branch & \texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus} (open; merge after L4) \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{What the Milvus patches change}
 
@@ -1154,18 +1189,34 @@ bash scripts/run_milvus_gpu_smoke.sh
   \item Optional \texttt{MILVUS\_KNOWHERE\_SOURCE\_DIR} skips git and uses the Layer~2 tree.
   \item \texttt{MILVUS\_GPU\_VERSION=ON} forces \texttt{WITH\_CUVS} + \texttt{WITH\_HIP}
         (not NVIDIA \texttt{WITH\_RAFT}).
-  \item Prepends \texttt{\$INSTALL\_PREFIX} and \texttt{\$ROCM\_PATH} to
-        \texttt{CMAKE\_PREFIX\_PATH} for hipVS/hipRAFT.
+  \item Prefers \texttt{MILVUS\_HIP\_INSTALL\_PREFIX} / \texttt{ROCMDS\_INSTALL\_PREFIX}
+        (not Milvus-clobbered \texttt{INSTALL\_PREFIX}) for hipVS/xxHash.
 \end{itemize}
 \texttt{internal/core/src/CMakeLists.txt} (\texttt{0002}):
 \begin{itemize}[leftmargin=*]
   \item GPU build keeps \texttt{MILVUS\_GPU\_VERSION} but does \emph{not} enable the CUDA
         language (no \texttt{nvcc} on AMD).
 \end{itemize}
+\texttt{0003}/\texttt{0004}: Knowhere \texttt{IsAdditionalScalarSupported} API alignment;
+clang~19 Tantivy \texttt{template} keyword fix.
+
+\subsection{Known caveats (do not block Layer~3; watch in Layer~4)}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Dual GPU:} host has \texttt{gfx1100} + iGPU \texttt{gfx1036}. Without
+        \texttt{ROCR\_VISIBLE\_DEVICES=0}, sealed deserialize can hit
+        \texttt{hipErrorInvalidDeviceFunction}.
+  \item \textbf{Growing segments} still remap \texttt{GPU\_IVF\_FLAT}$\rightarrow$\texttt{IVF\_FLAT\_CC};
+        always \texttt{--flush} before claiming GPU search.
+  \item \textbf{50k-slice recall} vs full-1M GT is meaningless; Layer~4 needs full train (or matching GT).
+  \item \textbf{DXC merge:} keep \texttt{amd-hip-gfx1100-layer3} open until clean rebuild from the
+        branch + full-SIFT evidence; optional Knowhere follow-up
+        (\texttt{CMAKE\_CURRENT\_SOURCE\_DIR} for nested \texttt{.cu}).
+\end{itemize}
 
 \section{Layer 4 --- Harness benchmarks (comparison science)}
 
-\noindent\textit{Status: \textbf{Not started} (blocked on Layer~3 Milvus GPU Standalone smoke).}
+\noindent\textit{Status: \textbf{Not started} (Layer~3 sealed GPU path green; ready to begin).}
 
 \subsection{Goal}
 
@@ -1235,15 +1286,17 @@ Recommended flow:
   \item Layer~1: hipVS/hipRAFT standalone on \texttt{gfx1100} (Section~\ref{sec:layer1-measured}).
   \item Layer~1.5: \texttt{kIndexGroupSize} patch; IVF gtests 98/98 (Section~\ref{sec:layer15-measured}).
   \item Layer~2: Knowhere + HIP; L2 GPU search UT green (Section~\ref{sec:layer2-measured}).
-  \item Layer~3: Milvus source build; Standalone GPU search smoke test.
+  \item Layer~3: Milvus source build; sealed \texttt{GPU\_IVF\_FLAT} build/load
+        (Section~\ref{sec:layer3-measured}).
   \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Tables~5--6.
   \item If recall OK and GPU faster at target points: widen index types + VectorDBBench GPU
         cases.
   \item If not: debug numerics, params, device cache before advancing.
 \end{enumerate}
 
-\textbf{Branching:} maintain a \texttt{milvus-amd-gpu} fork (Knowhere submodule + CMake
-patches). Pin versions: Milvus tag $\leftrightarrow$ Knowhere tag $\leftrightarrow$ hipVS
+\textbf{Branching:} DXC Knowhere \texttt{2.5} (Layer~2 merged); Milvus branch
+\texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus} (open until Layer~4).
+Pin versions: Milvus tag $\leftrightarrow$ Knowhere tag $\leftrightarrow$ hipVS
 release $\leftrightarrow$ ROCm version in a single compatibility table per experiment.
 
 \textbf{CI/local:} small dataset on every commit; full SIFT-1M nightly on the lab host in
@@ -1258,8 +1311,8 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
         \texttt{kIndexGroupSize=64} despite \texttt{USE\_WARPSIZE\_32}; patch \texttt{0002} in
         \texttt{ann-harness-amd} restores 98/98 float gtests on \texttt{gfx1100}.
   \item \textbf{API compatibility $\neq$ drop-in binary}---Milvus/Knowhere still need
-        build-system and wrapper changes. Layer~2 delivers the Knowhere HIP link; Layer~3
-        still requires a Milvus source build against that Knowhere.
+        build-system and wrapper changes. Layers~2--3 deliver Knowhere HIP + Milvus
+        Standalone sealed \texttt{GPU\_IVF\_FLAT}; Layer~4 measures end-to-end quality.
   \item \textbf{CPU baseline stays essential}---GPU work asks whether the hipVS path improves
         the recall--QPS trade-off vs CPU Milvus/FAISS on the same host, not whether Milvus
         beats FAISS on raw in-process QPS.
@@ -1269,22 +1322,29 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 
 \section{Immediate next steps (lab host)}
 
-\textbf{Where we are:} Layers~0--2 complete; Layer~3 harness ready
-(Section~\ref{sec:layer3-milvus-hip}).
-\textbf{What remains:} lab Milvus HIP build + \texttt{GPU\_IVF\_FLAT} smoke, then Layer~4.
+\textbf{Where we are:} Layers~0--3 complete (Section~\ref{sec:layer3-measured}).
+\textbf{What remains:} Layer~4 full-SIFT recall/QPS; then merge DXC Milvus PR.
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Layer~3 (now):}
+  \item \textbf{Layer~4 (now):} full SIFT-1M (or large subset with matching GT) with
+        \texttt{--flush}, \texttt{ROCR\_VISIBLE\_DEVICES=0}:
 \begin{verbatim}
 cd ~/ann-harness-amd && git pull
-export WORKDIR=~/rocmds_check_gfx1100 INSTALL_PREFIX=$WORKDIR/install ROCM_PATH=/opt/rocm
-tmux new -s milvus-l3
-bash scripts/build_milvus_layer3.sh
-bash scripts/run_milvus_gpu_smoke.sh
+export WORKDIR=~/rocmds_check_gfx1100 ROCM_PATH=/opt/rocm
+export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
+export MILVUS_HIP_INSTALL_PREFIX=$WORKDIR/install
+# HIP Milvus already running on :19530
+python3 scripts/run_milvus_hdf5.py --uri http://127.0.0.1:19530 \
+  --index-type GPU_IVF_FLAT --flush --nlist 1024 \
+  --nprobes 1,4,8,16,32 --collection sift_gpu_l4_$(date +%s) \
+  --data data/sift-128-euclidean.hdf5
+# Confirm sealed HIP path in logs (no IVF_FLAT_CC for search; no InvalidDeviceFunction)
 \end{verbatim}
-  \item \textbf{Layer~4:} harness \texttt{nprobe} sweep vs runbook Tables~5--6 (after smoke green).
-  \item \textbf{Optional triage} (does not block Layer~3): CAGRA bitset recall$=0$; IVF\_PQ
-        TopK threshold flakes on gfx1100.
+  \item Compare recall/QPS to runbook Tables~5--6 (CPU FAISS / CPU Milvus).
+  \item \textbf{Merge DXC} \texttt{amd-hip-gfx1100-layer3} after clean rebuild from the branch
+        + Layer~4 evidence; optional Knowhere nested-\texttt{.cu} follow-up if not landed.
+  \item \textbf{Optional triage} (does not block Layer~4 start): CAGRA bitset recall$=0$;
+        IVF\_PQ TopK threshold flakes on gfx1100.
 \end{enumerate}
 
 \section{References}
@@ -1297,8 +1357,11 @@ bash scripts/run_milvus_gpu_smoke.sh
   \item hipVS repo: \url{https://github.com/ROCm-DS/hipVS}
   \item hipRAFT repo: \url{https://github.com/ROCm-DS/hipRaft}
   \item DXC Knowhere (HIP): \url{https://github.dxc.com/llmkb-internal/knowhere}
+  \item DXC Milvus (Layer~3 branch): \url{https://github.dxc.com/llmkb-internal/milvus}
   \item Public Knowhere mirror: \url{https://github.com/konkolchin/knowhere}
-  \item Harness (patches + Layer~2 scripts): \url{https://github.com/konkolchin/ann-harness-amd}
+  \item Harness (patches + Layer~2/3 scripts): \url{https://github.com/konkolchin/ann-harness-amd}
+  \item Layer~2 PR notes: \texttt{docs/PR\_knowhere\_amd\_hip\_gfx1100.md}
+  \item Layer~3 PR notes: \texttt{docs/PR\_milvus\_amd\_hip\_gfx1100\_layer3.md}
 \end{itemize}
 
 \end{document}
