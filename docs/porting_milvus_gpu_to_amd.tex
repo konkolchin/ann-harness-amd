@@ -29,14 +29,14 @@
 \begin{abstract}
 This document describes a layered experiment plan for replacing NVIDIA cuVS/cuRAFT with
 AMD hipVS/hipRAFT in the Milvus/Knowhere GPU path. It complements the CPU benchmarking
-runbook (\texttt{ann\_framework\_runbook.tex}): FAISS and Milvus Standalone CPU results on
+runbook (\texttt{ann\_framework\_runbook.tex}): Milvus Standalone CPU results on
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
 
 \textbf{Status (2026-07-17):} Layers~\textbf{0--4 done} on the 7900 XTX lab host
 (ROCm~7.0.2; hipVS IVF packer fixed; Knowhere HIP L2 search 108 assertions; DXC Knowhere
 \texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT};
-full SIFT-1M recall@10 $0.38\rightarrow0.98$ vs FAISS Table~5).
+full SIFT-1M recall@10 $0.38\rightarrow0.98$).
 See Section~\ref{sec:layer-progress}.
 \end{abstract}
 
@@ -76,11 +76,11 @@ Before starting GPU layers, the following should be in place on the target AMD h
 (see the main runbook for commands and measured tables):
 
 \begin{itemize}[leftmargin=*]
-  \item SIFT-1M HDF5 dataset and in-repo FAISS harness (\texttt{run\_faiss\_hdf5.py}).
+  \item SIFT-1M HDF5 dataset (\texttt{data/sift-128-euclidean.hdf5}).
   \item Milvus Standalone Docker CPU (\texttt{milvus-docker/}, \texttt{user.yaml}
         \texttt{knowhere.simdType: sse4\_2}).
   \item Optional but recommended: VectorDBBench \texttt{milvusivfflat} IVF \texttt{nprobe}
-        sweep for same-host FAISS vs Milvus CPU comparison.
+        sweep as the same-host CPU Milvus control.
 \end{itemize}
 
 On \texttt{amd-rx7900xtx} (7900 XTX / \texttt{gfx1100}), CPU baselines and the IVF sweep
@@ -248,7 +248,7 @@ closing SSH. An empty \texttt{tmux ls} after reboot is normal---start a new sess
 ROCm installed (\texttt{7.0.2}) & Done \\
 \texttt{rocminfo} shows \texttt{gfx1100} / 7900 XTX & Done \\
 Milvus Standalone Docker healthy & Done \\
-CPU FAISS + VDBBench IVF baselines (runbook Tables~5--6) & Done \\
+CPU Milvus VDBBench IVF baselines (runbook Tables~6--7) & Done \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -499,12 +499,12 @@ optional for Milvus/Knowhere integration (C++ path is enough for Layer~2):
 #   python -c "import cuvs; print('ok')"
 \end{verbatim}
 
-\subsection{Step 9 --- Recall sanity vs FAISS (float, small data)}
+\subsection{Step 9 --- Recall sanity (float, small data)}
 
 After Layer~1 builds pass, validate \textbf{float} IVF (what SIFT and \texttt{GPU\_IVF\_FLAT}
-use---not \texttt{uint8} gtest dtypes) on a \textbf{10k-vector} slice from SIFT HDF5 vs CPU
-FAISS recall@10. Gross divergence means wrong metric/arch; exact match is not required. Full
-SIFT-1M GPU benchmarks belong in Layer~4.
+use---not \texttt{uint8} gtest dtypes) on a \textbf{10k-vector} slice from SIFT HDF5.
+Use hipVS/gtest recall lines: values near $1.0$ mean neighbor search is sane; gross
+divergence means wrong metric/arch. Full SIFT-1M GPU benchmarks belong in Layer~4.
 
 Stock Milvus Docker cannot run \texttt{GPU\_IVF\_FLAT}; this step uses hipVS directly until
 Layer~2--3. A harness script is not yet in-repo---use gtest recall lines as interim evidence,
@@ -1223,7 +1223,8 @@ Table~\ref{tab:layer4-measured}. Checklist: \texttt{docs/layer4\_run\_checklist.
 
 \subsection{Goal}
 
-Answer the same questions as the CPU runbook, now with CPU vs GPU Milvus vs FAISS.
+Measure sealed HIP \texttt{GPU\_IVF\_FLAT} against the same-host CPU Milvus control
+(same SIFT-1M recipe and \texttt{nprobe} grid).
 
 \begin{table}[h]
 \centering
@@ -1232,8 +1233,7 @@ Answer the same questions as the CPU runbook, now with CPU vs GPU Milvus vs FAIS
 \toprule
 \textbf{Experiment} & \textbf{Tool} & \textbf{What you learn} \\
 \midrule
-CPU reference & \texttt{run\_faiss\_hdf5.py} / Table~5 & Recall ladder + QPS ceiling \\
-CPU Milvus & Tables~6--7 / VDBBench \texttt{milvusivfflat} & Server overhead vs FAISS \\
+CPU Milvus & Tables~6--7 / VDBBench \texttt{milvusivfflat} & CPU Standalone recall/QPS control \\
 GPU Milvus & \texttt{run\_milvus\_layer4.sh} & hipVS sealed \texttt{GPU\_IVF\_FLAT} recall/QPS \\
 External report & VectorDBBench \texttt{milvusgpu*} (later) & Zilliz-style reporting \\
 \bottomrule
@@ -1248,7 +1248,7 @@ External report & VectorDBBench \texttt{milvusgpu*} (later) & Zilliz-style repor
 \midrule
 Dataset & Full SIFT-1M HDF5 (\texttt{data/sift-128-euclidean.hdf5}) \\
 Index & \texttt{GPU\_IVF\_FLAT}, \texttt{nlist=1024}, \texttt{k=10} \\
-\texttt{nprobe} grid & $1,4,8,16,32$ (same as Tables~5--6) \\
+\texttt{nprobe} grid & $1,4,8,16,32$ (same as CPU Milvus Tables~6--7) \\
 Runner & \texttt{scripts/run\_milvus\_layer4.sh} \\
 Client & \texttt{run\_milvus\_hdf5.py --flush --results-json \ldots} \\
 Runtime & \texttt{ROCR\_VISIBLE\_DEVICES=0}; HIP Milvus on \texttt{:19530} \\
@@ -1270,7 +1270,7 @@ bash scripts/run_milvus_layer4.sh
 
 \textbf{Pass (Layer~4):}
 \begin{itemize}[leftmargin=*]
-  \item Recall@10 \textbf{rises} with \texttt{nprobe} (FAISS Table~5 shape $\sim$0.37$\rightarrow$0.98).
+  \item Recall@10 \textbf{rises} with \texttt{nprobe} (CPU Milvus shape $\sim$0.37$\rightarrow$0.98).
   \item Sealed HIP path: IndexNode \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode load without
         \texttt{InvalidDeviceFunction}.
   \item Results JSON under \texttt{\$WORKDIR/logs/}; fill Table~\ref{tab:layer4-measured}.
@@ -1310,38 +1310,36 @@ IndexNode saved multi-slice \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
 \label{sec:layer4-cpu-gpu}
 
 Same host \texttt{amd-rx7900xtx}, SIFT-1M L2, IVF \texttt{nlist=1024}, \texttt{k=10}.
-CPU numbers from \texttt{ann\_framework\_runbook.tex}: FAISS Table~5 (2026-06-30) and
-Milvus Standalone CPU VectorDBBench Table~6 (2026-06-30). GPU: Layer~4 HIP Milvus
-(Table~\ref{tab:layer4-measured}, 2026-07-17).
+CPU: Milvus Standalone VectorDBBench Table~6 in \texttt{ann\_framework\_runbook.tex}
+(2026-06-30). GPU: Layer~4 HIP Milvus (Table~\ref{tab:layer4-measured}, 2026-07-17).
 
 \begin{table}[H]
 \centering
-\caption{FAISS CPU vs Milvus CPU vs Milvus GPU HIP (7900 XTX, SIFT-1M, \texttt{k=10})}
+\caption{Milvus CPU vs Milvus GPU HIP (7900 XTX, SIFT-1M, \texttt{k=10})}
 \label{tab:layer4-cpu-gpu}
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{@{}lrrrrrr@{}}
+\begin{tabular}{@{}lrrrrr@{}}
 \toprule
- & \multicolumn{2}{c}{\textbf{FAISS CPU}} & \multicolumn{2}{c}{\textbf{Milvus CPU}} & \multicolumn{2}{c}{\textbf{Milvus GPU HIP}} \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
-\textbf{nprobe} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} \\
+ & \multicolumn{2}{c}{\textbf{Milvus CPU}} & \multicolumn{2}{c}{\textbf{Milvus GPU HIP}} & \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+\textbf{nprobe} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS speed-up} \\
 \midrule
-1  & 89993.4 & 0.3711 & 1589.0 & 0.3704 & 16981.8 & 0.3824 \\
-4  & 24484.8 & 0.6983 & 1219.4 & 0.7017 & 21881.7 & 0.7091 \\
-8  & 12510.7 & 0.8337 &  937.4 & 0.8390 & 21838.3 & 0.8436 \\
-16 &  6408.9 & 0.9273 &  630.1 & 0.9312 & 26181.3 & 0.9337 \\
-32 &  3298.5 & 0.9760 &  375.9 & 0.9790 & 19578.4 & 0.9803 \\
+1  & 1589.0 & 0.3704 & 16981.8 & 0.3824 & $10.7\times$ \\
+4  & 1219.4 & 0.7017 & 21881.7 & 0.7091 & $17.9\times$ \\
+8  &  937.4 & 0.8390 & 21838.3 & 0.8436 & $23.3\times$ \\
+16 &  630.1 & 0.9312 & 26181.3 & 0.9337 & $41.6\times$ \\
+32 &  375.9 & 0.9790 & 19578.4 & 0.9803 & $52.1\times$ \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabular}
 \end{table}
+
+\noindent\textit{QPS speed-up} $=$ (GPU QPS) / (CPU QPS) at the same \texttt{nprobe}.
 
 \textbf{Read-out:}
 \begin{enumerate}[leftmargin=*]
-  \item Recall@10 agrees across all three backends (FAISS-shaped ladder
-        $\sim$0.37$\rightarrow$0.98) --- Layer~4 correctness gate \textbf{passed}.
+  \item Recall@10 matches the CPU Milvus ladder ($\sim$0.37$\rightarrow$0.98) --- Layer~4
+        correctness gate \textbf{passed}.
   \item GPU Milvus QPS is $\sim$11--52$\times$ CPU Milvus Standalone (VDBBench) at the same
-        \texttt{nprobe}; at \texttt{nprobe}$\ge$8 it also exceeds FAISS in-process QPS
-        (FAISS still wins at low \texttt{nprobe} where IVF is cheap on CPU).
+        \texttt{nprobe}.
   \item Index build $\sim$16\,s for full 1M sealed GPU IVF is a clear GPU win vs typical CPU IVF builds.
 \end{enumerate}
 
@@ -1351,7 +1349,7 @@ same recall ladder; GPU still beats that path at \texttt{nprobe}$\ge$4 while mat
 
 \section{Metrics matrix}
 
-For each backend (FAISS CPU, Milvus CPU IVF, Milvus GPU IVF), record:
+For each backend (Milvus CPU IVF, Milvus GPU IVF), record:
 
 \begin{table}[h]
 \centering
@@ -1384,7 +1382,7 @@ Recommended flow:
   \item Layer~2: Knowhere + HIP; L2 GPU search UT green (Section~\ref{sec:layer2-measured}).
   \item Layer~3: Milvus source build; sealed \texttt{GPU\_IVF\_FLAT} build/load
         (Section~\ref{sec:layer3-measured}).
-  \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Tables~5--6.
+  \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Milvus Tables~6--7.
   \item If recall OK and GPU faster at target points: widen index types + VectorDBBench GPU
         cases.
   \item If not: debug numerics, params, device cache before advancing.
@@ -1411,8 +1409,7 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
         build-system and wrapper changes. Layers~2--3 deliver Knowhere HIP + Milvus
         Standalone sealed \texttt{GPU\_IVF\_FLAT}; Layer~4 measures end-to-end quality.
   \item \textbf{CPU baseline stays essential}---GPU work asks whether the hipVS path improves
-        the recall--QPS trade-off vs CPU Milvus/FAISS on the same host, not whether Milvus
-        beats FAISS on raw in-process QPS.
+        the recall--QPS trade-off vs CPU Milvus on the same host (same dataset and IVF recipe).
   \item \textbf{Stock Docker Milvus} remains the CPU control; GPU porting is source-build +
         fork work, not a config toggle.
 \end{itemize}
