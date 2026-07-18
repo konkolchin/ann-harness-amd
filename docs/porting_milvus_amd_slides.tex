@@ -131,35 +131,82 @@
   \end{columns}
 \end{frame}
 
-%----- 5 -----
-\begin{frame}{Results: CPU vs GPU (VectorDBBench both)}
+%----- 5a -----
+\begin{frame}{Two fair compares (do not mix them)}
   \footnotesize
-  Fair compare: same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10.\\
-  \textbf{Both} sides = VectorDBBench (\texttt{milvusivfflat} / \texttt{milvusgpuivfflat}).\\
-  Speed-up = GPU QPS / CPU QPS from the same VDBBench protocol.\\[0.3em]
-  {\small Numbers below: \textbf{pending} paired lab re-run
-  (\texttt{scripts/run\_vdbbench\_milvus\_ivf\_sweep.sh}).}
+  \textbf{Why VectorDBBench looked ``slow'' on GPU:} our sweep used
+  \texttt{--search-serial} (one query RPC at a time) to measure latency + recall.
+  That under-uses a GPU. Throughput needs a \textbf{batched} client.\\[0.4em]
 
-  \vspace{0.35em}
+  \begin{tabular}{@{}p{0.22\textwidth}p{0.35\textwidth}p{0.35\textwidth}@{}}
+    \toprule
+    & \textbf{A --- VDBBench serial} & \textbf{B --- Batched harness} \\
+    \midrule
+    Client & 1 query / RPC & 10k queries / \texttt{search()} \\
+    Shows & Correctness, single-query latency & Throughput (where GPU wins) \\
+    Management lead? & No (appendix) & \textbf{Yes} \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.5em}
+  Sealed path confirmed on both: IndexNode/QueryNode \texttt{GPU\_CUVS\_IVF\_FLAT},
+  no \texttt{InvalidDeviceFunction}.
+\end{frame}
+
+%----- 5b -----
+\begin{frame}{A --- VDBBench serial (latency protocol)}
+  \footnotesize
+  Same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10 (2026-07-18).\\
+  Both: VectorDBBench \texttt{--search-serial}. Speed-up $=$ GPU/CPU QPS.\\[0.25em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{R@10} & \textbf{Speed-up} \\
+    \midrule
+    1  & 1575 & 418 & $\approx0.38$ & $0.27\times$ \\
+    4  & 1211 & 412 & $\approx0.71$ & $0.34\times$ \\
+    8  &  924 & 345 & $\approx0.84$ & $0.37\times$ \\
+    16 &  626 & 676 & $0.931$ & $1.08\times$ \\
+    32 &  371 & 773 & $0.979$ & $2.08\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.3em}
+  \textbf{Takeaway:} recall ladders match (port correctness). Not the GPU throughput story.
+\end{frame}
+
+%----- 5c -----
+\begin{frame}{B --- Batched search (throughput --- lead with this)}
+  \footnotesize
+  Same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10.\\
+  \textbf{Both} use one \texttt{search()} with all 10k queries
+  (CPU: \texttt{run\_milvus\_hdf5.py IVF\_FLAT}; GPU: Layer-4
+  \texttt{GPU\_IVF\_FLAT}).\\[0.25em]
+
   \begin{center}
   \begin{tabular}{@{}lrrrr@{}}
     \toprule
     \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{R@10 (GPU)} & \textbf{Speed-up} \\
     \midrule
-    1  & --- & --- & --- & --- \\
-    4  & --- & --- & --- & --- \\
-    8  & --- & --- & --- & --- \\
-    16 & --- & --- & --- & --- \\
-    32 & --- & --- & --- & --- \\
+    1  & 22013$^\dagger$ & 16982 & 0.382 & $0.77\times$ \\
+    4  & 14509$^\dagger$ & 21882 & 0.709 & $1.51\times$ \\
+    8  &  9516$^\dagger$ & 21838 & 0.844 & $2.30\times$ \\
+    16 &  5402$^\dagger$ & 26181 & 0.934 & $4.85\times$ \\
+    32 &  2749$^\dagger$ & 19578 & 0.980 & $7.12\times$ \\
     \bottomrule
   \end{tabular}
   \end{center}
 
-  \vspace{0.4em}
-  \begin{itemize}
-    \item Engineering proof (harness, sealed HIP): recall rises; \texttt{GPU\_CUVS\_IVF\_FLAT} load OK.
-    \item Management speed-up table: fill only after CPU+GPU VDBBench logs are in.
-  \end{itemize}
+  \vspace{0.25em}
+  {\scriptsize $^\dagger$CPU from same-host batched diagnostic (runbook Table~7, Jul~7);
+  GPU = Layer-4 harness Jul~17. Re-run CPU with
+  \texttt{scripts/run\_milvus\_batch\_cpu\_compare.sh} on Docker v2.5.4 for strict parity.}
+
+  \vspace{0.2em}
+  \textbf{Takeaway:} at production-like \texttt{nprobe} (16--32), GPU HIP is
+  $\sim$5--7$\times$ CPU on the same batch protocol; sealed \texttt{GPU\_CUVS\_IVF\_FLAT}.
 \end{frame}
 
 %----- 6 -----

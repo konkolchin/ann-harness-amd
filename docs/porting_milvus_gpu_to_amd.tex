@@ -1304,18 +1304,27 @@ IndexNode saved multi-slice \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
 \end{tabular}
 \end{table}
 
-\subsection{CPU vs GPU comparison (same host, VectorDBBench both sides)}
+\subsection{Two fair CPU vs GPU comparisons (do not mix)}
 \label{sec:layer4-cpu-gpu}
 
 Same host \texttt{amd-rx7900xtx}, SIFT-1M L2, IVF \texttt{nlist=1024}, \texttt{k=10}.
-\textbf{Both} columns from VectorDBBench serial search
-(\texttt{milvusivfflat} / \texttt{milvusgpuivfflat}; see
-\texttt{docs/vdbbench\_cpu\_gpu\_compare.md}).
-Do not mix harness Table~\ref{tab:layer4-measured} into the speed-up column.
+Present \textbf{two} protocols separately; never divide Table~A GPU by Table~B CPU
+(or Layer-4 by VDBBench).
+
+\paragraph{Why VectorDBBench serial looked weak on GPU.}
+Our sweep passed \texttt{--search-serial} / \texttt{--skip-search-concurrent}.
+VectorDBBench then issues \textbf{one query per RPC} to measure latency and recall.
+That is a valid latency protocol; it under-utilizes GPU parallelism. Throughput
+belongs in Table~B (batched client).
+
+\subsubsection{A --- VectorDBBench serial (latency / correctness)}
 
 \begin{table}[H]
 \centering
-\caption{Milvus CPU vs Milvus GPU HIP via VectorDBBench (7900 XTX, SIFT-1M, \texttt{k=10}) --- \emph{pending lab re-run}}
+\caption{A: Milvus CPU vs GPU HIP --- VectorDBBench serial search
+(7900 XTX, 2026-07-18;
+\texttt{vdb\_cpu\_ivf\_nprobe\_20260718\_194011.log},
+\texttt{vdb\_gpu\_ivf\_nprobe\_20260718\_195954.log})}
 \label{tab:layer4-cpu-gpu}
 \begin{tabular}{@{}lrrrrr@{}}
 \toprule
@@ -1323,22 +1332,49 @@ Do not mix harness Table~\ref{tab:layer4-measured} into the speed-up column.
 \cmidrule(lr){2-3}\cmidrule(lr){4-5}
 \textbf{nprobe} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS speed-up} \\
 \midrule
-1  & --- & --- & --- & --- & --- \\
-4  & --- & --- & --- & --- & --- \\
-8  & --- & --- & --- & --- & --- \\
-16 & --- & --- & --- & --- & --- \\
-32 & --- & --- & --- & --- & --- \\
+1  & 1575 & 0.370 & 418 & 0.384 & $0.27\times$ \\
+4  & 1211 & 0.702 & 412 & 0.707 & $0.34\times$ \\
+8  &  924 & 0.839 & 345 & 0.841 & $0.37\times$ \\
+16 &  626 & 0.931 & 676 & 0.931 & $1.08\times$ \\
+32 &  371 & 0.979 & 773 & 0.979 & $2.08\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent\textit{QPS speed-up} $=$ (GPU QPS) / (CPU QPS) at the same \texttt{nprobe},
-both from \texttt{search entire test\_data} log lines.
+\noindent\textit{QPS} $=$ \texttt{queries}/\texttt{cost} from \texttt{search entire test\_data}.
+\textbf{Use for:} recall correctness and single-query latency---not the management
+throughput headline.
 
-\textbf{Interim note:} Table~\ref{tab:layer4-measured} (harness client, 2026-07-17) remains valid
-as a \textbf{sealed HIP path} engineering result. An earlier draft compared that GPU harness
-to runbook VDBBench CPU Table~6 --- that mix is \textbf{withdrawn} for management reporting
-until Table~\ref{tab:layer4-cpu-gpu} is filled from paired VDBBench logs.
+\subsubsection{B --- Batched harness (throughput --- lead with this)}
+
+Both sides: one \texttt{MilvusClient.search()} with all 10k queries
+(\texttt{scripts/run\_milvus\_hdf5.py}). GPU = Table~\ref{tab:layer4-measured}.
+CPU column below is the same-host batched diagnostic (runbook Table~7, Jul~7);
+re-run \texttt{scripts/run\_milvus\_batch\_cpu\_compare.sh} on Docker v2.5.4 for
+strict same-day parity.
+
+\begin{table}[H]
+\centering
+\caption{B: Milvus CPU vs GPU HIP --- batched 10k-query search (7900 XTX)}
+\label{tab:layer4-cpu-gpu-batch}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{\textbf{CPU batched}} & \multicolumn{2}{c}{\textbf{GPU HIP batched}} & \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+\textbf{nprobe} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS speed-up} \\
+\midrule
+1  & 22013 & 0.390 & 16982 & 0.382 & $0.77\times$ \\
+4  & 14509 & 0.717 & 21882 & 0.709 & $1.51\times$ \\
+8  &  9516 & 0.848 & 21838 & 0.844 & $2.30\times$ \\
+16 &  5402 & 0.935 & 26181 & 0.934 & $4.85\times$ \\
+32 &  2749 & 0.980 & 19578 & 0.980 & $7.12\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Management takeaway:} at \texttt{nprobe}=16--32 (high-recall operating
+points), GPU HIP is $\sim$5--7$\times$ CPU under the \textbf{same batched protocol},
+with matching recall and sealed \texttt{GPU\_CUVS\_IVF\_FLAT} (VDBBench GPU run logs).
 
 \section{Metrics matrix}
 

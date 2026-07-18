@@ -68,6 +68,8 @@ ss -lntp | grep -E '19530|9091' || true
 cd ~/ann-harness-amd/milvus-docker
 docker-compose ps
 docker-compose down
+# If up fails with "container name already in use", remove orphans from another project:
+docker rm -f milvus-etcd milvus-minio milvus-standalone 2>/dev/null || true
 docker-compose up -d
 sleep 20
 docker-compose ps
@@ -75,6 +77,7 @@ docker-compose ps
 
 # 3) If still unhealthy / rootcoord errors, wipe volumes and recreate
 docker-compose down -v
+docker rm -f milvus-etcd milvus-minio milvus-standalone 2>/dev/null || true
 docker-compose up -d
 sleep 30
 docker logs milvus-standalone 2>&1 | tail -40
@@ -86,8 +89,8 @@ curl -sf http://127.0.0.1:9091/healthz && echo OK
 ### 2) Switch to HIP Milvus
 
 ```bash
-# Stop Docker milvus-standalone (free :19530)
-docker stop milvus-standalone   # or your compose down for milvus only
+# Stop Docker milvus-standalone (free :19530); keep etcd/minio
+docker stop milvus-standalone
 
 export WORKDIR=~/rocmds_check_gfx1100
 export ROCM_PATH=/opt/rocm
@@ -95,10 +98,26 @@ export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
 export MILVUS_HIP_INSTALL_PREFIX=$WORKDIR/install
 export LD_LIBRARY_PATH=$MILVUS_HIP_INSTALL_PREFIX/lib:$ROCM_PATH/lib:${LD_LIBRARY_PATH:-}
 
-# Start HIP milvus (same pattern as Layer-3/4); ensure etcd/minio up
-cd $WORKDIR/milvus
+# REQUIRED: rocksmq must NOT use /var/lib/milvus (permission denied as non-root)
+mkdir -p "$WORKDIR/milvus_runtime"/{rdb_data,rdb_data_kv,data,logs}
+cd "$WORKDIR/milvus"
+# one-time (or if configs were reset): redirect paths under home
+if grep -q '/var/lib/milvus' configs/milvus.yaml 2>/dev/null; then
+  cp -a configs/milvus.yaml "configs/milvus.yaml.bak-$(date +%Y%m%d%H%M%S)"
+  sed -i "s|/var/lib/milvus|$WORKDIR/milvus_runtime|g" configs/milvus.yaml
+fi
+grep -nE 'rocksmq|/var/lib|localStorage|path:' configs/milvus.yaml | head -30
+
+pkill -f 'bin/milvus' || true
+cd "$WORKDIR/milvus"
 nohup env ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
   ./bin/milvus run standalone >$WORKDIR/logs/milvus_gpu_standalone.log 2>&1 &
+
+# wait — do not start VDBBench until OK
+for i in $(seq 1 90); do
+  curl -sf http://127.0.0.1:9091/healthz >/dev/null && echo "OK after ${i}s" && break
+  sleep 2
+done
 ```
 
 ### 3) GPU sweep
@@ -139,6 +158,54 @@ grep -aE 'GPU_CUVS_IVF_FLAT|InvalidDeviceFunction|IVF_FLAT_CC' \
 
 Pass: IndexNode/QueryNode activity for `GPU_CUVS_IVF_FLAT`; no `InvalidDeviceFunction`.
 
-## Fill docs
+## Search stage (important)
 
-Update Table `layer4-cpu-gpu` in `docs/porting_milvus_gpu_to_amd.tex` and the Results slide in `docs/porting_milvus_amd_slides.tex` with **paired** VDBBench CPU + GPU numbers and QPS speed-up = GPU/CPU.
+Default is now **concurrent** QPS (`SEARCH_STAGE=concurrent`):
+
+```bash
+MODE=cpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh          # multi-client QPS
+MODE=gpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
+# optional: NUM_CONCURRENCY=1,10,20,40,80 CONCURRENCY_DURATION=30
+# optional: SEARCH_STAGE=both   # serial recall + concurrent QPS
+# optional: SEARCH_STAGE=serial # latency/recall only (old behaviour)
+```
+
+Earlier runs used serial by mistake for a “fair” latency recipe; that under-uses GPU.
+Re-run CPU then GPU with the default concurrent stage for the management VDBBench table.
+
+## Comparison A — VDBBench serial (2026-07-18)
+
+Logs: `vdb_cpu_ivf_nprobe_20260718_194011.log`, `vdb_gpu_ivf_nprobe_20260718_195954.log`.
+
+| nprobe | CPU QPS | CPU R@10 | GPU QPS | GPU R@10 | Speed-up |
+|--------|---------|----------|---------|----------|----------|
+| 1 | 1575 | 0.370 | 418 | 0.384 | 0.27× |
+| 4 | 1211 | 0.702 | 412 | 0.707 | 0.34× |
+| 8 | 924 | 0.839 | 345 | 0.841 | 0.37× |
+| 16 | 626 | 0.931 | 676 | 0.931 | 1.08× |
+| 32 | 371 | 0.979 | 773 | 0.979 | 2.08× |
+
+Use for: recall correctness. Not the GPU speed headline.
+
+## Comparison B — Batched 10k/search (throughput; lead with this)
+
+Same client shape as Layer-4: `run_milvus_hdf5.py` one `search()` with all 10k queries.
+
+| nprobe | CPU QPS† | GPU QPS (L4) | R@10 (GPU) | Speed-up |
+|--------|----------|--------------|------------|----------|
+| 1 | 22013 | 16982 | 0.382 | 0.77× |
+| 4 | 14509 | 21882 | 0.709 | 1.51× |
+| 8 | 9516 | 21838 | 0.844 | 2.30× |
+| 16 | 5402 | 26181 | 0.934 | 4.85× |
+| 32 | 2749 | 19578 | 0.980 | 7.12× |
+
+†CPU from same-host batched diagnostic (runbook Table 7). GPU = Layer-4 harness.
+For strict v2.5.4 parity, start Docker CPU and run:
+
+```bash
+# HIP stopped; Docker milvus-standalone healthy
+cd ~/ann-harness-amd && git pull
+bash scripts/run_milvus_batch_cpu_compare.sh
+```
+
+Then refresh Table B CPU column from the new JSON.

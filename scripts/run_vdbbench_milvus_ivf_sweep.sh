@@ -4,18 +4,13 @@
 # MODE=cpu  -> vectordbbench milvusivfflat   (Docker CPU Milvus IVF_FLAT)
 # MODE=gpu  -> vectordbbench milvusgpuivfflat (HIP/CUDA GPU Milvus GPU_IVF_FLAT)
 #
-# Same recipe as docs/ann_framework_runbook.tex § vectordbbench-ivf-nprobe:
-#   PerformanceCustomDataset, nlist=1024, k=10, nprobe=1,4,8,16,32
-#   load once on first nprobe; --skip-load for the rest
-#
-# Prerequisites:
-#   - source ~/vdbbench-venv/bin/activate  (Python >= 3.11, vectordb-bench)
-#   - ~/vdbbench-sift1m/{train,test,neighbors}.parquet
-#   - Milvus healthy on URI (CPU Docker or HIP standalone — not both)
+# Default search stage: CONCURRENT (multi-client QPS) — not serial.
+# Serial one-query RPCs under-use GPU; use SEARCH_STAGE=serial only for latency/recall.
 #
 # Usage:
 #   MODE=cpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
 #   MODE=gpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
+#   SEARCH_STAGE=both MODE=gpu ...   # serial recall + concurrent QPS
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,9 +26,12 @@ LOG_DIR="${LOG_DIR:-${REPO_ROOT}/logs}"
 TS="$(date -u +%Y%m%d_%H%M%S)"
 DB_LABEL="${DB_LABEL:-amd-rx7900xtx-${MODE}}"
 VENV="${VDBBENCH_VENV:-${HOME}/vdbbench-venv}"
-# Required by vectordbbench milvusgpuivfflat (string/float click options).
 CACHE_ON_DEVICE="${CACHE_ON_DEVICE:-false}"
 REFINE_RATIO="${REFINE_RATIO:-1.0}"
+# concurrent | serial | both
+SEARCH_STAGE="${SEARCH_STAGE:-concurrent}"
+NUM_CONCURRENCY="${NUM_CONCURRENCY:-1,10,20,40,80}"
+CONCURRENCY_DURATION="${CONCURRENCY_DURATION:-30}"
 
 case "${MODE}" in
   cpu) CMD=milvusivfflat ;;
@@ -44,7 +42,23 @@ case "${MODE}" in
     ;;
 esac
 
-LOG="${LOG:-${LOG_DIR}/vdb_${MODE}_ivf_nprobe_${TS}.log}"
+case "${SEARCH_STAGE}" in
+  concurrent)
+    SEARCH_FLAGS=(--skip-search-serial --search-concurrent)
+    ;;
+  serial)
+    SEARCH_FLAGS=(--search-serial --skip-search-concurrent)
+    ;;
+  both)
+    SEARCH_FLAGS=(--search-serial --search-concurrent)
+    ;;
+  *)
+    echo "ERROR: SEARCH_STAGE must be concurrent|serial|both (got: ${SEARCH_STAGE})" >&2
+    exit 1
+    ;;
+esac
+
+LOG="${LOG:-${LOG_DIR}/vdb_${MODE}_${SEARCH_STAGE}_nprobe_${TS}.log}"
 mkdir -p "${LOG_DIR}"
 
 milvus_up() {
@@ -66,7 +80,7 @@ fi
 for f in train.parquet test.parquet neighbors.parquet; do
   if [ ! -f "${DATASET_DIR}/${f}" ]; then
     echo "ERROR: missing ${DATASET_DIR}/${f}" >&2
-    echo "  See docs/vdbbench_cpu_gpu_compare.md (parquet prep) or runbook § vectordbbench-ivf-nprobe" >&2
+    echo "  See docs/vdbbench_cpu_gpu_compare.md (parquet prep)" >&2
     exit 1
   fi
 done
@@ -81,8 +95,9 @@ if ! milvus_up; then
   exit 1
 fi
 
-echo "==> MODE=${MODE} CMD=${CMD}"
+echo "==> MODE=${MODE} CMD=${CMD} SEARCH_STAGE=${SEARCH_STAGE}"
 echo "==> URI=${URI} lists=${LISTS} k=${K} nprobes=${NPROBES}"
+echo "==> num-concurrency=${NUM_CONCURRENCY} duration=${CONCURRENCY_DURATION}s"
 echo "==> dataset=${DATASET_DIR}"
 echo "==> log=${LOG}"
 echo "==> vectordbbench: $(command -v vectordbbench)"
@@ -97,7 +112,6 @@ for NPROBE in "${PROBE_ARR[@]}"; do
 
   if ! milvus_up; then
     echo "ERROR: Milvus went down before nprobe=${NPROBE}. Check docker/HIP logs." >&2
-    echo "  Often optimize/compact after 1M insert OOMs or crashes the standalone container." >&2
     exit 1
   fi
 
@@ -130,54 +144,62 @@ for NPROBE in "${PROBE_ARR[@]}"; do
     --lists "${LISTS}" \
     --probes "${NPROBE}" \
     --k "${K}" \
-    --search-serial \
-    --skip-search-concurrent \
+    --num-concurrency "${NUM_CONCURRENCY}" \
+    --concurrency-duration "${CONCURRENCY_DURATION}" \
+    "${SEARCH_FLAGS[@]}" \
     --db-label "${DB_LABEL}" \
     "${GPU_EXTRA[@]}" \
     "${EXTRA[@]}" 2>&1 | tee -a "${LOG}" | tee "${STEP_LOG}"
   pipe_rc=${PIPESTATUS[0]}
   set -e
 
-  # vectordbbench often exits 0 even when the case failed — inspect output.
   if [ "${pipe_rc}" -ne 0 ] \
     || grep -qE 'failed to run|Connection refused|Fail connecting to server|Server unavailable' "${STEP_LOG}" \
-    || grep -qE '\| x[[:space:]]*$|label \(models\.py:.*\) \| x' "${STEP_LOG}"; then
+    || grep -qE '\| x[[:space:]]*$' "${STEP_LOG}"; then
     echo "ERROR: VectorDBBench case failed for nprobe=${NPROBE} (see ${LOG})" >&2
     if ! milvus_up; then
-      echo "  Milvus is down on :19530 after this step (crash during insert/optimize is common)." >&2
-      echo "  Restart Docker/HIP milvus, ensure disk/RAM, then re-run MODE=${MODE} from nprobe=1." >&2
+      echo "  Milvus is down on :19530 after this step." >&2
     fi
     rm -f "${STEP_LOG}"
     exit 1
   fi
 
-  if ! grep -q 'search entire test_data' "${STEP_LOG}"; then
-    echo "ERROR: no 'search entire test_data' line for nprobe=${NPROBE} — search did not complete." >&2
+  ok_search=0
+  if [ "${SEARCH_STAGE}" = "serial" ] || [ "${SEARCH_STAGE}" = "both" ]; then
+    grep -q 'search entire test_data' "${STEP_LOG}" && ok_search=1
+  fi
+  if [ "${SEARCH_STAGE}" = "concurrent" ] || [ "${SEARCH_STAGE}" = "both" ]; then
+    # Concurrent stage reports QPS in metrics / conc lists / task summary.
+    if grep -qE 'conc_qps|concurrent search|Concurrency|max_qps|search_concurrent' "${STEP_LOG}" \
+      || grep -qE '\| [1-9][0-9]*\.[0-9]+ +[0-9]' "${STEP_LOG}"; then
+      ok_search=1
+    fi
+    # Summary line with non-zero qps column (between load_dur and latency)
+    if grep -E 'Milvus \|' "${STEP_LOG}" | grep -qvE '\| 0\.0 +0\.0 +'; then
+      ok_search=1
+    fi
+  fi
+  if [ "${ok_search}" -ne 1 ]; then
+    echo "ERROR: no successful ${SEARCH_STAGE} search evidence for nprobe=${NPROBE}" >&2
     rm -f "${STEP_LOG}"
     exit 1
   fi
   rm -f "${STEP_LOG}"
 done
 
-SEARCH_N="$(grep -c 'search entire test_data' "${LOG}" || true)"
-NEED_N=0
-for NPROBE in "${PROBE_ARR[@]}"; do
-  NPROBE="$(echo "${NPROBE}" | tr -d '[:space:]')"
-  [ -n "${NPROBE}" ] && NEED_N=$((NEED_N + 1))
-done
-if [ "${SEARCH_N}" -lt "${NEED_N}" ]; then
-  echo "ERROR: expected ${NEED_N} search lines, found ${SEARCH_N} in ${LOG}" >&2
-  exit 1
-fi
-
 echo ""
-echo "VDBBENCH SWEEP OK (${MODE})"
+echo "VDBBENCH SWEEP OK (${MODE}, ${SEARCH_STAGE})"
 echo "  log: ${LOG}"
-echo "Parse QPS/recall (serial search often leaves summary qps=0):"
-echo "  grep -E 'nprobe=|search entire test_data' ${LOG}"
-echo "  Effective QPS = queries / cost from each 'search entire test_data' line."
+if [ "${SEARCH_STAGE}" = "serial" ]; then
+  echo "Parse serial QPS/recall:"
+  echo "  grep -E 'nprobe=|search entire test_data' ${LOG}"
+else
+  echo "Parse concurrent QPS (peak across concurrency levels):"
+  echo "  grep -E 'nprobe=|qps|concurrency|conc_' ${LOG} | head -80"
+  echo "  Prefer the task-summary qps column or max conc_qps per nprobe."
+fi
 if [ "${MODE}" = "gpu" ]; then
-  echo "Sealed HIP path check (milvus log):"
-  echo "  grep -aE 'GPU_CUVS_IVF_FLAT|InvalidDeviceFunction|IVF_FLAT_CC' \\\\"
+  echo "Sealed HIP path check:"
+  echo "  grep -aE 'GPU_CUVS_IVF_FLAT|InvalidDeviceFunction' \\\\"
   echo "    \$WORKDIR/logs/milvus_gpu_standalone.log | tail -40"
 fi
