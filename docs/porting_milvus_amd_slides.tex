@@ -39,7 +39,8 @@
 \begin{frame}{Goal}
   \begin{block}{Project objective}
     Replace the NVIDIA \textbf{cuVS / cuRAFT} path in Milvus with AMD
-    \textbf{hipVS / hipRAFT} (ROCm), so sealed GPU ANN indexes run on Radeon GPUs.
+    \textbf{hipVS / hipRAFT} (ROCm), so sealed GPU
+    \textbf{Approximate Nearest Neighbor (ANN)} indexes run on Radeon GPUs.
   \end{block}
 
   \vspace{0.5em}
@@ -110,7 +111,7 @@
                     minimum width=2.1cm, minimum height=0.7cm, thick},
         arr/.style={-{Latex}, thick}
       ]
-        \node[box, fill=gray!12] (db) at (0,2.6)
+        \node[box, fill=gray!12] (db) at (0.3,2.6)
           {Database\\1M vectors};
         \node[draw, diamond, aspect=1.6, fill=red!12, thick,
               align=center, minimum size=1.1cm]
@@ -125,88 +126,69 @@
         \draw[arr] (eng) -- (out);
 
         \node[font=\tiny, text=black!70, align=center]
-          at (0,-1.3) {``closest neighbors''\\not a keyword search};
+          at (0.3,-1.3) {``closest neighbors''\\not a keyword search};
       \end{tikzpicture}
     \end{column}
   \end{columns}
 \end{frame}
 
 %----- 5a -----
-\begin{frame}{Two fair compares (do not mix them)}
+% Backup: How we present numbers / VDBBench serial ---
+%   docs/porting_milvus_amd_slides_backup_frames.tex
+\begin{frame}{Batched harness throughput}
   \footnotesize
-  \textbf{Why VectorDBBench looked ``slow'' on GPU:} our sweep used
-  \texttt{--search-serial} (one query RPC at a time) to measure latency + recall.
-  That under-uses a GPU. Throughput needs a \textbf{batched} client.\\[0.4em]
-
-  \begin{tabular}{@{}p{0.22\textwidth}p{0.35\textwidth}p{0.35\textwidth}@{}}
-    \toprule
-    & \textbf{A --- VDBBench serial} & \textbf{B --- Batched harness} \\
-    \midrule
-    Client & 1 query / RPC & 10k queries / \texttt{search()} \\
-    Shows & Correctness, single-query latency & Throughput (where GPU wins) \\
-    Management lead? & No (appendix) & \textbf{Yes} \\
-    \bottomrule
-  \end{tabular}
-
-  \vspace{0.5em}
-  Sealed path confirmed on both: IndexNode/QueryNode \texttt{GPU\_CUVS\_IVF\_FLAT},
-  no \texttt{InvalidDeviceFunction}.
-\end{frame}
-
-%----- 5b -----
-\begin{frame}{A --- VDBBench serial (latency protocol)}
-  \footnotesize
-  Same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10 (2026-07-18).\\
-  Both: VectorDBBench \texttt{--search-serial}. Speed-up $=$ GPU/CPU QPS.\\[0.25em]
+  Same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10.\\
+  \textbf{Both:} CPU \texttt{IVF\_FLAT} / GPU \texttt{GPU\_IVF\_FLAT}.\\[0.25em]
 
   \begin{center}
   \begin{tabular}{@{}lrrrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{R@10} & \textbf{Speed-up} \\
+    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10 (GPU)} & \textbf{Speed-up} \\
     \midrule
-    1  & 1575 & 418 & $\approx0.38$ & $0.27\times$ \\
-    4  & 1211 & 412 & $\approx0.71$ & $0.34\times$ \\
-    8  &  924 & 345 & $\approx0.84$ & $0.37\times$ \\
-    16 &  626 & 676 & $0.931$ & $1.08\times$ \\
-    32 &  371 & 773 & $0.979$ & $2.08\times$ \\
+    1  & 22013 & 16982 & 0.382 & $0.77\times$ \\
+    4  & 14509 & 21882 & 0.709 & $1.51\times$ \\
+    8  &  9516 & 21838 & 0.844 & $2.30\times$ \\
+    16 &  5402 & 26181 & 0.934 & $4.85\times$ \\
+    32 &  2749 & 19578 & 0.980 & $7.12\times$ \\
     \bottomrule
   \end{tabular}
   \end{center}
 
   \vspace{0.3em}
-  \textbf{Takeaway:} recall ladders match (port correctness). Not the GPU throughput story.
+  \textbf{Headline:} at \texttt{nprobe}=16--32, GPU HIP $\sim$5--7$\times$ CPU; recall matches.
+
+  \vfill
+  {\scriptsize\textit{Note.}
+  \textbf{Batched} = one \texttt{search()} API call with all 10k queries in a single request
+  (not one query per RPC).}
 \end{frame}
 
-%----- 5c -----
-\begin{frame}{B --- Batched search (throughput --- lead with this)}
+%----- 5b -----
+\begin{frame}{VectorDBBench concurrent}
   \footnotesize
-  Same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10.\\
-  \textbf{Both} use one \texttt{search()} with all 10k queries
-  (CPU: \texttt{run\_milvus\_hdf5.py IVF\_FLAT}; GPU: Layer-4
-  \texttt{GPU\_IVF\_FLAT}).\\[0.25em]
+  Same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10 (2026-07-18).\\
+  Both: \texttt{milvusivfflat} / \texttt{milvusgpuivfflat}, concurrency
+  $\{1,10,20,40,80\}$, 30s.\\
+  recall@10 from serial companion
+  (same index/\texttt{nprobe}; concurrent stage omits recall).\\[0.25em]
 
   \begin{center}
   \begin{tabular}{@{}lrrrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{R@10 (GPU)} & \textbf{Speed-up} \\
+    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{Speed-up} \\
     \midrule
-    1  & 22013$^\dagger$ & 16982 & 0.382 & $0.77\times$ \\
-    4  & 14509$^\dagger$ & 21882 & 0.709 & $1.51\times$ \\
-    8  &  9516$^\dagger$ & 21838 & 0.844 & $2.30\times$ \\
-    16 &  5402$^\dagger$ & 26181 & 0.934 & $4.85\times$ \\
-    32 &  2749$^\dagger$ & 19578 & 0.980 & $7.12\times$ \\
+    1  & 13884 & 11110 & 0.384 & $0.80\times$ \\
+    4  & 10292 & 11066 & 0.707 & $1.08\times$ \\
+    8  &  7731 & 11110 & 0.841 & $1.44\times$ \\
+    16 &  4893 & 10904 & 0.931 & $2.23\times$ \\
+    32 &  2742 & 10374 & 0.979 & $3.78\times$ \\
     \bottomrule
   \end{tabular}
   \end{center}
 
-  \vspace{0.25em}
-  {\scriptsize $^\dagger$CPU from same-host batched diagnostic (runbook Table~7, Jul~7);
-  GPU = Layer-4 harness Jul~17. Re-run CPU with
-  \texttt{scripts/run\_milvus\_batch\_cpu\_compare.sh} on Docker v2.5.4 for strict parity.}
-
-  \vspace{0.2em}
-  \textbf{Takeaway:} at production-like \texttt{nprobe} (16--32), GPU HIP is
-  $\sim$5--7$\times$ CPU on the same batch protocol; sealed \texttt{GPU\_CUVS\_IVF\_FLAT}.
+  \vspace{0.3em}
+  \textbf{Takeaway:} GPU HIP holds $\sim$11k QPS as \texttt{nprobe} rises;
+  CPU falls off. At high-recall settings, \textbf{$\sim$2--4$\times$}.
 \end{frame}
 
 %----- 6 -----
@@ -271,19 +253,91 @@
 \end{frame}
 
 %----- 7 -----
+\begin{frame}[fragile]{What is IVF?}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \textbf{IVF = Inverted File} (Approximate Nearest Neighbor index)
+      \begin{itemize}
+        \item At \textbf{build} time, group the
+              1M vectors into many clusters
+              (\texttt{nlist}=1024 lists).
+        \item Each list has a \emph{center}
+              (centroid) and the vectors that
+              belong to it.
+        \item At \textbf{search} time, do \emph{not}
+              compare the query to all 1M vectors.
+        \item Compare to list centers first, then
+              scan vectors only in a few lists
+              (see \texttt{nprobe} next).
+      \end{itemize}
+      \vspace{0.3em}
+      {\small Our indexes: CPU \texttt{IVF\_FLAT},
+      GPU \texttt{GPU\_IVF\_FLAT} --- same idea;
+      FLAT = store full vectors in each list.}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \centering
+      \begin{tikzpicture}[
+        font=\tiny,
+        arr/.style={-{Latex}, thick},
+        pt/.style={circle, fill=#1, draw=#1!50!black,
+                   minimum size=0.18cm, inner sep=0pt},
+        cen/.style={circle, draw=#1!70!black, fill=#1!35,
+                    minimum size=0.38cm, thick, inner sep=0pt},
+      ]
+        % cluster A (blue)
+        \node[cen=blue] (cA) at (-1.35,1.15) {};
+        \foreach \x/\y in {-1.7/1.45,-1.1/1.5,-1.55/0.85,-1.05/0.9,-1.35/1.55} {
+          \node[pt=blue] at (\x,\y) {};
+        }
+        \node[font=\scriptsize] at (-1.35,0.45) {list A};
+
+        % cluster B (teal)
+        \node[cen=teal] (cB) at (1.2,1.2) {};
+        \foreach \x/\y in {0.9/1.5,1.5/1.45,0.95/0.9,1.55/0.95,1.2/1.55} {
+          \node[pt=teal] at (\x,\y) {};
+        }
+        \node[font=\scriptsize] at (1.2,0.45) {list B};
+
+        % cluster C (gray)
+        \node[cen=gray] (cC) at (0.0,-0.85) {};
+        \foreach \x/\y in {-0.35/-0.55,0.35/-0.5,-0.3/-1.15,0.35/-1.2,0.0/-0.45} {
+          \node[pt=gray] at (\x,\y) {};
+        }
+        \node[font=\scriptsize] at (0.0,-1.55) {list C};
+
+        % query
+        \node[diamond, draw=red!70!black, fill=red!15, thick,
+              minimum size=0.55cm, align=center, font=\scriptsize]
+          (Q) at (-0.15,2.35) {q};
+
+        \draw[arr, red!70!black] (Q) -- (cA);
+        \draw[arr, red!70!black] (Q) -- (cB);
+        \draw[arr, gray!55] (Q) -- (cC);
+
+        \node[draw, rounded corners=2pt, fill=yellow!8, align=center,
+              font=\tiny, thick]
+          at (0,-2.2)
+          {dots = stored vectors;\\
+           large circles = list centers};
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+%----- 8 -----
 \begin{frame}[fragile]{What is nprobe? (IVF search knob)}
   \begin{columns}[T]
     \begin{column}{0.52\textwidth}
-      \textbf{IVF idea (plain language)}
+      \textbf{Given an IVF index}
       \begin{itemize}
-        \item Vectors are grouped into many
-              \emph{lists} (clusters). We used
-              \texttt{nlist}=1024 lists.
-        \item A query first finds the
-              \emph{nearest list centers}.
-        \item Then it searches only inside
-              \textbf{nprobe} of those lists
-              --- not the whole database.
+        \item The query first finds the nearest
+              list centers.
+        \item \textbf{nprobe} = how many of those
+              lists to open and scan
+              (we used 1, 4, 8, 16, 32).
+        \item Rest of the database is skipped
+              --- that is the speedup vs a full scan.
       \end{itemize}
       \vspace{0.4em}
       \textbf{Trade-off}
@@ -324,7 +378,7 @@
   \end{columns}
 \end{frame}
 
-%----- 8 -----
+%----- 9 -----
 \begin{frame}{Where it lives and next steps}
   \begin{block}{Repositories (use v2.5.4, not amd/main)}
     \begin{itemize}
@@ -352,6 +406,42 @@
       \end{block}
     \end{column}
   \end{columns}
+\end{frame}
+
+%----- 10 -----
+\begin{frame}{Appendix --- index types beyond FLAT}
+  \footnotesize
+  This deck uses \textbf{IVF\_FLAT} / \textbf{GPU\_IVF\_FLAT}
+  (full vectors in each list). Other common options:
+
+  \vspace{0.4em}
+  \begin{center}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \textbf{Idea} & \textbf{Examples} & \textbf{Trade-off} \\
+    \midrule
+    Full vectors
+      & \texttt{IVF\_FLAT}, \texttt{GPU\_IVF\_FLAT}
+      & Best quality for a given scan; more memory \\
+    Product quantization
+      & \texttt{IVF\_PQ}, \texttt{GPU\_IVF\_PQ}
+      & Much smaller / faster; slight recall loss \\
+    Scalar quantization
+      & SQ8 / similar
+      & Smaller than FLAT; simpler than PQ \\
+    Graph indexes
+      & HNSW, CAGRA
+      & Graph walk (not IVF lists) \\
+    Binary / hash-style
+      & binary IVF, LSH-style
+      & Very compact; coarser distances \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  {\small FLAT first keeps CPU vs GPU an apples-to-apples algorithm story;
+  PQ / CAGRA are natural next steps.}
 \end{frame}
 
 \end{document}

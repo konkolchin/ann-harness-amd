@@ -1,13 +1,21 @@
 # Fair Milvus CPU vs GPU HIP compare (VectorDBBench)
 
-Apples-to-apples: **both** sides use VectorDBBench on `amd-rx7900xtx`, same SIFT-1M parquet, `nlist=1024`, `k=10`, `nprobe=1,4,8,16,32`.
+## Management presentation order
+
+1. **Lead:** batched harness (`run_milvus_hdf5.py` / Layer-4) — best fair GPU story today (~5–7× at high nprobe).
+2. **Prefer if strong:** VectorDBBench **concurrent** QPS (same tool both sides; best of `--num-concurrency`).
+3. **Appendix:** VectorDBBench **serial** — for literalists / recall proof only; do not lead with it.
+
+Never mix batched GPU QPS with serial VDBBench CPU in one speed-up column.
+
+---
+
+Apples-to-apples VDBBench: **both** sides on `amd-rx7900xtx`, same SIFT-1M parquet, `nlist=1024`, `k=10`, `nprobe=1,4,8,16,32`.
 
 | Side | CLI | Server on `:19530` | Index |
 |------|-----|--------------------|--------|
 | CPU | `milvusivfflat` | Docker Milvus CPU `v2.5.4` | `IVF_FLAT` |
 | GPU | `milvusgpuivfflat` | HIP Standalone `v2.5.4` | `GPU_IVF_FLAT` |
-
-Do **not** mix harness `run_milvus_layer4.sh` GPU numbers with VDBBench CPU numbers in management tables.
 
 ## Preflight
 
@@ -173,11 +181,29 @@ MODE=gpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
 Earlier runs used serial by mistake for a “fair” latency recipe; that under-uses GPU.
 Re-run CPU then GPU with the default concurrent stage for the management VDBBench table.
 
-## Comparison A — VDBBench serial (2026-07-18)
+## Comparison A′ — VDBBench concurrent QPS (2026-07-18) ✅
+
+Logs: `vdb_cpu_concurrent_nprobe_20260718_201956.log`,
+`vdb_gpu_concurrent_nprobe_20260718_203847.log`.  
+Metric = task-summary QPS over concurrency `{1,10,20,40,80}` (30s each).
+
+| nprobe | CPU QPS | GPU QPS | recall@10† | Speed-up |
+|--------|---------|---------|------------|----------|
+| 1 | 13884 | 11110 | 0.384 | **0.80×** |
+| 4 | 10292 | 11066 | 0.707 | **1.08×** |
+| 8 | 7731 | 11110 | 0.841 | **1.44×** |
+| 16 | 4893 | 10904 | 0.931 | **2.23×** |
+| 32 | 2742 | 10374 | 0.979 | **3.78×** |
+
+†recall@10 from serial companion (same index/`nprobe`); concurrent stage does not report recall. CPU recall@10 matches within ~0.01.
+
+GPU stays ~11k QPS as `nprobe` rises; CPU collapses. Best industry-tool headline: **~2–4× at nprobe 16–32**.
+
+## Comparison A — VDBBench serial (2026-07-18, appendix)
 
 Logs: `vdb_cpu_ivf_nprobe_20260718_194011.log`, `vdb_gpu_ivf_nprobe_20260718_195954.log`.
 
-| nprobe | CPU QPS | CPU R@10 | GPU QPS | GPU R@10 | Speed-up |
+| nprobe | CPU QPS | CPU recall@10 | GPU QPS | GPU recall@10 | Speed-up |
 |--------|---------|----------|---------|----------|----------|
 | 1 | 1575 | 0.370 | 418 | 0.384 | 0.27× |
 | 4 | 1211 | 0.702 | 412 | 0.707 | 0.34× |
@@ -191,7 +217,7 @@ Use for: recall correctness. Not the GPU speed headline.
 
 Same client shape as Layer-4: `run_milvus_hdf5.py` one `search()` with all 10k queries.
 
-| nprobe | CPU QPS† | GPU QPS (L4) | R@10 (GPU) | Speed-up |
+| nprobe | CPU QPS† | GPU QPS (L4) | recall@10 (GPU) | Speed-up |
 |--------|----------|--------------|------------|----------|
 | 1 | 22013 | 16982 | 0.382 | 0.77× |
 | 4 | 14509 | 21882 | 0.709 | 1.51× |

@@ -1317,33 +1317,33 @@ VectorDBBench then issues \textbf{one query per RPC} to measure latency and reca
 That is a valid latency protocol; it under-utilizes GPU parallelism. Throughput
 belongs in Table~B (batched client).
 
-\subsubsection{A --- VectorDBBench serial (latency / correctness)}
+\subsubsection{A --- VectorDBBench concurrent (QPS --- management lead)}
 
 \begin{table}[H]
 \centering
-\caption{A: Milvus CPU vs GPU HIP --- VectorDBBench serial search
-(7900 XTX, 2026-07-18;
-\texttt{vdb\_cpu\_ivf\_nprobe\_20260718\_194011.log},
-\texttt{vdb\_gpu\_ivf\_nprobe\_20260718\_195954.log})}
+\caption{A: Milvus CPU vs GPU HIP --- VectorDBBench concurrent QPS
+(7900 XTX, 2026-07-18; concurrency $\{1,10,20,40,80\}$, 30s;
+\texttt{vdb\_cpu\_concurrent\_nprobe\_20260718\_201956.log},
+\texttt{vdb\_gpu\_concurrent\_nprobe\_20260718\_203847.log}).
+recall@10 from serial companion (same index/\texttt{nprobe}).}
 \label{tab:layer4-cpu-gpu}
-\begin{tabular}{@{}lrrrrr@{}}
+\begin{tabular}{@{}lrrrr@{}}
 \toprule
- & \multicolumn{2}{c}{\textbf{VDBBench CPU}} & \multicolumn{2}{c}{\textbf{VDBBench GPU HIP}} & \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-\textbf{nprobe} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS speed-up} \\
+\textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{QPS speed-up} \\
 \midrule
-1  & 1575 & 0.370 & 418 & 0.384 & $0.27\times$ \\
-4  & 1211 & 0.702 & 412 & 0.707 & $0.34\times$ \\
-8  &  924 & 0.839 & 345 & 0.841 & $0.37\times$ \\
-16 &  626 & 0.931 & 676 & 0.931 & $1.08\times$ \\
-32 &  371 & 0.979 & 773 & 0.979 & $2.08\times$ \\
+1  & 13884 & 11110 & 0.384 & $0.80\times$ \\
+4  & 10292 & 11066 & 0.707 & $1.08\times$ \\
+8  &  7731 & 11110 & 0.841 & $1.44\times$ \\
+16 &  4893 & 10904 & 0.931 & $2.23\times$ \\
+32 &  2742 & 10374 & 0.979 & $3.78\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent\textit{QPS} $=$ \texttt{queries}/\texttt{cost} from \texttt{search entire test\_data}.
-\textbf{Use for:} recall correctness and single-query latency---not the management
-throughput headline.
+\noindent GPU HIP holds $\sim$11k QPS as \texttt{nprobe} rises; CPU falls off.
+At high-recall operating points (\texttt{nprobe}=16--32): $\sim$2--4$\times$.
+recall@10 matches CPU within $\sim$0.01 (serial companion).
+Serial VDBBench QPS (1 query/RPC) is appendix-only; see \texttt{docs/vdbbench\_cpu\_gpu\_compare.md}.
 
 \subsubsection{B --- Batched harness (throughput --- lead with this)}
 
@@ -1361,7 +1361,7 @@ strict same-day parity.
 \toprule
  & \multicolumn{2}{c}{\textbf{CPU batched}} & \multicolumn{2}{c}{\textbf{GPU HIP batched}} & \\
 \cmidrule(lr){2-3}\cmidrule(lr){4-5}
-\textbf{nprobe} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS} & \textbf{R@10} & \textbf{QPS speed-up} \\
+\textbf{nprobe} & \textbf{QPS} & \textbf{recall@10} & \textbf{QPS} & \textbf{recall@10} & \textbf{QPS speed-up} \\
 \midrule
 1  & 22013 & 0.390 & 16982 & 0.382 & $0.77\times$ \\
 4  & 14509 & 0.717 & 21882 & 0.709 & $1.51\times$ \\

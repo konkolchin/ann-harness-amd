@@ -1,0 +1,45 @@
+% Backup frames removed from porting_milvus_amd_slides.tex (2026-07-18).
+% Paste into the main deck if needed for Q&A / literalists / presentation-order discussion.
+% Not compiled by default.
+
+%----- How we present numbers to management -----
+\begin{frame}{How we present numbers to management}
+  \footnotesize
+  \textbf{Priority order}
+  \begin{enumerate}
+    \item \textbf{Lead (porting show-off):} same-client \textbf{batched} harness
+          --- GPU HIP $\sim$5--7$\times$ at high \texttt{nprobe}.
+    \item \textbf{Industry tool:} VectorDBBench \textbf{concurrent} QPS
+          --- GPU HIP $\sim$2--4$\times$ at \texttt{nprobe}=16--32 (2026-07-18).
+    \item \textbf{Appendix only:} VectorDBBench \textbf{serial} (1 query/RPC).
+  \end{enumerate}
+
+  \vspace{0.4em}
+  Sealed path: \texttt{GPU\_CUVS\_IVF\_FLAT}; no \texttt{InvalidDeviceFunction}.\\
+  Never mix protocols in one speed-up column.
+\end{frame}
+
+%----- Appendix --- VDBBench serial (literalists) -----
+\begin{frame}{Appendix --- VDBBench serial (literalists)}
+  \footnotesize
+  Not the management throughput slide. Serial = 1 query/RPC (latency/recall protocol).\\
+  2026-07-18; both sides VectorDBBench. Shows recall ladders match.\\[0.25em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{Speed-up} \\
+    \midrule
+    1  & 1575 & 418 & $\approx0.38$ & $0.27\times$ \\
+    4  & 1211 & 412 & $\approx0.71$ & $0.34\times$ \\
+    8  &  924 & 345 & $\approx0.84$ & $0.37\times$ \\
+    16 &  626 & 676 & $0.931$ & $1.08\times$ \\
+    32 &  371 & 773 & $0.979$ & $2.08\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.3em}
+  Use for recall correctness / single-query latency only.\\
+  Concurrent VDBBench is the industry-tool lead; batched harness is the strong second.
+\end{frame}
