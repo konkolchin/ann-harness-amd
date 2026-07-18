@@ -132,10 +132,13 @@
 \end{frame}
 
 %----- 5 -----
-\begin{frame}{Results: CPU Milvus vs GPU HIP}
+\begin{frame}{Results: CPU vs GPU (VectorDBBench both)}
   \footnotesize
-  Same host, SIFT-1M, IVF \texttt{nlist}=1024, \texttt{k}=10.\\
-  Speed-up = GPU QPS / CPU QPS (VDBBench CPU control).
+  Fair compare: same host, SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10.\\
+  \textbf{Both} sides = VectorDBBench (\texttt{milvusivfflat} / \texttt{milvusgpuivfflat}).\\
+  Speed-up = GPU QPS / CPU QPS from the same VDBBench protocol.\\[0.3em]
+  {\small Numbers below: \textbf{pending} paired lab re-run
+  (\texttt{scripts/run\_vdbbench\_milvus\_ivf\_sweep.sh}).}
 
   \vspace{0.35em}
   \begin{center}
@@ -143,20 +146,19 @@
     \toprule
     \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{R@10 (GPU)} & \textbf{Speed-up} \\
     \midrule
-    1  & 1589 & 16982 & 0.382 & $10.7\times$ \\
-    4  & 1219 & 21882 & 0.709 & $17.9\times$ \\
-    8  &  937 & 21838 & 0.844 & $23.3\times$ \\
-    16 &  630 & 26181 & 0.934 & $41.6\times$ \\
-    32 &  376 & 19578 & 0.980 & $52.1\times$ \\
+    1  & --- & --- & --- & --- \\
+    4  & --- & --- & --- & --- \\
+    8  & --- & --- & --- & --- \\
+    16 & --- & --- & --- & --- \\
+    32 & --- & --- & --- & --- \\
     \bottomrule
   \end{tabular}
   \end{center}
 
   \vspace{0.4em}
   \begin{itemize}
-    \item As \texttt{nprobe} rises, recall rises (about 0.38 to 0.98) --- correctness OK.
-    \item GPU QPS speed-up vs CPU Milvus: about \textbf{11$\times$ to 52$\times$}.
-    \item Sealed path: \texttt{GPU\_CUVS\_IVF\_FLAT} load OK.
+    \item Engineering proof (harness, sealed HIP): recall rises; \texttt{GPU\_CUVS\_IVF\_FLAT} load OK.
+    \item Management speed-up table: fill only after CPU+GPU VDBBench logs are in.
   \end{itemize}
 \end{frame}
 
