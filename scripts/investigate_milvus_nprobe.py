@@ -4,7 +4,7 @@ import hashlib
 import h5py
 import numpy as np
 import faiss
-from pymilvus import connections, utility, FieldSchema, CollectionSchema, DataType, Collection
+from pymilvus import MilvusClient, DataType
 
 DEFAULT_URI = "./milvus_sift.db"
 DEFAULT_COLL = "sift1m_nprobe_diag"
@@ -26,6 +26,15 @@ def recall_at_k(pred_ids, gt_ids, k):
 def digest_ids(pred_ids, prefix_queries=200):
     sample = pred_ids[:prefix_queries, :].astype(np.int64).tobytes()
     return hashlib.md5(sample).hexdigest()[:12]
+
+
+def to_pred_ids(search_res):
+    def hit_id(hit):
+        if isinstance(hit, dict):
+            return int(hit["id"])
+        return int(hit.id)
+
+    return np.array([[hit_id(hit) for hit in row] for row in search_res], dtype=np.int64)
 
 parser = argparse.ArgumentParser(description="Diagnose Milvus nprobe effectiveness")
 parser.add_argument("--uri", default=DEFAULT_URI, help="Milvus URI or local Milvus Lite path")
@@ -63,45 +72,45 @@ for npb in nprobes:
     print(f"  faiss nprobe={npb:2d} qps={xq.shape[0]/(t1-t0):8.1f} recall@{args.k}={r:.4f}")
 
 print("\nPreparing Milvus collection...")
-connections.connect(alias="default", uri=args.uri)
-if utility.has_collection(args.collection):
-    utility.drop_collection(args.collection)
+client = MilvusClient(uri=args.uri)
+if client.has_collection(args.collection):
+    client.drop_collection(args.collection)
 
-schema = CollectionSchema(
-    fields=[
-        FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=False),
-        FieldSchema(name="vec", dtype=DataType.FLOAT_VECTOR, dim=d),
-    ],
-    description="nprobe diagnostics",
-)
-col = Collection(name=args.collection, schema=schema)
+schema = client.create_schema(auto_id=False, enable_dynamic_fields=False)
+schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+schema.add_field(field_name="vec", datatype=DataType.FLOAT_VECTOR, dim=d)
+client.create_collection(collection_name=args.collection, schema=schema)
 
 ids = np.arange(xb.shape[0], dtype=np.int64)
 t0 = time.time()
 for s in range(0, xb.shape[0], args.insert_batch):
     e = min(s + args.insert_batch, xb.shape[0])
-    col.insert([ids[s:e].tolist(), xb[s:e].tolist()])
-col.flush()
+    batch = [{"id": int(i), "vec": v.tolist()} for i, v in zip(ids[s:e], xb[s:e])]
+    client.insert(collection_name=args.collection, data=batch)
 t1 = time.time()
 print(f"Inserted in {t1-t0:.2f}s")
 
-index_params = {
-    "index_type": "IVF_FLAT",
-    "metric_type": "L2",
-    "params": {"nlist": args.nlist},
-}
-col.create_index(field_name="vec", index_params=index_params)
-print("index params from server:", col.indexes[0].params)
-col.load()
+index_params = client.prepare_index_params()
+index_params.add_index(field_name="vec", index_type="IVF_FLAT", metric_type="L2", params={"nlist": args.nlist})
+client.create_index(collection_name=args.collection, index_params=index_params)
+print("index params from config:", {"index_type": "IVF_FLAT", "metric_type": "L2", "params": {"nlist": args.nlist}})
+client.load_collection(collection_name=args.collection)
 
 print("\nMilvus run A: param={'metric_type':'L2','params':{'nprobe':N}}")
 digests_a = []
 for npb in nprobes:
     sp = {"metric_type": "L2", "params": {"nprobe": npb}}
     t0 = time.time()
-    res = col.search(data=xq.tolist(), anns_field="vec", param=sp, limit=args.k, output_fields=[])
+    res = client.search(
+        collection_name=args.collection,
+        data=xq.tolist(),
+        anns_field="vec",
+        search_params=sp,
+        limit=args.k,
+        output_fields=[],
+    )
     t1 = time.time()
-    pred = np.array([[hit.id for hit in row] for row in res], dtype=np.int64)
+    pred = to_pred_ids(res)
     r = recall_at_k(pred, gt, args.k)
     dg = digest_ids(pred)
     digests_a.append(dg)
@@ -112,9 +121,16 @@ digests_b = []
 for npb in nprobes:
     sp = {"nprobe": npb}
     t0 = time.time()
-    res = col.search(data=xq.tolist(), anns_field="vec", param=sp, limit=args.k, output_fields=[])
+    res = client.search(
+        collection_name=args.collection,
+        data=xq.tolist(),
+        anns_field="vec",
+        search_params=sp,
+        limit=args.k,
+        output_fields=[],
+    )
     t1 = time.time()
-    pred = np.array([[hit.id for hit in row] for row in res], dtype=np.int64)
+    pred = to_pred_ids(res)
     r = recall_at_k(pred, gt, args.k)
     dg = digest_ids(pred)
     digests_b.append(dg)

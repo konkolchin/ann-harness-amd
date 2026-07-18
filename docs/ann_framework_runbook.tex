@@ -356,6 +356,34 @@ Load + optimize ran once (\texttt{nprobe=1}); \texttt{nprobe=4..32} reused the c
 Correct ANN curve (recall rises with \texttt{nprobe}). Search QPS is far below FAISS
 (Table~5) at every step, but much higher than Milvus harness Standalone on WSL2 (Table~4).
 
+\subsection{Milvus Standalone nprobe diagnostic script (7900 XTX, 2026-07-07)}
+
+Host: \texttt{amd-rx7900xtx}, Ubuntu 22.04, Milvus standalone \texttt{v2.4.8} (Docker
+Compose), URI \texttt{http://127.0.0.1:19530}, script
+\texttt{scripts/investigate\_milvus\_nprobe.py}, \texttt{nlist=1024}, \texttt{k=10}.
+
+\begin{table}[h]
+\centering
+\caption{Milvus Standalone nprobe diagnostics (\texttt{k=10}, RX 7900 XTX, run A)}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{QPS} & \textbf{recall@10} & \textbf{digest} \\
+\midrule
+1  & 22012.5 & 0.3901 & 640692f9de5b \\
+2  & 19903.6 & 0.5547 & 71c27a46b024 \\
+4  & 14508.6 & 0.7167 & 572f8740b314 \\
+8  &  9515.9 & 0.8481 & 2798ac1ab9dd \\
+16 &  5401.8 & 0.9354 & e5fa2a87ef84 \\
+32 &  2749.0 & 0.9796 & 1824381db080 \\
+64 &  1520.9 & 0.9956 & abed7c32f3d1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both search parameter forms (\texttt{"params": \{"nprobe": N\}} and legacy
+\texttt{"nprobe": N}) produced the same recall ladder and seven unique digests across the
+sweep, confirming that \texttt{nprobe} was applied correctly on standalone Milvus.
+
 \section{Observations}
 
 \subsection{Per-table summary}
@@ -382,6 +410,10 @@ single apples-to-apples shootout:
         $\approx$57$\times$ lower at \texttt{nprobe=1} ($\approx$1{,}589 vs $\approx$90k) but
         $\approx$3--9$\times$ higher than Table~4 at similar recall (e.g.\ $\approx$376 vs
         $\approx$138 at \texttt{nprobe=32}).
+  \item \textbf{Table 7 (Standalone diagnostic script, RX 7900 XTX):} Direct script-level
+        validation on Milvus \texttt{v2.4.8}. Recall@10 rises from 0.3901 to 0.9956 as
+        \texttt{nprobe} increases 1$\rightarrow$64, and digest values change on each step.
+        This confirms working \texttt{nprobe} behavior outside the Milvus Lite path.
 \end{itemize}
 
 \subsection{FAISS vs Milvus Standalone at similar recall}

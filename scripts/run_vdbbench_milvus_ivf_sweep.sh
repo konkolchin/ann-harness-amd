@@ -47,6 +47,11 @@ esac
 LOG="${LOG:-${LOG_DIR}/vdb_${MODE}_ivf_nprobe_${TS}.log}"
 mkdir -p "${LOG_DIR}"
 
+milvus_up() {
+  curl -sf "http://127.0.0.1:9091/healthz" >/dev/null 2>&1 \
+    || (echo >/dev/tcp/127.0.0.1/19530) >/dev/null 2>&1
+}
+
 if [ -f "${VENV}/bin/activate" ]; then
   # shellcheck disable=SC1091
   source "${VENV}/bin/activate"
@@ -66,8 +71,7 @@ for f in train.parquet test.parquet neighbors.parquet; do
   fi
 done
 
-if ! curl -sf "http://127.0.0.1:9091/healthz" >/dev/null 2>&1 \
-  && ! (echo >/dev/tcp/127.0.0.1/19530) >/dev/null 2>&1; then
+if ! milvus_up; then
   echo "ERROR: Milvus not reachable on ${URI} (:19530 / :9091)" >&2
   if [ "${MODE}" = "cpu" ]; then
     echo "  Start Docker CPU Milvus (milvus-docker / compose) first." >&2
@@ -90,6 +94,13 @@ for NPROBE in "${PROBE_ARR[@]}"; do
   NPROBE="$(echo "${NPROBE}" | tr -d '[:space:]')"
   [ -n "${NPROBE}" ] || continue
   echo "======== nprobe=${NPROBE} ========" | tee -a "${LOG}"
+
+  if ! milvus_up; then
+    echo "ERROR: Milvus went down before nprobe=${NPROBE}. Check docker/HIP logs." >&2
+    echo "  Often optimize/compact after 1M insert OOMs or crashes the standalone container." >&2
+    exit 1
+  fi
+
   if [ "${FIRST}" = "1" ]; then
     EXTRA=(--drop-old --load)
     FIRST=0
@@ -103,6 +114,9 @@ for NPROBE in "${PROBE_ARR[@]}"; do
       --refine-ratio "${REFINE_RATIO}"
     )
   fi
+
+  STEP_LOG="$(mktemp)"
+  set +e
   PYTHONUNBUFFERED=1 vectordbbench "${CMD}" \
     --uri "${URI}" \
     --case-type PerformanceCustomDataset \
@@ -120,8 +134,41 @@ for NPROBE in "${PROBE_ARR[@]}"; do
     --skip-search-concurrent \
     --db-label "${DB_LABEL}" \
     "${GPU_EXTRA[@]}" \
-    "${EXTRA[@]}" 2>&1 | tee -a "${LOG}"
+    "${EXTRA[@]}" 2>&1 | tee -a "${LOG}" | tee "${STEP_LOG}"
+  pipe_rc=${PIPESTATUS[0]}
+  set -e
+
+  # vectordbbench often exits 0 even when the case failed — inspect output.
+  if [ "${pipe_rc}" -ne 0 ] \
+    || grep -qE 'failed to run|Connection refused|Fail connecting to server|Server unavailable' "${STEP_LOG}" \
+    || grep -qE '\| x[[:space:]]*$|label \(models\.py:.*\) \| x' "${STEP_LOG}"; then
+    echo "ERROR: VectorDBBench case failed for nprobe=${NPROBE} (see ${LOG})" >&2
+    if ! milvus_up; then
+      echo "  Milvus is down on :19530 after this step (crash during insert/optimize is common)." >&2
+      echo "  Restart Docker/HIP milvus, ensure disk/RAM, then re-run MODE=${MODE} from nprobe=1." >&2
+    fi
+    rm -f "${STEP_LOG}"
+    exit 1
+  fi
+
+  if ! grep -q 'search entire test_data' "${STEP_LOG}"; then
+    echo "ERROR: no 'search entire test_data' line for nprobe=${NPROBE} — search did not complete." >&2
+    rm -f "${STEP_LOG}"
+    exit 1
+  fi
+  rm -f "${STEP_LOG}"
 done
+
+SEARCH_N="$(grep -c 'search entire test_data' "${LOG}" || true)"
+NEED_N=0
+for NPROBE in "${PROBE_ARR[@]}"; do
+  NPROBE="$(echo "${NPROBE}" | tr -d '[:space:]')"
+  [ -n "${NPROBE}" ] && NEED_N=$((NEED_N + 1))
+done
+if [ "${SEARCH_N}" -lt "${NEED_N}" ]; then
+  echo "ERROR: expected ${NEED_N} search lines, found ${SEARCH_N} in ${LOG}" >&2
+  exit 1
+fi
 
 echo ""
 echo "VDBBENCH SWEEP OK (${MODE})"

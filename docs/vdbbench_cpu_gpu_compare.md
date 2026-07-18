@@ -36,12 +36,52 @@ mkdir -p ~/ann-harness-amd/data ~/vdbbench-sift1m
 cd ~/ann-harness-amd && git pull
 source ~/vdbbench-venv/bin/activate
 
-# Start Docker CPU Milvus v2.5.4 on :19530 (milvus-docker / compose); stop HIP milvus first
+# Stop HIP milvus if it holds :19530; start Docker CPU Milvus v2.5.4
+# This host uses classic docker-compose (hyphen), not `docker compose`:
+#   pkill -f 'bin/milvus' || true
+#   cd ~/ann-harness-amd/milvus-docker && docker-compose up -d
+# Wait until healthy (standalone Up (healthy) + healthz):
+docker-compose -f ~/ann-harness-amd/milvus-docker/docker-compose.yml ps
+curl -sf http://127.0.0.1:9091/healthz && echo OK
+
 tmux new -s vdb-cpu
 MODE=cpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
 ```
 
 Log: `logs/vdb_cpu_ivf_nprobe_*.log`
+
+**Known failure A:** insert of 1M succeeds, then Milvus dies during **optimize/compact**
+(`Connection refused` on `:19530`). VectorDBBench may still print a fake “Success” /
+`qps=0` / label `x`. The sweep script now **exits non-zero** in that case.
+
+**Known failure B:** logs show `find no available rootcoord` / `empty grpc client` —
+etcd/minio/standalone are out of sync (partial crash). `:19530` and `:9091` stay down.
+
+Recovery (CPU Docker — wipe is OK; VDBBench re-inserts):
+
+```bash
+# 1) Free ports: stop HIP standalone if running
+pkill -f 'bin/milvus' || true
+ss -lntp | grep -E '19530|9091' || true
+
+# 2) Restart full stack (this lab uses docker-compose with hyphen)
+cd ~/ann-harness-amd/milvus-docker
+docker-compose ps
+docker-compose down
+docker-compose up -d
+sleep 20
+docker-compose ps
+# Expect etcd + minio + milvus-standalone all Up; standalone preferably (healthy)
+
+# 3) If still unhealthy / rootcoord errors, wipe volumes and recreate
+docker-compose down -v
+docker-compose up -d
+sleep 30
+docker logs milvus-standalone 2>&1 | tail -40
+curl -sf http://127.0.0.1:9091/healthz && echo OK
+
+# 4) Only then re-run MODE=cpu from nprobe=1
+```
 
 ### 2) Switch to HIP Milvus
 

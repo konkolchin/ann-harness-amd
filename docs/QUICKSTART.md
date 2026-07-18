@@ -69,9 +69,9 @@ python scripts/run_milvus_hdf5.py
 Notes:
 
 - Good for: insert/index/search smoke test, QPS/p99 plumbing, pymilvus API check
-- **Not valid for `nprobe` sweeps** — see runbook Table 2 (PDF): recall@10 stays flat
-  (~0.894) while FAISS rises from ~0.37 to ~0.98 across the same sweep
-- For production-like Milvus + working `nprobe`, use standalone server (sections 7.1–7.2)
+- In some Lite runs, recall@10 stayed flat across `nprobe` (runbook Tables 2-3). Treat Lite
+  as a local bring-up path, not a tuning authority.
+- For production-like Milvus + `nprobe` tuning, use standalone server (sections 7.1-7.2)
 
 Optional: point scripts at a full Milvus server instead of Lite:
 
@@ -187,12 +187,14 @@ Try `--no-proxy` (already used above). If still blocked, download on another mac
 
 Reduce `INSERT_BATCH` in `scripts/run_milvus_hdf5.py` (e.g. `20000`).
 
-### Milvus Lite: recall@10 unchanged across nprobe (expected)
+### Milvus Lite: recall@10 unchanged across nprobe (possible)
 
-This matches runbook **Table 2**: flat recall (~0.894) while FAISS (Table 1) rises
-with `nprobe`. **Do not use Lite results for ANN tuning comparisons.**
+This matched runbook **Tables 2-3** in earlier runs: flat recall (~0.894) while FAISS
+(Tables 1 and 5) rises with `nprobe`. **Do not use Lite results alone for ANN tuning.**
 
-Next step: standalone Milvus (sections 7.1–7.2). Lite cannot substitute.
+Standalone Milvus validation on `amd-rx7900xtx` (2026-07-07) showed expected `nprobe`
+behavior: recall@10 rose from `0.3901` (`nprobe=1`) to `0.9956` (`nprobe=64`) with
+decreasing QPS. Next step: use standalone (sections 7.1-7.2) for all tuning sweeps.
 
 ### Milvus Docker: `context deadline exceeded` on startup
 
