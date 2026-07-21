@@ -80,13 +80,25 @@ parser.add_argument("--p99-sample", type=int, default=DEFAULT_P99_SAMPLE, help="
 parser.add_argument(
     "--index-type",
     default=DEFAULT_INDEX_TYPE,
-    choices=["IVF_FLAT", "GPU_IVF_FLAT"],
-    help="Index type (GPU_IVF_FLAT requires HIP Milvus Layer 3)",
+    choices=["IVF_FLAT", "GPU_IVF_FLAT", "IVF_PQ", "GPU_IVF_PQ"],
+    help="Index type (GPU_* requires HIP/CUDA Milvus GPU build)",
+)
+parser.add_argument(
+    "--m",
+    type=int,
+    default=16,
+    help="PQ sub-quantizers (IVF_PQ / GPU_IVF_PQ); must divide vector dim (SIFT=128 ? 8/16/32/64)",
+)
+parser.add_argument(
+    "--nbits",
+    type=int,
+    default=8,
+    help="PQ bits per sub-quantizer (IVF_PQ / GPU_IVF_PQ); typically 8",
 )
 parser.add_argument(
     "--cache-dataset-on-device",
     action="store_true",
-    help="GPU index param: keep dataset on device (GPU_IVF_FLAT)",
+    help="GPU index param: keep dataset on device (GPU_* indexes)",
 )
 parser.add_argument(
     "--max-train-rows",
@@ -128,6 +140,8 @@ print(
     f"collection={args.collection}, k={args.k}, nlist={args.nlist}, "
     f"nprobes={nprobes}, index_type={args.index_type}, flush={do_flush}"
 )
+if "PQ" in args.index_type:
+    print(f"pq_params: m={args.m}, nbits={args.nbits}")
 
 with h5py.File(args.data, "r") as f:
     xb = np.array(f["train"], dtype=np.float32)
@@ -142,6 +156,10 @@ if args.max_query_rows and args.max_query_rows > 0:
 
 d = xb.shape[1]
 print(f"xb={xb.shape}, xq={xq.shape}, gt={gt.shape}, dim={d}")
+if "PQ" in args.index_type and d % args.m != 0:
+    raise SystemExit(
+        f"PQ m={args.m} must divide dim={d} (try m in {{8,16,32,64}} for SIFT-128)"
+    )
 
 results = {
     "uri": args.uri,
@@ -149,6 +167,8 @@ results = {
     "index_type": args.index_type,
     "flush": do_flush,
     "nlist": args.nlist,
+    "m": args.m if "PQ" in args.index_type else None,
+    "nbits": args.nbits if "PQ" in args.index_type else None,
     "k": args.k,
     "nprobes": nprobes,
     "xb_shape": list(xb.shape),
@@ -187,6 +207,9 @@ if do_flush:
 
 index_params = client.prepare_index_params()
 idx_extra = {"nlist": args.nlist}
+if "PQ" in args.index_type:
+    idx_extra["m"] = args.m
+    idx_extra["nbits"] = args.nbits
 if args.index_type.startswith("GPU_") and args.cache_dataset_on_device:
     idx_extra["cache_dataset_on_device"] = True
 index_params.add_index(
