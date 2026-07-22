@@ -41,11 +41,28 @@ if docker compose version >/dev/null 2>&1; then
 elif command -v docker-compose >/dev/null 2>&1; then
   COMPOSE_CMD="docker-compose"
 else
-  echo "ERROR: Docker Compose not found." >&2
-  echo "  Install:  sudo apt-get install -y docker-compose-plugin" >&2
-  echo "  Or legacy: sudo apt-get install -y docker-compose" >&2
-  echo "  Then re-run this script." >&2
-  exit 1
+  # Install Compose v2 CLI plugin into the user docker config (no apt repo needed)
+  PLUGIN_DIR="${DOCKER_CONFIG:-${HOME}/.docker}/cli-plugins"
+  PLUGIN_BIN="${PLUGIN_DIR}/docker-compose"
+  COMPOSE_VER="${COMPOSE_VER:-v2.32.4}"
+  mkdir -p "${PLUGIN_DIR}"
+  if [ ! -x "${PLUGIN_BIN}" ]; then
+    echo "==> Docker Compose plugin missing; downloading ${COMPOSE_VER} → ${PLUGIN_BIN}"
+    curl -fsSL \
+      "https://github.com/docker/compose/releases/download/${COMPOSE_VER}/docker-compose-linux-x86_64" \
+      -o "${PLUGIN_BIN}"
+    chmod +x "${PLUGIN_BIN}"
+  fi
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+  elif [ -x "${PLUGIN_BIN}" ]; then
+    # Some docker builds ignore cli-plugins; run the binary directly
+    COMPOSE_CMD="${PLUGIN_BIN}"
+  else
+    echo "ERROR: could not install Docker Compose plugin." >&2
+    echo "  Manual: curl -fsSL https://github.com/docker/compose/releases/download/${COMPOSE_VER}/docker-compose-linux-x86_64 -o ~/bin/docker-compose && chmod +x ~/bin/docker-compose" >&2
+    exit 1
+  fi
 fi
 echo "==> using: ${COMPOSE_CMD}"
 
