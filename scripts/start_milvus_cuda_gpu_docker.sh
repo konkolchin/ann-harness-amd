@@ -33,10 +33,24 @@ fi
 
 echo "==> image=${MILVUS_IMAGE}"
 echo "==> compose dir=${COMPOSE_DIR}"
-# Prefer Compose v2 GPU reservation; also set NVIDIA_VISIBLE_DEVICES for older runtimes
 export NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-0}"
-docker compose pull || docker-compose pull || true
-docker compose up -d || docker-compose up -d
+
+COMPOSE_CMD=""
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD="docker-compose"
+else
+  echo "ERROR: Docker Compose not found." >&2
+  echo "  Install:  sudo apt-get install -y docker-compose-plugin" >&2
+  echo "  Or legacy: sudo apt-get install -y docker-compose" >&2
+  echo "  Then re-run this script." >&2
+  exit 1
+fi
+echo "==> using: ${COMPOSE_CMD}"
+
+${COMPOSE_CMD} pull || true
+${COMPOSE_CMD} up -d
 
 echo "==> waiting for healthz on :9091"
 for i in $(seq 1 90); do
