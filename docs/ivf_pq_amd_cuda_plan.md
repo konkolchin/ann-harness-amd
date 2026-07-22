@@ -7,7 +7,7 @@ Fair compare needs **identical** recipe on both GPUs:
 | Dataset | SIFT-1M (`sift-128-euclidean.hdf5`) |
 | Index | `GPU_IVF_PQ` |
 | `nlist` | `1024` (full) / `128` (smoke) |
-| `m` | `16` (must divide 128) |
+| `m` | **`32` primary** (also measured 8/16 on AMD); must divide 128 |
 | `nbits` | `8` |
 | `k` | `10` |
 | `nprobe` | `1,4,8,16,32` |
@@ -43,9 +43,16 @@ bash scripts/run_milvus_layer4_pq.sh
 
 Known risk (from Knowhere UT notes): occasional IVF_PQ TopK threshold flakes on gfx1100 — if smoke recall is nonsense (0) or build crashes, capture log + stop before full 1M.
 
-## Tomorrow — NVIDIA 4080
+## NVIDIA 4080 (CUDA peer)
 
-Same commands against CUDA Milvus GPU build / image, **same** `NLIST/M/NBITS/NPROBES`. Compare QPS and recall@10 side by side; do not mix batched vs serial in one speed-up column.
+See full steps: `docs/cuda_4080_benchmark_runbook.md`.
+
+```bash
+export WORKDIR=~/milvus_cuda_4080
+bash scripts/start_milvus_cuda_gpu_docker.sh
+M=32 bash scripts/run_milvus_layer4_pq.sh
+bash scripts/run_milvus_layer4_cuda.sh   # FLAT peer
+```
 
 ## What “good” looks like vs FLAT
 

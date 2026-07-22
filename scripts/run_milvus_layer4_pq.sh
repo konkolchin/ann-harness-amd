@@ -1,15 +1,30 @@
 #!/usr/bin/env bash
 # Full SIFT-1M sealed GPU_IVF_PQ nprobe sweep (same protocol as Layer-4 FLAT).
 #
-# Keep nlist/m/nbits identical on AMD HIP today and NVIDIA CUDA tomorrow.
+# Works on AMD HIP or CUDA GPU Milvus — keep nlist/m/nbits identical both sides.
 # Default: nlist=1024, m=16, nbits=8, nprobe=1,4,8,16,32
+# For 4080 primary compare: M=32
 #
-# Usage (HIP already on :19530):
+# Usage (Milvus already on :19530):
 #   bash scripts/run_milvus_layer4_pq.sh
+#   M=32 WORKDIR=~/milvus_cuda_4080 bash scripts/run_milvus_layer4_pq.sh
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORKDIR="${WORKDIR:-${HOME}/rocmds_check_gfx1100}"
+M="${M:-16}"
+NBITS="${NBITS:-8}"
+INDEX_WAIT_S="${INDEX_WAIT_S:-3600}"
+NLIST="${NLIST:-1024}"
+NPROBES="${NPROBES:-1,4,8,16,32}"
+
+if [ -z "${WORKDIR:-}" ]; then
+  if [ -d "${HOME}/milvus_cuda_4080" ]; then
+    WORKDIR="${HOME}/milvus_cuda_4080"
+  else
+    WORKDIR="${HOME}/rocmds_check_gfx1100"
+  fi
+fi
+
 URI="${MILVUS_URI:-http://127.0.0.1:19530}"
 DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/sift-128-euclidean.hdf5}"
 LOG_DIR="${LOG_DIR:-${WORKDIR}/logs}"
@@ -17,18 +32,20 @@ MILVUS_LOG="${MILVUS_LOG:-${LOG_DIR}/milvus_gpu_standalone.log}"
 TS="$(date +%Y%m%d_%H%M%S)"
 COLLECTION="${L4_COLLECTION:-sift_gpu_l4_pq_${TS}}"
 RESULTS_JSON="${RESULTS_JSON:-${LOG_DIR}/layer4_gpu_ivf_pq_${TS}.json}"
-NLIST="${NLIST:-1024}"
-NPROBES="${NPROBES:-1,4,8,16,32}"
-M="${M:-16}"
-NBITS="${NBITS:-8}"
-INDEX_WAIT_S="${INDEX_WAIT_S:-3600}"
 
 export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
 export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 if ! curl -sf "http://127.0.0.1:9091/healthz" >/dev/null 2>&1 \
   && ! (echo >/dev/tcp/127.0.0.1/19530) >/dev/null 2>&1; then
-  echo "ERROR: Milvus not reachable — start HIP milvus first" >&2
+  echo "ERROR: Milvus not reachable on :19530 / :9091" >&2
+  echo "  HIP: start standalone; CUDA: bash scripts/start_milvus_cuda_gpu_docker.sh" >&2
+  exit 1
+fi
+
+if [ ! -f "${DATA_PATH}" ]; then
+  echo "ERROR: missing ${DATA_PATH}" >&2
   exit 1
 fi
 
@@ -56,17 +73,11 @@ echo ""
 if [ -f "${MILVUS_LOG}" ]; then
   grep -a -iE 'InvalidDeviceFunction|GPU_CUVS_IVF_PQ|DeserializeFromStream' \
     "${MILVUS_LOG}" | tail -40 || true
-  if grep -a -q 'InvalidDeviceFunction' "${MILVUS_LOG}"; then
-    echo "WARNING: InvalidDeviceFunction in ${MILVUS_LOG}" >&2
-  fi
-  if grep -a -q 'GPU_CUVS_IVF_PQ' "${MILVUS_LOG}"; then
-    echo "OK: GPU_CUVS_IVF_PQ activity present in log"
-  else
-    echo "WARNING: no GPU_CUVS_IVF_PQ lines — check log path / sealed path" >&2
-  fi
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -qx milvus-standalone; then
+  echo "==> docker log check (GPU_CUVS_IVF_PQ):"
+  docker logs milvus-standalone 2>&1 | grep -aE 'GPU_CUVS_IVF_PQ' | tail -20 || true
 fi
 
 echo ""
 echo "LAYER4 PQ RUN OK"
 echo "  results: ${RESULTS_JSON}"
-echo "  Tomorrow on 4080: same NLIST/M/NBITS/NPROBES with CUDA Milvus GPU_IVF_PQ."
