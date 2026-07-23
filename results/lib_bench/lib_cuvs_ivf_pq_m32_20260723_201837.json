@@ -1,0 +1,19 @@
+{
+  "protocol": "library_cuvs_api",
+  "backend": "cuvs",
+  "gpu_name": "NVIDIA GeForce RTX 4080",
+  "host": "kvkol-B650-AORUS-PRO-AX",
+  "index_type": "IVF_PQ",
+  "nlist": 1024,
+  "m": 32,
+  "nbits": 8,
+  "k": 10,
+  "source_json": "/home/kvkol/milvus_cuda_4080/logs/lib_cuvs_ivf_pq_m32_20260723_201837.json",
+  "nprobe_results": [
+    {"nprobe": 1, "qps": 4326105.3, "recall@10": 0.3463},
+    {"nprobe": 4, "qps": 2297666.9, "recall@10": 0.5911},
+    {"nprobe": 8, "qps": 1411722.1, "recall@10": 0.6673},
+    {"nprobe": 16, "qps": 806266.6, "recall@10": 0.7085},
+    {"nprobe": 32, "qps": 453316.2, "recall@10": 0.7249}
+  ]
+}

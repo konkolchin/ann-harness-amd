@@ -33,11 +33,15 @@ runbook (\texttt{ann\_framework\_runbook.tex}): Milvus Standalone CPU results on
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
 
-\textbf{Status (2026-07-17):} Layers~\textbf{0--4 done} on the 7900 XTX lab host
+\textbf{Status (2026-07-22):} Layers~\textbf{0--4 done} on the 7900 XTX lab host
 (ROCm~7.0.2; hipVS IVF packer fixed; Knowhere HIP L2 search 108 assertions; DXC Knowhere
-\texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT};
-full SIFT-1M recall@10 $0.38\rightarrow0.98$).
-See Section~\ref{sec:layer-progress}.
+\texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT}
+and \texttt{GPU\_IVF\_PQ}; full SIFT-1M FLAT recall@10 $0.38\rightarrow0.98$; fair CPU vs GPU:
+batched $\sim$5--7$\times$, VDBBench concurrent $\sim$2--4$\times$ at high \texttt{nprobe}).
+Fair HIP vs CUDA on RTX~4080 (\texttt{milvusdb/milvus:v2.5.4-gpu}): FLAT and PQ
+\texttt{m}=32 recall ladders \textbf{match} AMD. Library hipVS vs cuVS harness:
+Section~\ref{sec:hipvs-vs-cuvs-lib}. See Sections~\ref{sec:layer-progress},
+\ref{sec:layer4-pq}, \ref{sec:hip-vs-cuda}.
 \end{abstract}
 
 \tableofcontents
@@ -110,7 +114,7 @@ current layer passes.
 1.5 & IVF packer fix (gfx1100) & \textbf{Done} & Float IVF gtests 98/98 (2026-07-05) \\
 2 & Knowhere + HIP & \textbf{Done} & Catch2 \texttt{Test Gpu Index Search}: 108 assertions (2026-07-09); DXC \texttt{2.5} merged \\
 3 & Milvus source + GPU & \textbf{Done} & Sealed \texttt{GPU\_IVF\_FLAT}: IndexNode \texttt{GPU\_CUVS\_IVF\_FLAT}; QueryNode load OK (2026-07-17) \\
-4 & Harness benchmarks & \textbf{Done} & Full SIFT-1M: recall@10 $0.3824\rightarrow0.9803$; sealed \texttt{GPU\_CUVS} (2026-07-17) \\
+4 & Harness benchmarks & \textbf{Done} & Full SIFT-1M FLAT + PQ; HIP vs CUDA recall match (2026-07-22) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1223,8 +1227,18 @@ Table~\ref{tab:layer4-measured}. Checklist: \texttt{docs/layer4\_run\_checklist.
 
 \subsection{Goal}
 
-Measure sealed HIP \texttt{GPU\_IVF\_FLAT} against the same-host CPU Milvus control
-using the \textbf{same VectorDBBench protocol} on both sides (not harness vs VDBBench).
+Measure sealed HIP \texttt{GPU\_IVF\_FLAT} against same-host CPU Milvus
+(\texttt{IVF\_FLAT}) on SIFT-1M with the \textbf{same client protocol on both sides}.
+Report two protocols separately (as in the management slides):
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Batched harness} --- one \texttt{search()} with all 10k queries
+        (porting show-off / throughput).
+  \item \textbf{VectorDBBench concurrent} --- industry tool, multi-client QPS.
+\end{enumerate}
+
+Never mix protocols in one speed-up column (that produced the withdrawn
+$\sim$50$\times$ apples-to-oranges figures).
 
 \begin{table}[h]
 \centering
@@ -1233,8 +1247,8 @@ using the \textbf{same VectorDBBench protocol} on both sides (not harness vs VDB
 \toprule
 \textbf{Experiment} & \textbf{Tool} & \textbf{What you learn} \\
 \midrule
-CPU Milvus & VDBBench \texttt{milvusivfflat} & CPU Standalone recall/QPS \\
-GPU Milvus HIP & VDBBench \texttt{milvusgpuivfflat} & Fair GPU recall/QPS + speed-up \\
+Batched CPU vs GPU & \texttt{run\_milvus\_hdf5.py} / Layer~4 & Same-protocol throughput speed-up \\
+VDBBench concurrent & \texttt{milvusivfflat} / \texttt{milvusgpuivfflat} & Industry-tool QPS speed-up \\
 HIP sealed smoke & \texttt{run\_milvus\_layer4.sh} & Engineering proof of \texttt{GPU\_CUVS} path \\
 \bottomrule
 \end{tabular}
@@ -1269,9 +1283,10 @@ MODE=gpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
 
 \textbf{Pass (Layer~4 fair compare):}
 \begin{itemize}[leftmargin=*]
-  \item Both VDBBench sweeps finish; recall@10 \textbf{rises} with \texttt{nprobe}.
+  \item Layer~4 batched GPU run finishes; recall@10 \textbf{rises} with \texttt{nprobe};
+        fill Table~\ref{tab:layer4-cpu-gpu-batch} with same-protocol CPU batched QPS.
+  \item VDBBench concurrent CPU + GPU sweeps finish; fill Table~\ref{tab:layer4-cpu-gpu}.
   \item GPU: sealed \texttt{GPU\_CUVS\_IVF\_FLAT} in milvus log; no \texttt{InvalidDeviceFunction}.
-  \item Fill Table~\ref{tab:layer4-cpu-gpu} from the two VDBBench logs only.
 \end{itemize}
 
 \subsection{Measured on lab host (Layer~4)}
@@ -1295,11 +1310,11 @@ IndexNode saved multi-slice \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
 \toprule
 \textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} \\
 \midrule
-1  & 16981.8 & 2.59 & 0.3824 \\
-4  & 21881.7 & 2.49 & 0.7091 \\
-8  & 21838.3 & 2.76 & 0.8436 \\
-16 & 26181.3 & 2.76 & 0.9337 \\
-32 & 19578.4 & 2.81 & 0.9803 \\
+1  & 16981.8 & 2.59 & 0.38 \\
+4  & 21881.7 & 2.49 & 0.71 \\
+8  & 21838.3 & 2.76 & 0.84 \\
+16 & 26181.3 & 2.76 & 0.93 \\
+32 & 19578.4 & 2.81 & 0.98 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1308,73 +1323,372 @@ IndexNode saved multi-slice \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
 \label{sec:layer4-cpu-gpu}
 
 Same host \texttt{amd-rx7900xtx}, SIFT-1M L2, IVF \texttt{nlist=1024}, \texttt{k=10}.
-Present \textbf{two} protocols separately; never divide Table~A GPU by Table~B CPU
-(or Layer-4 by VDBBench).
+Same order and numbers as the management slides.
+Present \textbf{two} protocols separately; never divide batched GPU QPS by
+serial VectorDBBench CPU QPS (that mix previously produced a spurious
+$\sim$52$\times$ at \texttt{nprobe}=32 --- \textbf{withdrawn}).
 
-\paragraph{Why VectorDBBench serial looked weak on GPU.}
-Our sweep passed \texttt{--search-serial} / \texttt{--skip-search-concurrent}.
-VectorDBBench then issues \textbf{one query per RPC} to measure latency and recall.
-That is a valid latency protocol; it under-utilizes GPU parallelism. Throughput
-belongs in Table~B (batched client).
+\paragraph{Why VectorDBBench serial is not the speed headline.}
+A serial VDBBench stage issues \textbf{one query per RPC} (latency/recall).
+That under-utilizes GPU parallelism. Use it for recall only; see
+\texttt{docs/vdbbench\_cpu\_gpu\_compare.md}. Throughput belongs in the
+batched table below; industry multi-client QPS in the concurrent table.
 
-\subsubsection{A --- VectorDBBench concurrent (QPS --- management lead)}
+\subsubsection{A --- Batched harness throughput (lead with this)}
+
+Both sides: one \texttt{MilvusClient.search()} with all 10k queries
+(\texttt{scripts/run\_milvus\_hdf5.py}). GPU = Table~\ref{tab:layer4-measured}.
+CPU = same-host batched diagnostic (runbook Table~7);
+re-run \texttt{scripts/run\_milvus\_batch\_cpu\_compare.sh} on Docker v2.5.4 for
+strict same-day parity.
 
 \begin{table}[H]
 \centering
-\caption{A: Milvus CPU vs GPU HIP --- VectorDBBench concurrent QPS
+\caption{A: Milvus CPU vs GPU HIP --- batched 10k-query search (7900 XTX)
+(same protocol both sides; matches slides ``Batched harness throughput'')}
+\label{tab:layer4-cpu-gpu-batch}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{QPS speed-up} \\
+\midrule
+1  & 22013 & 16982 & 0.38 & $0.77\times$ \\
+4  & 14509 & 21882 & 0.71 & $1.51\times$ \\
+8  &  9516 & 21838 & 0.84 & $2.30\times$ \\
+16 &  5402 & 26181 & 0.93 & $4.85\times$ \\
+32 &  2749 & 19578 & 0.98 & $7.12\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Headline:} at \texttt{nprobe}=16--32, GPU HIP is $\sim$5--7$\times$ CPU
+under the \textbf{same batched protocol}, with matching recall@10 (CPU and GPU agree
+to two decimals) and sealed \texttt{GPU\_CUVS\_IVF\_FLAT}.
+
+\subsubsection{B --- VectorDBBench concurrent}
+
+\begin{table}[H]
+\centering
+\caption{B: Milvus CPU vs GPU HIP --- VectorDBBench concurrent QPS
 (7900 XTX, 2026-07-18; concurrency $\{1,10,20,40,80\}$, 30s;
 \texttt{vdb\_cpu\_concurrent\_nprobe\_20260718\_201956.log},
 \texttt{vdb\_gpu\_concurrent\_nprobe\_20260718\_203847.log}).
-recall@10 from serial companion (same index/\texttt{nprobe}).}
+recall@10 from serial companion (same index/\texttt{nprobe});
+matches slides ``VectorDBBench concurrent''}
 \label{tab:layer4-cpu-gpu}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
 \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{QPS speed-up} \\
 \midrule
-1  & 13884 & 11110 & 0.384 & $0.80\times$ \\
-4  & 10292 & 11066 & 0.707 & $1.08\times$ \\
-8  &  7731 & 11110 & 0.841 & $1.44\times$ \\
-16 &  4893 & 10904 & 0.931 & $2.23\times$ \\
-32 &  2742 & 10374 & 0.979 & $3.78\times$ \\
+1  & 13884 & 11110 & 0.38 & $0.80\times$ \\
+4  & 10292 & 11066 & 0.71 & $1.08\times$ \\
+8  &  7731 & 11110 & 0.84 & $1.44\times$ \\
+16 &  4893 & 10904 & 0.93 & $2.23\times$ \\
+32 &  2742 & 10374 & 0.98 & $3.78\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \noindent GPU HIP holds $\sim$11k QPS as \texttt{nprobe} rises; CPU falls off.
 At high-recall operating points (\texttt{nprobe}=16--32): $\sim$2--4$\times$.
-recall@10 matches CPU within $\sim$0.01 (serial companion).
-Serial VDBBench QPS (1 query/RPC) is appendix-only; see \texttt{docs/vdbbench\_cpu\_gpu\_compare.md}.
+recall@10 (CPU and GPU) agree to two decimals.
 
-\subsubsection{B --- Batched harness (throughput --- lead with this)}
+\subsection{GPU\_IVF\_PQ on AMD (Layer~4 extension)}
+\label{sec:layer4-pq}
 
-Both sides: one \texttt{MilvusClient.search()} with all 10k queries
-(\texttt{scripts/run\_milvus\_hdf5.py}). GPU = Table~\ref{tab:layer4-measured}.
-CPU column below is the same-host batched diagnostic (runbook Table~7, Jul~7);
-re-run \texttt{scripts/run\_milvus\_batch\_cpu\_compare.sh} on Docker v2.5.4 for
-strict same-day parity.
+Same host and batched harness as Table~\ref{tab:layer4-measured};
+index \texttt{GPU\_IVF\_PQ}, \texttt{nlist}=1024, \texttt{nbits}=8, \texttt{k}=10
+(2026-07-21). Sealed path: IndexNode \texttt{GPU\_CUVS\_IVF\_PQ}; QueryNode
+\texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_PQ}.
+Scripts: \texttt{scripts/run\_milvus\_layer4\_pq.sh} (\texttt{M=8|16|32}).
+Plan notes: \texttt{docs/ivf\_pq\_amd\_cuda\_plan.md}.
+
+Higher \texttt{m} $\Rightarrow$ less compression $\Rightarrow$ better recall
+(still below FLAT --- expected). QPS stays in the same ballpark as FLAT
+($\sim$15k--25k); the PQ product story is mainly memory / footprint.
 
 \begin{table}[H]
 \centering
-\caption{B: Milvus CPU vs GPU HIP --- batched 10k-query search (7900 XTX)}
-\label{tab:layer4-cpu-gpu-batch}
-\begin{tabular}{@{}lrrrrr@{}}
+\caption{AMD HIP \texttt{GPU\_IVF\_PQ} recall@10 vs FLAT
+(SIFT-1M, \texttt{nlist}=1024, \texttt{nbits}=8, batched harness)}
+\label{tab:layer4-pq-recall}
+\begin{tabular}{@{}lrrrr@{}}
 \toprule
- & \multicolumn{2}{c}{\textbf{CPU batched}} & \multicolumn{2}{c}{\textbf{GPU HIP batched}} & \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-\textbf{nprobe} & \textbf{QPS} & \textbf{recall@10} & \textbf{QPS} & \textbf{recall@10} & \textbf{QPS speed-up} \\
+\textbf{nprobe} & \textbf{m=8} & \textbf{m=16} & \textbf{m=32} & \textbf{FLAT} \\
 \midrule
-1  & 22013 & 0.390 & 16982 & 0.382 & $0.77\times$ \\
-4  & 14509 & 0.717 & 21882 & 0.709 & $1.51\times$ \\
-8  &  9516 & 0.848 & 21838 & 0.844 & $2.30\times$ \\
-16 &  5402 & 0.935 & 26181 & 0.934 & $4.85\times$ \\
-32 &  2749 & 0.980 & 19578 & 0.980 & $7.12\times$ \\
+1  & 0.26 & 0.33 & 0.36 & 0.38 \\
+4  & 0.35 & 0.50 & 0.60 & 0.71 \\
+8  & 0.37 & 0.54 & 0.67 & 0.84 \\
+16 & 0.38 & 0.56 & 0.71 & 0.93 \\
+32 & 0.38 & 0.57 & 0.73 & 0.98 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent\textbf{Management takeaway:} at \texttt{nprobe}=16--32 (high-recall operating
-points), GPU HIP is $\sim$5--7$\times$ CPU under the \textbf{same batched protocol},
-with matching recall and sealed \texttt{GPU\_CUVS\_IVF\_FLAT} (VDBBench GPU run logs).
+\begin{table}[H]
+\centering
+\caption{AMD HIP \texttt{GPU\_IVF\_PQ} QPS vs FLAT (same runs as Table~\ref{tab:layer4-pq-recall})}
+\label{tab:layer4-pq-qps}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{m=8} & \textbf{m=16} & \textbf{m=32} & \textbf{FLAT} \\
+\midrule
+1  & 24882 & 16388 & 24273 & 16982 \\
+4  & 21221 & 21084 & 20967 & 21882 \\
+8  & 19766 & 19341 & 19500 & 21838 \\
+16 & 23735 & 23566 & 22954 & 26181 \\
+32 & 15402 & 15295 & 14784 & 19578 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent JSON: \texttt{layer4\_gpu\_ivf\_pq\_20260721\_213748.json} (\texttt{m}=8),
+\texttt{\_213121.json} (\texttt{m}=16), \texttt{\_213909.json} (\texttt{m}=32)
+under \texttt{\$WORKDIR/logs/}. Peer CUDA compare done for \texttt{m}=8, 16, and 32.
+
+\subsection{Fair HIP vs CUDA (RTX 4080 peer)}
+\label{sec:hip-vs-cuda}
+
+Same client protocol as AMD Layer~4 (batched 10k-query \texttt{run\_milvus\_hdf5.py},
+SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10, \texttt{nprobe} grid, \texttt{--flush}).
+CUDA host: RTX~4080, Ubuntu~22, \texttt{milvusdb/milvus:v2.5.4-gpu} via
+\texttt{scripts/start\_milvus\_cuda\_gpu\_docker.sh}
+(runbook: \texttt{docs/cuda\_4080\_benchmark\_runbook.md}).
+
+\textbf{Hardware note:} RX~7900~XTX and RTX~4080 are peer-class enthusiast GPUs
+(typical board power $\sim$320--355\,W). They are \emph{not} identical silicon;
+use recall for port correctness and QPS for hardware/stack speed only.
+
+\subsubsection{GPU\_IVF\_FLAT}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_FLAT} recall@10 (batched; two decimals)}
+\label{tab:hip-cuda-flat-recall}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\midrule
+1  & 0.38 & 0.38 \\
+4  & 0.71 & 0.71 \\
+8  & 0.84 & 0.84 \\
+16 & 0.93 & 0.93 \\
+32 & 0.98 & 0.98 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_FLAT} QPS
+(speed-up $=$ AMD QPS / CUDA QPS)}
+\label{tab:hip-cuda-flat-qps}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\midrule
+1  & 16982 & 11597 & $1.46\times$ \\
+4  & 21882 & 19695 & $1.11\times$ \\
+8  & 21838 & 19800 & $1.10\times$ \\
+16 & 26181 & 18490 & $1.42\times$ \\
+32 & 19578 & 13868 & $1.41\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_cuda\_gpu\_ivf\_flat\_20260722\_225252.json}.
+
+\subsubsection{GPU\_IVF\_PQ (\texttt{m}=8)}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=8, \texttt{nbits}=8) recall@10}
+\label{tab:hip-cuda-pq8-recall}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\midrule
+1  & 0.26 & 0.25 \\
+4  & 0.35 & 0.35 \\
+8  & 0.37 & 0.37 \\
+16 & 0.38 & 0.38 \\
+32 & 0.38 & 0.38 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=8) QPS
+(speed-up $=$ AMD QPS / CUDA QPS)}
+\label{tab:hip-cuda-pq8-qps}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\midrule
+1  & 24882 & 15401 & $1.62\times$ \\
+4  & 21221 & 19940 & $1.06\times$ \\
+8  & 19766 & 20177 & $0.98\times$ \\
+16 & 23735 & 19141 & $1.24\times$ \\
+32 & 15402 & 14801 & $1.04\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_gpu\_ivf\_pq\_20260723\_190900.json}.
+
+\subsubsection{GPU\_IVF\_PQ (\texttt{m}=16)}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=16, \texttt{nbits}=8) recall@10}
+\label{tab:hip-cuda-pq16-recall}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\midrule
+1  & 0.33 & 0.33 \\
+4  & 0.50 & 0.50 \\
+8  & 0.54 & 0.54 \\
+16 & 0.56 & 0.56 \\
+32 & 0.57 & 0.57 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=16) QPS
+(speed-up $=$ AMD QPS / CUDA QPS)}
+\label{tab:hip-cuda-pq16-qps}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\midrule
+1  & 16388 & 15540 & $1.05\times$ \\
+4  & 21084 & 19716 & $1.07\times$ \\
+8  & 19341 & 19829 & $0.98\times$ \\
+16 & 23566 & 19155 & $1.23\times$ \\
+32 & 15295 & 14717 & $1.04\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_gpu\_ivf\_pq\_20260723\_190933.json}.
+
+\subsubsection{GPU\_IVF\_PQ (\texttt{m}=32)}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=32, \texttt{nbits}=8) recall@10}
+\label{tab:hip-cuda-pq-recall}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\midrule
+1  & 0.36 & 0.36 \\
+4  & 0.60 & 0.60 \\
+8  & 0.67 & 0.67 \\
+16 & 0.71 & 0.71 \\
+32 & 0.73 & 0.73 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=32) QPS
+(speed-up $=$ AMD QPS / CUDA QPS)}
+\label{tab:hip-cuda-pq-qps}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\midrule
+1  & 24273 & 11282 & $2.15\times$ \\
+4  & 20967 & 19714 & $1.06\times$ \\
+8  & 19500 & 19786 & $0.99\times$ \\
+16 & 22954 & 18475 & $1.24\times$ \\
+32 & 14784 & 14144 & $1.05\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_gpu\_ivf\_pq\_20260722\_225328.json}.
+
+\paragraph{How to read HIP vs CUDA.}
+Recall@10 matches on FLAT and PQ (\texttt{m}=8/16/32), so the HIP port returns the same
+answer quality as CUDA on this recipe. QPS differences mainly reflect
+\textbf{which GPU and software stack are faster}
+(7900~XTX + HIP Standalone vs 4080 + CUDA Docker) --- not whether HIP search
+returns wrong neighbors.
+
+\subsection{Library-level hipVS vs cuVS (no Milvus)}
+\label{sec:hipvs-vs-cuvs-lib}
+
+Management ask: compare \textbf{hipVS} and \textbf{cuVS} speed as ANN libraries.
+Section~\ref{sec:hip-vs-cuda} is the \emph{product} path (Milvus $\rightarrow$ Knowhere
+$\rightarrow$ hipVS/cuVS). This subsection isolates the libraries.
+
+\paragraph{Method.}
+Shared Python API (\texttt{import cuvs}; hipVS keeps the cuVS package name).
+Harness: \texttt{scripts/bench\_cuvs\_ivf.py} with wrappers
+\texttt{run\_hipvs\_ivf\_bench.sh} / \texttt{run\_cuvs\_ivf\_bench.sh}.
+Recipe locked to Layer~4: SIFT-1M HDF5, \texttt{nlist}=1024, \texttt{k}=10,
+\texttt{nprobe}$\in\{1,4,8,16,32\}$, indexes \texttt{IVF\_FLAT} and
+\texttt{IVF\_PQ} (\texttt{m}=32 $\mapsto$ cuVS \texttt{pq\_dim}, \texttt{nbits}=8
+$\mapsto$ \texttt{pq\_bits}). Runbook: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}.
+
+\paragraph{Fairness.}
+Same API and recipe; \textbf{different GPUs} (RX~7900~XTX vs RTX~4080).
+Always report recall@10 with QPS. Speed-up $=$ hipVS QPS / cuVS QPS.
+Compare JSON with \texttt{scripts/compare\_cuvs\_lib\_json.py}.
+
+\paragraph{Status.}
+Library \texttt{IVF\_PQ} (\texttt{m}=32) measured 2026-07-23 on both hosts
+(JSON under \texttt{results/lib\_bench/} and \texttt{\$WORKDIR/logs/}).
+Library \texttt{IVF\_FLAT} on AMD: batched search OK; single-query p99 path hits
+\texttt{hipErrorInvalidValue} on gfx1100 --- re-run with \texttt{--p99-sample 0}.
+
+\begin{table}[H]
+\centering
+\caption{Library hipVS vs cuVS --- \texttt{IVF\_PQ} (\texttt{m}=32, \texttt{nbits}=8)
+recall@10 (batched; two decimals)}
+\label{tab:lib-hipvs-cuvs-pq-recall}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{hipVS (7900 XTX)} & \textbf{cuVS (4080)} \\
+\midrule
+1  & 0.35 & 0.35 \\
+4  & 0.59 & 0.59 \\
+8  & 0.67 & 0.67 \\
+16 & 0.71 & 0.71 \\
+32 & 0.72 & 0.72 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Library hipVS vs cuVS --- \texttt{IVF\_PQ} (\texttt{m}=32) QPS
+(speed-up $=$ hipVS QPS / cuVS QPS)}
+\label{tab:lib-hipvs-cuvs-pq-qps}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{hipVS} & \textbf{cuVS} & \textbf{Speed-up} \\
+\midrule
+1  & 1593707 & 4326105 & $0.37\times$ \\
+4  & 1268942 & 2297667 & $0.55\times$ \\
+8  & 710989  & 1411722 & $0.50\times$ \\
+16 & 393742  & 806267  & $0.49\times$ \\
+32 & 217275  & 453316  & $0.48\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{How to read library vs product.}
+Recall matches on the library path too. Raw library QPS is orders of magnitude
+above Milvus (no RPC/Knowhere). On this PQ microbench, cuVS is about
+$\sim$2$\times$ hipVS; under Milvus the same GPUs were $\sim$1$\times$
+(Table~\ref{tab:hip-cuda-pq-qps}) because the service stack dominates.
 
 \section{Metrics matrix}
 
@@ -1390,7 +1704,7 @@ For each backend (Milvus CPU IVF, Milvus GPU IVF), record:
 Index build time & GPU port often breaks here first \\
 Load / cache time & \texttt{cache\_dataset\_on\_device} behavior \\
 recall@10 vs \texttt{nprobe} & Correctness \\
-QPS (serial 10k queries) & Same protocol as CPU harness \\
+QPS (batched 10k / VDBBench concurrent) & Same protocol on CPU and GPU; never mix \\
 p99 latency & Serving angle \\
 GPU memory peak & \texttt{rocm-smi} during build/search \\
 Logs / stack traces & SIGILL, OOM, HIP errors \\
@@ -1411,7 +1725,9 @@ Recommended flow:
   \item Layer~2: Knowhere + HIP; L2 GPU search UT green (Section~\ref{sec:layer2-measured}).
   \item Layer~3: Milvus source build; sealed \texttt{GPU\_IVF\_FLAT} build/load
         (Section~\ref{sec:layer3-measured}).
-  \item Layer~4: \texttt{ann-harness-amd} SIFT-1M \texttt{nprobe} sweep vs CPU Milvus Tables~6--7.
+  \item Layer~4: same-protocol CPU vs GPU tables
+        (batched Table~\ref{tab:layer4-cpu-gpu-batch}, then VDBBench concurrent
+        Table~\ref{tab:layer4-cpu-gpu}).
   \item If recall OK and GPU faster at target points: widen index types + VectorDBBench GPU
         cases.
   \item If not: debug numerics, params, device cache before advancing.
@@ -1445,16 +1761,23 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 
 \section{Immediate next steps (lab host)}
 
-\textbf{Where we are:} Layers~0--4 complete (Section~\ref{sec:layer4-measured}).
-\textbf{What remains:} merge DXC Milvus Layer~3 branch; optional wider indexes / VectorDBBench.
+\textbf{Where we are:} Layers~0--4 complete (Section~\ref{sec:layer4-measured});
+\texttt{GPU\_IVF\_PQ} measured on AMD (Section~\ref{sec:layer4-pq});
+fair HIP vs CUDA on RTX~4080 done (Section~\ref{sec:hip-vs-cuda});
+library hipVS vs cuVS harness ready (Section~\ref{sec:hipvs-vs-cuvs-lib}).
+\textbf{What remains:} capture library JSON on both hosts; optional wider indexes;
+public GitHub packaging.
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Merge DXC} \texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus}
-        (Layer~4 sealed full-SIFT evidence in Table~\ref{tab:layer4-measured}); optional
-        Knowhere nested-\texttt{.cu} follow-up if not landed.
-  \item Re-run: \texttt{bash scripts/run\_milvus\_layer4.sh} (tmux) after rebuilds.
-  \item Optional: VectorDBBench \texttt{milvusgpu*} cases; \texttt{GPU\_IVF\_PQ} / CAGRA.
-  \item Optional triage: CAGRA bitset recall$=0$; IVF\_PQ TopK threshold flakes on gfx1100.
+  \item \textbf{Library microbench:} on AMD and 4080 hosts run
+        \texttt{bash scripts/run\_lib\_bench\_both\_indexes.sh}
+        (runbook \texttt{docs/hipvs\_vs\_cuvs\_bench.md}); file JSON under
+        \texttt{\$WORKDIR/logs/lib\_*.json}.
+  \item Optional: \textbf{CAGRA} smoke + SIFT grid (watch Knowhere bitset gaps).
+  \item Optional: VectorDBBench concurrent on CUDA for industry-tool HIP vs CUDA QPS.
+  \item Copy / publish DXC HIP line notes to public GitHub when Business Value is agreed.
+  \item Optional triage: CAGRA bitset recall$=0$; IVF\_PQ TopK threshold flakes on gfx1100
+        (did not block sealed Layer~4 PQ on AMD).
 \end{enumerate}
 
 \section{References}
@@ -1469,7 +1792,10 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
   \item DXC Knowhere (HIP): \url{https://github.dxc.com/llmkb-internal/knowhere}
   \item DXC Milvus (Layer~3 branch): \url{https://github.dxc.com/llmkb-internal/milvus}
   \item Public Knowhere mirror: \url{https://github.com/konkolchin/knowhere}
-  \item Harness (patches + Layer~2/3 scripts): \url{https://github.com/konkolchin/ann-harness-amd}
+  \item Harness (patches + Layer~2/3/4 scripts): \url{https://github.com/konkolchin/ann-harness-amd}
+  \item CUDA 4080 runbook: \texttt{docs/cuda\_4080\_benchmark\_runbook.md}
+  \item hipVS vs cuVS library bench: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}
+  \item IVF\_PQ AMD$\leftrightarrow$CUDA plan: \texttt{docs/ivf\_pq\_amd\_cuda\_plan.md}
   \item Layer~2 PR notes: \texttt{docs/PR\_knowhere\_amd\_hip\_gfx1100.md}
   \item Layer~3 PR notes: \texttt{docs/PR\_milvus\_amd\_hip\_gfx1100\_layer3.md}
 \end{itemize}

@@ -12,8 +12,10 @@
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{tikz}
+\usepackage{pgfplots}
 \usepackage{hyperref}
 \usetikzlibrary{arrows.meta,shapes.geometric}
+\pgfplotsset{compat=1.18}
 
 \title{Porting Milvus GPU Vector Search to AMD}
 \subtitle{HIP / hipVS / Knowhere --- lab results on RX 7900 XTX}
@@ -143,13 +145,13 @@
   \begin{center}
   \begin{tabular}{@{}lrrrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10 (GPU)} & \textbf{Speed-up} \\
+    \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{Speed-up} \\
     \midrule
-    1  & 22013 & 16982 & 0.382 & $0.77\times$ \\
-    4  & 14509 & 21882 & 0.709 & $1.51\times$ \\
-    8  &  9516 & 21838 & 0.844 & $2.30\times$ \\
-    16 &  5402 & 26181 & 0.934 & $4.85\times$ \\
-    32 &  2749 & 19578 & 0.980 & $7.12\times$ \\
+    1  & 22013 & 16982 & 0.38 & $0.77\times$ \\
+    4  & 14509 & 21882 & 0.71 & $1.51\times$ \\
+    8  &  9516 & 21838 & 0.84 & $2.30\times$ \\
+    16 &  5402 & 26181 & 0.93 & $4.85\times$ \\
+    32 &  2749 & 19578 & 0.98 & $7.12\times$ \\
     \bottomrule
   \end{tabular}
   \end{center}
@@ -177,11 +179,11 @@
     \toprule
     \textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{Speed-up} \\
     \midrule
-    1  & 13884 & 11110 & 0.384 & $0.80\times$ \\
-    4  & 10292 & 11066 & 0.707 & $1.08\times$ \\
-    8  &  7731 & 11110 & 0.841 & $1.44\times$ \\
-    16 &  4893 & 10904 & 0.931 & $2.23\times$ \\
-    32 &  2742 & 10374 & 0.979 & $3.78\times$ \\
+    1  & 13884 & 11110 & 0.38 & $0.80\times$ \\
+    4  & 10292 & 11066 & 0.71 & $1.08\times$ \\
+    8  &  7731 & 11110 & 0.84 & $1.44\times$ \\
+    16 &  4893 & 10904 & 0.93 & $2.23\times$ \\
+    32 &  2742 & 10374 & 0.98 & $3.78\times$ \\
     \bottomrule
   \end{tabular}
   \end{center}
@@ -189,6 +191,346 @@
   \vspace{0.3em}
   \textbf{Takeaway:} GPU HIP holds $\sim$11k QPS as \texttt{nprobe} rises;
   CPU falls off. At high-recall settings, \textbf{$\sim$2--4$\times$}.
+\end{frame}
+
+%----- 5c -----
+\begin{frame}{Next index: GPU\_IVF\_PQ (why)}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \textbf{IVF\_FLAT} (what we led with)
+      \begin{itemize}
+        \item Full float vectors in each list
+        \item Best apples-to-apples CPU$\leftrightarrow$GPU story
+        \item Higher memory
+      \end{itemize}
+      \vspace{0.6em}
+      \textbf{IVF\_PQ} (product path)
+      \begin{itemize}
+        \item Same IVF lists, but vectors are
+              \textbf{product-quantized} (compressed)
+        \item Trade: lower recall, much less memory
+        \item Knob \texttt{m} = number of PQ subspaces
+              (SIFT dim 128 $\Rightarrow$ \texttt{m}$\in\{8,16,32,\ldots\}$)
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{Lab recipe (AMD, 2026-07-21)}
+        \footnotesize
+        Host: RX 7900 XTX (\texttt{gfx1100})\\
+        Index: \texttt{GPU\_IVF\_PQ}\\
+        \texttt{nlist}=1024, \texttt{nbits}=8, \texttt{k}=10\\
+        \texttt{m} $= 8,16,32$\\
+        Batched harness (10k queries / search)\\
+        Sealed path: \texttt{GPU\_CUVS\_IVF\_PQ}
+      \end{block}
+      \vspace{0.4em}
+      {\small Done: same recipe on NVIDIA RTX 4080
+      (see HIP vs CUDA slides).}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+%----- 5c2 -----
+\begin{frame}{What is \texttt{m}? (PQ compression knob)}
+  \vspace{-0.4em}
+  {\footnotesize One float vector has dim $=128$ (SIFT).
+  PQ splits it into \textbf{\texttt{m} equal chunks}; each chunk is replaced by
+  a small code (\texttt{nbits}=8 $\Rightarrow$ 1~byte).}\\[0.25em]
+
+  \centering
+  \begin{tikzpicture}[
+    font=\scriptsize,
+    >=Latex,
+  ]
+    % FLAT row
+    \node[font=\small\bfseries, anchor=east] at (-0.15,2.55) {FLAT};
+    \fill[green!20] (0,2.25) rectangle (11.2,2.85);
+    \draw[thick, green!50!black] (0,2.25) rectangle (11.2,2.85);
+    \node[font=\scriptsize] at (5.6,2.55)
+      {128 floats $\times$ 4\,B $= \mathbf{512}$\,B per vector};
+
+    % m=8
+    \node[font=\small\bfseries, anchor=east] at (-0.15,1.35) {\texttt{m}=8};
+    \foreach \i in {0,...,7} {
+      \fill[orange!25] ({1.4*\i},1.05) rectangle ({1.4*\i+1.3},1.65);
+      \draw[thick, orange!70!black] ({1.4*\i},1.05) rectangle ({1.4*\i+1.3},1.65);
+      \node at ({1.4*\i+0.65},1.35) {16d};
+    }
+    \node[anchor=west, font=\scriptsize] at (11.35,1.35) {$\rightarrow$ 8 codes $= \mathbf{8}$\,B};
+
+    % m=32
+    \node[font=\small\bfseries, anchor=east] at (-0.15,0.15) {\texttt{m}=32};
+    \foreach \i in {0,...,31} {
+      \fill[blue!18] ({0.35*\i},-0.15) rectangle ({0.35*\i+0.32},0.45);
+      \draw[blue!60!black] ({0.35*\i},-0.15) rectangle ({0.35*\i+0.32},0.45);
+    }
+    \node[anchor=west, font=\scriptsize] at (11.35,0.15)
+      {$\rightarrow$ 32 codes $= \mathbf{32}$\,B};
+
+    % arrow meaning
+    \draw[->, thick] (2.8,-0.55) -- (2.8,-1.05);
+    \node[align=left, font=\scriptsize, anchor=west] at (3.0,-0.85)
+      {more chunks $=$ finer codes $=$ \textbf{higher recall}, larger footprint};
+
+    \node[draw=black!40, rounded corners=2pt, fill=gray!8, align=left,
+          font=\scriptsize, anchor=west] at (0,-1.75)
+      {\textbf{Rule of thumb:} larger \texttt{m} $\Rightarrow$ less compression tax
+       (closer to FLAT quality).\\
+       Our lab: \texttt{m}$\in\{8,16,32\}$ --- see recall ladders in Appendix.};
+  \end{tikzpicture}
+\end{frame}
+
+%----- 5g -----
+\begin{frame}{HIP vs CUDA --- fair compare setup}
+  \footnotesize
+  Same client protocol on both GPUs (batched harness, SIFT-1M, \texttt{k}=10,
+  \texttt{nlist}=1024, \texttt{nprobe}=1,4,8,16,32, always \texttt{--flush}).\\[0.35em]
+
+  \begin{center}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    & \textbf{AMD HIP} & \textbf{NVIDIA CUDA} \\
+    \midrule
+    Host & RX 7900 XTX (\texttt{gfx1100}) & RTX 4080 \\
+    Milvus & DXC \texttt{v2.5.4} HIP Standalone
+      & \texttt{milvusdb/milvus:v2.5.4-gpu} \\
+    Indexes & \texttt{GPU\_IVF\_FLAT}, \texttt{GPU\_IVF\_PQ}
+      & same \\
+    PQ knobs & \texttt{m}=8/16/32, \texttt{nbits}=8
+      & same \\
+    Date & 2026-07-17 / 07-21 & 2026-07-22 / 07-23 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  \textbf{How to read the next slides:}
+  plots show QPS vs \texttt{nprobe} (AMD red, NVIDIA green).
+  Detail tables (recall + QPS + speed-up) are in the \textbf{Appendix}.
+\end{frame}
+
+%----- 5g2 library framing -----
+\begin{frame}{hipVS vs cuVS --- library speed (management)}
+  \footnotesize
+  \textbf{Ask:} compare hipVS and cuVS \emph{as libraries} (not via Milvus).\\[0.35em]
+
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{What we built}
+      \begin{itemize}
+        \item Same Python API: \texttt{import cuvs}
+              (hipVS keeps the cuVS name)
+        \item Script: \texttt{scripts/bench\_cuvs\_ivf.py}
+        \item Recipe: SIFT-1M, \texttt{nlist}=1024,
+              \texttt{k}=10, \texttt{nprobe} grid,
+              \texttt{IVF\_FLAT} + \texttt{IVF\_PQ} (\texttt{m}=32)
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.50\textwidth}
+      \begin{block}{Fairness caveat}
+        \footnotesize
+        Peer GPUs, not same silicon:\\
+        RX 7900 XTX (hipVS) vs RTX 4080 (cuVS).\\[0.3em]
+        Report \textbf{QPS + recall@10}.\\
+        Runbook: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}
+      \end{block}
+    \end{column}
+  \end{columns}
+
+  \vspace{0.5em}
+  \textbf{Status (2026-07-23):} library \texttt{IVF\_PQ} (\texttt{m}=32) measured on both
+  GPUs --- recall matched; see next slide.\\
+  {\small Library \texttt{IVF\_FLAT} on AMD: re-run with \texttt{--p99-sample 0}
+  (nq$=$1 path bug on gfx1100). Product-path plots remain the Milvus story.}
+\end{frame}
+
+%----- 5g3 library PQ results -----
+\begin{frame}{Library hipVS vs cuVS --- IVF\_PQ (\texttt{m}=32)}
+  \footnotesize
+  Direct \texttt{cuvs} API (no Milvus). Speed-up $=$ hipVS QPS / cuVS QPS.
+  Recall@10 matches.\\[0.25em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{nprobe}
+      & \textbf{hipVS QPS} & \textbf{cuVS QPS}
+      & \textbf{R@10} & \textbf{Speed-up} \\
+    \midrule
+    1  & 1.59M & 4.33M & 0.35 & $0.37\times$ \\
+    4  & 1.27M & 2.30M & 0.59 & $0.55\times$ \\
+    8  & 0.71M & 1.41M & 0.67 & $0.50\times$ \\
+    16 & 0.39M & 0.81M & 0.71 & $0.49\times$ \\
+    32 & 0.22M & 0.45M & 0.72 & $0.48\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.4em}
+  \textbf{Takeaway:} same answer quality; on this library microbench cuVS is about
+  \textbf{$\sim$2$\times$} hipVS QPS (peer GPUs).\\
+  {\small Product path (Milvus) was $\sim$1$\times$ --- overhead dominates there.
+  Library QPS $\gg$ Milvus QPS on both sides (expected).}
+\end{frame}
+
+%----- 5g4 product path reminder -----
+\begin{frame}{Product path still: HIP vs CUDA under Milvus}
+  \footnotesize
+  Same libs underneath Knowhere --- batched Milvus Layer-4 (earlier slides).
+  Speed-up $=$ AMD QPS / CUDA QPS. Recall matched.\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}llrrr@{}}
+    \toprule
+    \textbf{Index} & \textbf{nprobe}
+      & \textbf{AMD QPS} & \textbf{CUDA QPS} & \textbf{Speed-up} \\
+    \midrule
+    FLAT & 8  & 21838 & 19800 & $1.10\times$ \\
+    FLAT & 32 & 19578 & 13868 & $1.41\times$ \\
+    PQ \texttt{m}=32 & 8  & 19500 & 19786 & $0.99\times$ \\
+    PQ \texttt{m}=32 & 32 & 14784 & 14144 & $1.05\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.45em}
+  \textbf{How to brief management:}
+  \begin{itemize}
+    \item \textbf{Product (Milvus):} AMD competitive / slightly faster
+    \item \textbf{Library (raw hipVS/cuVS PQ):} recall match; cuVS $\sim$2$\times$ QPS
+  \end{itemize}
+\end{frame}
+
+%----- 5h-plot (main) -----
+\begin{frame}{HIP vs CUDA --- GPU\_IVF\_FLAT QPS}
+  \vspace{-0.3em}
+  {\footnotesize Batched SIFT-1M. Recall@10 identical (0.38$\rightarrow$0.98) --- see Appendix.}\\[0.15em]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.92\textwidth,
+      height=0.62\textheight,
+      xlabel={nprobe},
+      ylabel={QPS},
+      xmin=0, xmax=34,
+      ymin=0, ymax=30000,
+      xtick={1,4,8,16,32},
+      ytick={0,5000,10000,15000,20000,25000,30000},
+      grid=both,
+      major grid style={gray!40},
+      minor grid style={gray!15},
+      legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+      thick,
+    ]
+      \addplot[red, mark=*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,16982) (4,21882) (8,21838) (16,26181) (32,19578)
+      };
+      \addlegendentry{AMD (7900 XTX, HIP)}
+      \addplot[green!70!black, mark=square*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,11597) (4,19695) (8,19800) (16,18490) (32,13868)
+      };
+      \addlegendentry{NVIDIA (4080, CUDA)}
+    \end{axis}
+  \end{tikzpicture}
+\end{frame}
+
+%----- PQ m=8 plot -----
+\begin{frame}{HIP vs CUDA --- GPU\_IVF\_PQ (\texttt{m}=8) QPS}
+  \vspace{-0.3em}
+  {\footnotesize Recall@10 matches ($\approx$0.25$\rightarrow$0.38) --- see Appendix.}\\[0.15em]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.92\textwidth,
+      height=0.62\textheight,
+      xlabel={nprobe},
+      ylabel={QPS},
+      xmin=0, xmax=34,
+      ymin=0, ymax=28000,
+      xtick={1,4,8,16,32},
+      ytick={0,5000,10000,15000,20000,25000},
+      grid=both,
+      major grid style={gray!40},
+      minor grid style={gray!15},
+      legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+      thick,
+    ]
+      \addplot[red, mark=*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,24882) (4,21221) (8,19766) (16,23735) (32,15402)
+      };
+      \addlegendentry{AMD (7900 XTX, HIP)}
+      \addplot[green!70!black, mark=square*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,15401) (4,19940) (8,20177) (16,19141) (32,14801)
+      };
+      \addlegendentry{NVIDIA (4080, CUDA)}
+    \end{axis}
+  \end{tikzpicture}
+\end{frame}
+
+%----- PQ m=16 plot -----
+\begin{frame}{HIP vs CUDA --- GPU\_IVF\_PQ (\texttt{m}=16) QPS}
+  \vspace{-0.3em}
+  {\footnotesize Recall@10 matches (0.33$\rightarrow$0.57) --- see Appendix.}\\[0.15em]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.92\textwidth,
+      height=0.62\textheight,
+      xlabel={nprobe},
+      ylabel={QPS},
+      xmin=0, xmax=34,
+      ymin=0, ymax=28000,
+      xtick={1,4,8,16,32},
+      ytick={0,5000,10000,15000,20000,25000},
+      grid=both,
+      major grid style={gray!40},
+      minor grid style={gray!15},
+      legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+      thick,
+    ]
+      \addplot[red, mark=*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,16388) (4,21084) (8,19341) (16,23566) (32,15295)
+      };
+      \addlegendentry{AMD (7900 XTX, HIP)}
+      \addplot[green!70!black, mark=square*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,15540) (4,19716) (8,19829) (16,19155) (32,14717)
+      };
+      \addlegendentry{NVIDIA (4080, CUDA)}
+    \end{axis}
+  \end{tikzpicture}
+\end{frame}
+
+%----- PQ m=32 plot -----
+\begin{frame}{HIP vs CUDA --- GPU\_IVF\_PQ (\texttt{m}=32) QPS}
+  \vspace{-0.3em}
+  {\footnotesize Same PQ recipe. Recall@10 identical (0.36$\rightarrow$0.73) --- see Appendix.}\\[0.15em]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.92\textwidth,
+      height=0.62\textheight,
+      xlabel={nprobe},
+      ylabel={QPS},
+      xmin=0, xmax=34,
+      ymin=0, ymax=28000,
+      xtick={1,4,8,16,32},
+      ytick={0,5000,10000,15000,20000,25000},
+      grid=both,
+      major grid style={gray!40},
+      minor grid style={gray!15},
+      legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+      thick,
+    ]
+      \addplot[red, mark=*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,24273) (4,20967) (8,19500) (16,22954) (32,14784)
+      };
+      \addlegendentry{AMD (7900 XTX, HIP)}
+      \addplot[green!70!black, mark=square*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (1,11282) (4,19714) (8,19786) (16,18475) (32,14144)
+      };
+      \addlegendentry{NVIDIA (4080, CUDA)}
+    \end{axis}
+  \end{tikzpicture}
 \end{frame}
 
 %----- 6 -----
@@ -379,42 +721,46 @@
 \end{frame}
 
 %----- 9 -----
-\begin{frame}{Where it lives and next steps}
+\begin{frame}{Where it lives}
   \begin{block}{Repositories (use v2.5.4, not amd/main)}
     \begin{itemize}
-      \item Milvus HIP: \texttt{github.dxc.com/llmkb-internal/milvus} $\rightarrow$ \textbf{v2.5.4}
-      \item Knowhere HIP: \texttt{github.dxc.com/llmkb-internal/knowhere} $\rightarrow$ \textbf{2.5}
-      \item Harness / docs: \texttt{github.com/konkolchin/ann-harness-amd}
-            (\texttt{docs/readme.txt}, porting plan PDF)
+      \item Milvus HIP:
+            \href{https://github.dxc.com/llmkb-internal/milvus/tree/v2.5.4}{\texttt{github.dxc.com/llmkb-internal/milvus}}
+            $\rightarrow$ \textbf{v2.5.4}
+      \item Knowhere HIP:
+            \href{https://github.dxc.com/llmkb-internal/knowhere}{\texttt{github.dxc.com/llmkb-internal/knowhere}}
+            $\rightarrow$ \textbf{2.5}
+      \item Harness / docs:
+            \href{https://github.com/konkolchin/ann-harness-amd}{\texttt{github.com/konkolchin/ann-harness-amd}}
+            (\href{https://github.dxc.com/llmkb-internal/milvus/blob/v2.5.4/docs/AMD_HIP_PORT.md}{\texttt{docs/AMD\_HIP\_PORT.md}},
+            porting plan PDF)
     \end{itemize}
   \end{block}
 
-  \begin{columns}[T]
-    \begin{column}{0.55\textwidth}
-      \begin{block}{Next}
-        \begin{itemize}
-          \item Coworker rebuild + HIP vs \textbf{CUDA Milvus} (v2.5.4)
-          \item Optional: IVF\_PQ / CAGRA; later public GitHub port
-        \end{itemize}
-      \end{block}
-    \end{column}
-    \begin{column}{0.42\textwidth}
-      \begin{block}{Delivery note}
-        Cursor + \textbf{Grok 4.5} agent:\\
-        about 2 weeks actual vs\\
-        6--8 weeks without.
-      \end{block}
-    \end{column}
-  \end{columns}
+  \begin{block}{Delivery note}
+    Cursor + \textbf{Grok 4.5} agent:
+    about 2 weeks actual vs 6--8 weeks without.
+  \end{block}
 \end{frame}
 
 %----- 10 -----
-\begin{frame}{Appendix --- index types beyond FLAT}
-  \footnotesize
-  This deck uses \textbf{IVF\_FLAT} / \textbf{GPU\_IVF\_FLAT}
-  (full vectors in each list). Other common options:
+\begin{frame}{Next steps}
+  \begin{block}{Immediate}
+    \begin{itemize}
+      \item Capture hipVS / cuVS \textbf{library} JSON on both lab hosts
+            (\texttt{docs/hipvs\_vs\_cuvs\_bench.md})
+      \item Optional: CAGRA (next index after FLAT / PQ)
+      \item Copy repo from DXC GitHub to public GitHub
+      \item Optional: VectorDBBench concurrent on CUDA for
+            industry-tool HIP vs CUDA QPS
+    \end{itemize}
+  \end{block}
 
-  \vspace{0.4em}
+  \footnotesize
+  Measured: AMD HIP CPU vs GPU (\textbf{IVF\_FLAT}), AMD \textbf{GPU\_IVF\_PQ}
+  (\texttt{m}=8/16/32), and fair \textbf{HIP vs CUDA} on RTX~4080
+  (FLAT + PQ \texttt{m}=8/16/32 --- recall matched).\\[0.3em]
+
   \begin{center}
   \begin{tabular}{@{}lll@{}}
     \toprule
@@ -425,7 +771,7 @@
       & Best quality for a given scan; more memory \\
     Product quantization
       & \texttt{IVF\_PQ}, \texttt{GPU\_IVF\_PQ}
-      & Much smaller / faster; slight recall loss \\
+      & Much smaller; recall loss (see Appendix) \\
     Scalar quantization
       & SQ8 / similar
       & Smaller than FLAT; simpler than PQ \\
@@ -438,10 +784,296 @@
     \bottomrule
   \end{tabular}
   \end{center}
+\end{frame}
+
+%===== Appendix: backup detail (Q\&A) =====
+\appendix
+\begin{frame}{Appendix --- backup detail}
+  \begin{itemize}
+    \item AMD HIP: \texttt{GPU\_IVF\_PQ} detail tables / vs FLAT
+    \item HIP vs CUDA (product path): FLAT + PQ recall / QPS
+    \item Library hipVS vs cuVS: harness ready; fill after lab JSON
+      (\texttt{docs/hipvs\_vs\_cuvs\_bench.md})
+  \end{itemize}
+  \vspace{0.8em}
+  {\small Same batched SIFT-1M recipe as the main deck.
+  Speed-up $=$ AMD QPS / CUDA QPS.}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ detail tables (m = 8 / 16 / 32)}
+  \scriptsize
+  AMD HIP, sealed \texttt{GPU\_CUVS\_IVF\_PQ}, 2026-07-21.\\[0.25em]
+
+  \begin{columns}[T]
+    \begin{column}{0.32\textwidth}
+      \centering\textbf{m=8}\\[0.2em]
+      \begin{tabular}{@{}lrr@{}}
+        \toprule
+        \textbf{np} & \textbf{QPS} & \textbf{R@10} \\
+        \midrule
+        1  & 24882 & 0.26 \\
+        4  & 21221 & 0.35 \\
+        8  & 19766 & 0.37 \\
+        16 & 23735 & 0.38 \\
+        32 & 15402 & 0.38 \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \centering\textbf{m=16}\\[0.2em]
+      \begin{tabular}{@{}lrr@{}}
+        \toprule
+        \textbf{np} & \textbf{QPS} & \textbf{R@10} \\
+        \midrule
+        1  & 16388 & 0.33 \\
+        4  & 21084 & 0.50 \\
+        8  & 19341 & 0.54 \\
+        16 & 23566 & 0.56 \\
+        32 & 15295 & 0.57 \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \centering\textbf{m=32}\\[0.2em]
+      \begin{tabular}{@{}lrr@{}}
+        \toprule
+        \textbf{np} & \textbf{QPS} & \textbf{R@10} \\
+        \midrule
+        1  & 24273 & 0.36 \\
+        4  & 20967 & 0.60 \\
+        8  & 19500 & 0.67 \\
+        16 & 22954 & 0.71 \\
+        32 & 14784 & 0.73 \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+  \end{columns}
 
   \vspace{0.5em}
-  {\small FLAT first keeps CPU vs GPU an apples-to-apples algorithm story;
-  PQ / CAGRA are natural next steps.}
+  {\footnotesize JSON under \texttt{\$WORKDIR/logs/layer4\_gpu\_ivf\_pq\_*.json}.
+  Logs confirm \texttt{GPU\_CUVS\_IVF\_PQ} save + \texttt{CGO\_LOAD}.}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ recall@10 vs FLAT (AMD HIP)}
+  \footnotesize
+  SIFT-1M, \texttt{nlist}=1024, \texttt{nbits}=8, batched harness.\\
+  Higher \texttt{m} $\Rightarrow$ less compression $\Rightarrow$ better recall.\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{nprobe}
+      & \textbf{m=8} & \textbf{m=16} & \textbf{m=32}
+      & \textbf{FLAT} \\
+    \midrule
+    1  & 0.26 & 0.33 & 0.36 & 0.38 \\
+    4  & 0.35 & 0.50 & 0.60 & 0.71 \\
+    8  & 0.37 & 0.54 & 0.67 & 0.84 \\
+    16 & 0.38 & 0.56 & 0.71 & 0.93 \\
+    32 & 0.38 & 0.57 & 0.73 & 0.98 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.4em}
+  \textbf{Takeaway:} recall rises with \texttt{nprobe} and with \texttt{m};
+  PQ stays below FLAT (expected compression tax).\\
+  {\small HIP vs CUDA peer done for \texttt{m}=8/16/32.}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ QPS vs FLAT (AMD HIP)}
+  \footnotesize
+  Same runs as previous slide (batched 10k-query search).\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{nprobe}
+      & \textbf{m=8} & \textbf{m=16} & \textbf{m=32}
+      & \textbf{FLAT} \\
+    \midrule
+    1  & 24882 & 16388 & 24273 & 16982 \\
+    4  & 21221 & 21084 & 20967 & 21882 \\
+    8  & 19766 & 19341 & 19500 & 21838 \\
+    16 & 23735 & 23566 & 22954 & 26181 \\
+    32 & 15402 & 15295 & 14784 & 19578 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.4em}
+  \textbf{Takeaway:} on this protocol, PQ QPS is in the same ballpark as FLAT
+  ($\sim$15k--25k). The PQ story is mainly \textbf{memory / footprint},
+  not a large QPS jump vs FLAT.
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_FLAT recall@10}
+  \footnotesize
+  Batched 10k-query search. Values rounded to two decimals.\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \midrule
+    1  & 0.38 & 0.38 \\
+    4  & 0.71 & 0.71 \\
+    8  & 0.84 & 0.84 \\
+    16 & 0.93 & 0.93 \\
+    32 & 0.98 & 0.98 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  \textbf{Takeaway:} recall ladders are \textbf{identical} ---
+  sealed HIP \texttt{GPU\_IVF\_FLAT} matches CUDA quality on this recipe.
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_FLAT QPS}
+  \footnotesize
+  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+      & \textbf{Speed-up AMD vs NVIDIA} \\
+    \midrule
+    1  & 16982 & 11597 & $1.46\times$ \\
+    4  & 21882 & 19695 & $1.11\times$ \\
+    8  & 21838 & 19800 & $1.10\times$ \\
+    16 & 26181 & 18490 & $1.42\times$ \\
+    32 & 19578 & 13868 & $1.41\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.4em}
+  {\small QPS differences reflect GPU + stack speed, not wrong neighbors
+  (recall already matched).}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=8) recall@10}
+  \footnotesize
+  \begin{center}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \midrule
+    1  & 0.26 & 0.25 \\
+    4  & 0.35 & 0.35 \\
+    8  & 0.37 & 0.37 \\
+    16 & 0.38 & 0.38 \\
+    32 & 0.38 & 0.38 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  \vspace{0.4em}
+  {\small Ladders match within rounding (nprobe 1: 0.26 vs 0.25).}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=8) QPS}
+  \footnotesize
+  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
+  \begin{center}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+      & \textbf{Speed-up AMD vs NVIDIA} \\
+    \midrule
+    1  & 24882 & 15401 & $1.62\times$ \\
+    4  & 21221 & 19940 & $1.06\times$ \\
+    8  & 19766 & 20177 & $0.98\times$ \\
+    16 & 23735 & 19141 & $1.24\times$ \\
+    32 & 15402 & 14801 & $1.04\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=16) recall@10}
+  \footnotesize
+  \begin{center}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \midrule
+    1  & 0.33 & 0.33 \\
+    4  & 0.50 & 0.50 \\
+    8  & 0.54 & 0.54 \\
+    16 & 0.56 & 0.56 \\
+    32 & 0.57 & 0.57 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  \vspace{0.4em}
+  {\small Recall ladders \textbf{match}.}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=16) QPS}
+  \footnotesize
+  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
+  \begin{center}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+      & \textbf{Speed-up AMD vs NVIDIA} \\
+    \midrule
+    1  & 16388 & 15540 & $1.05\times$ \\
+    4  & 21084 & 19716 & $1.07\times$ \\
+    8  & 19341 & 19829 & $0.98\times$ \\
+    16 & 23566 & 19155 & $1.23\times$ \\
+    32 & 15295 & 14717 & $1.04\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=32) recall@10}
+  \footnotesize
+  Same PQ recipe: \texttt{m}=32, \texttt{nbits}=8, \texttt{nlist}=1024.\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \midrule
+    1  & 0.36 & 0.36 \\
+    4  & 0.60 & 0.60 \\
+    8  & 0.67 & 0.67 \\
+    16 & 0.71 & 0.71 \\
+    32 & 0.73 & 0.73 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.5em}
+  \textbf{Takeaway:} PQ recall ladders also \textbf{match}.
+\end{frame}
+
+\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=32) QPS}
+  \footnotesize
+  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+      & \textbf{Speed-up AMD vs NVIDIA} \\
+    \midrule
+    1  & 24273 & 11282 & $2.15\times$ \\
+    4  & 20967 & 19714 & $1.06\times$ \\
+    8  & 19500 & 19786 & $0.99\times$ \\
+    16 & 22954 & 18475 & $1.24\times$ \\
+    32 & 14784 & 14144 & $1.05\times$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.4em}
+  {\small Same reading as FLAT: port correctness = recall match;
+  QPS = hardware/stack comparison.}
 \end{frame}
 
 \end{document}

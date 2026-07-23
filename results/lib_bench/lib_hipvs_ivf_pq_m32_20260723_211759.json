@@ -1,0 +1,19 @@
+{
+  "protocol": "library_cuvs_api",
+  "backend": "hipvs",
+  "gpu_name": "gfx1100",
+  "host": "amd-rx7900xtx",
+  "index_type": "IVF_PQ",
+  "nlist": 1024,
+  "m": 32,
+  "nbits": 8,
+  "k": 10,
+  "source_json": "/home/amd/rocmds_check_gfx1100/logs/lib_hipvs_ivf_pq_m32_20260723_211759.json",
+  "nprobe_results": [
+    {"nprobe": 1, "qps": 1593707.28, "recall@10": 0.3477},
+    {"nprobe": 4, "qps": 1268942.45, "recall@10": 0.5918},
+    {"nprobe": 8, "qps": 710989.11, "recall@10": 0.6672},
+    {"nprobe": 16, "qps": 393742.08, "recall@10": 0.7086},
+    {"nprobe": 32, "qps": 217275.31, "recall@10": 0.7247}
+  ]
+}
