@@ -92,20 +92,34 @@ NO_DEFAULT_FILTERS=1 bash scripts/run_hipvs_gtest_timing.sh
 
 ## 2) NVIDIA — cuVS (RTX 4080)
 
-Build cuVS with tests (same binary names). Point `GTEST_DIR` if not under
-`$WORKDIR/cuvs/cpp/build/gtests`.
+Pip/`cuvs-cu12` does **not** ship gtest binaries. You need a **source** build with
+`tests` (same as AMD), or an existing `NEIGHBORS_ANN_IVF_FLAT_TEST`.
 
 ```bash
 export WORKDIR=~/milvus_cuda_4080
 export CUDA_VISIBLE_DEVICES=0
 
-cd ~/ann-harness-amd   # or clone on the CUDA box
-# If needed:
-#   GTEST_DIR=/path/to/cuvs/cpp/build/gtests \
-bash scripts/run_cuvs_gtest_timing.sh
+# Already built somewhere?
+find "$WORKDIR" "$HOME" -name NEIGHBORS_ANN_IVF_FLAT_TEST -type f 2>/dev/null | head
+
+# If empty — clone + build float IVF suite only:
+mkdir -p "$WORKDIR" && cd "$WORKDIR"
+test -d cuvs || git clone --depth 1 --branch branch-25.02 https://github.com/rapidsai/cuvs.git
+cd cuvs
+# Prefer a RAPIDS-compatible env if you have one; otherwise system CUDA + cmake.
+./build.sh libcuvs tests \
+  --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST \
+  --gpu-arch="89-real"
+
+ls -la "$(pwd)/cpp/build/gtests/NEIGHBORS_ANN_IVF_FLAT_TEST"
+
+cd ~/ann-harness-amd
+GTEST_DIR=$WORKDIR/cuvs/cpp/build/gtests \
+  GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST \
+  bash scripts/run_cuvs_gtest_timing.sh
 ```
 
-Use the **same** `GTEST_BINARIES` / filter mode as AMD.
+Use the **same** float filter as AMD (script default). No `USE_WARPSIZE_32` on CUDA.
 
 ---
 

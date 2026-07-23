@@ -41,6 +41,17 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 if [ ! -d "${GTEST_DIR}" ]; then
   echo "ERROR: gtest dir not found. Set GTEST_DIR to cuVS cpp/build/gtests" >&2
   echo "  searched under WORKDIR=${WORKDIR}" >&2
+  echo "  Find existing binaries:" >&2
+  echo "    find \"${WORKDIR}\" \"${HOME}\" -name NEIGHBORS_ANN_IVF_FLAT_TEST -type f 2>/dev/null | head" >&2
+  echo "  Or rebuild float IVF suite (~98 cases):" >&2
+  echo "    # locate / clone cuVS, then:" >&2
+  echo "    cd /path/to/cuvs" >&2
+  echo "    ./build.sh libcuvs tests \\" >&2
+  echo "      --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST \\" >&2
+  echo "      --gpu-arch=\"90-real;89-real;80-real\"   # or just 89-real for RTX 4080" >&2
+  echo "    GTEST_DIR=\$(pwd)/cpp/build/gtests \\" >&2
+  echo "      GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST \\" >&2
+  echo "      bash ${REPO_ROOT}/scripts/run_cuvs_gtest_timing.sh" >&2
   exit 1
 fi
 
