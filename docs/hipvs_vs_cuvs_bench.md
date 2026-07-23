@@ -104,9 +104,23 @@ rm -rf cpp/build python/libcuvs/build python/cuvs/build 2>/dev/null || true
 pip install -U pip
 pip install -i https://test.pypi.org/simple --extra-index-url https://pypi.org/simple \
   "hip-python-as-cuda"
+
+# amd-hipvs also needs amd-libraft==0.1.* (not the 0.0.2 on public PyPI).
+# Prefer AMD's ROCm index (match your ROCm; lab used 7.0.2):
+pip install "amd-libraft==0.1.*" "amd-pylibraft==0.1.*" \
+  --extra-index-url=https://pypi.amd.com/rocm-7.0.2/simple
+# If wheels need Python 3.12, recreate the venv with 3.12 and reinstall cupy + libhipvs.
+# Or build from your Layer-1 hipRAFT tree (same gfx1100 pins as above):
+#   cd "${WORKDIR}/hipRAFT"   # or hipRaft — check path
+#   ./build.sh libraft pylibraft --compile-lib --gpu-arch="gfx1100"
+#   # or: cd python/libraft && pip install -v --no-build-isolation .
+
 # then finish the high-level package:
 cd "${WORKDIR}/hipVS/python/cuvs"
 pip install -v --no-build-isolation --no-cache-dir .
+# Important: leave the source tree before importing (else incomplete src wins on sys.path):
+cd ~
+python3 -c "import cuvs; from cuvs.neighbors import ivf_flat; print('OK', cuvs.__file__)"
 
 # If build.sh python target is awkward, install wheels manually:
 #   cd "${WORKDIR}/hipVS/python/libcuvs" && pip install -v --no-build-isolation .
