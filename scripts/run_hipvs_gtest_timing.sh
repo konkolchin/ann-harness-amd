@@ -47,12 +47,12 @@ if [ -z "${GTEST_DIR}" ] || [ ! -d "${GTEST_DIR}" ]; then
   echo "  Or rebuild (float IVF suite ≈ 98 cases — enough for manager compare):" >&2
   echo "    cd \"${HIPVS_ROOT}\"" >&2
   echo "    export INSTALL_PREFIX=\"\${WORKDIR}/install\"" >&2
+  echo "    # --gpu-arch MUST be last; nested quotes on --cmake-args (bash trap)" >&2
   echo "    INSTALL_PREFIX=\$INSTALL_PREFIX ./build.sh libcuvs tests \\" >&2
-  echo "      --gpu-arch=gfx1100 \\" >&2
-  echo "      '--cmake-args=-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF' \\" >&2
+  echo "      '--cmake-args=\"-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF\"' \\" >&2
+  echo "      --gpu-arch=\"gfx1100\" \\" >&2
   echo "      --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST" >&2
-  echo "    GTEST_DIR=\${HIPVS_ROOT}/cpp/build/gtests \\" >&2
-  echo "      GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST \\" >&2
+  echo "    GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST \\" >&2
   echo "      bash ${REPO_ROOT}/scripts/run_hipvs_gtest_timing.sh" >&2
   exit 1
 fi

@@ -55,11 +55,12 @@ export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
 # Already built?
 find "$WORKDIR" -name NEIGHBORS_ANN_IVF_FLAT_TEST -type f 2>/dev/null | head
 
-# If empty — rebuild float IVF suite only (~98 cases; enough for manager ask):
+# If empty — rebuild float IVF suite only (~98 cases; enough for manager ask).
+# --gpu-arch MUST be last. Nested quotes on --cmake-args (bash trap).
 cd "$HIPVS_ROOT"
 INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
-  --gpu-arch=gfx1100 \
-  '--cmake-args=-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF' \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF"' \
+  --gpu-arch="gfx1100" \
   --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST
 
 ls -la "$HIPVS_ROOT/cpp/build/gtests/NEIGHBORS_ANN_IVF_FLAT_TEST"
