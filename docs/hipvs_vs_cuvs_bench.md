@@ -86,15 +86,19 @@ export CMAKE_PREFIX_PATH="${WORKDIR}/install:${ROCM_HOME}:${CMAKE_PREFIX_PATH:-}
 #   export CMAKE_PREFIX_PATH="$INSTALL_PREFIX:$ROCM_HOME"
 
 cd "${WORKDIR}/hipVS"
-# Pin discrete GPU only (host also has Raphael iGPU gfx1036 — breaks cmake arch detect)
+# Pin discrete GPU only (host also has Raphael iGPU gfx1036 — breaks cmake/pip arch detect)
 export ROCR_VISIBLE_DEVICES=0
 export HIP_VISIBLE_DEVICES=0
 export AMDGPU_TARGETS=gfx1100
 export CMAKE_HIP_ARCHITECTURES=gfx1100
-# Drop stale CMake cache from the failed dual-arch configure:
-rm -rf cpp/build CMakeCache.txt 2>/dev/null || true
-# Rebuild python bindings against the installed libcuvs:
-./build.sh libcuvs python
+export GPU_TARGETS=gfx1100
+# Force the *Python wheel* CMake (amd-libhipvs) too — env alone is not enough:
+export CMAKE_ARGS="-DCMAKE_HIP_ARCHITECTURES=gfx1100 -DAMDGPU_TARGETS=gfx1100 -DGPU_TARGETS=gfx1100"
+export SKBUILD_CMAKE_ARGS="${CMAKE_ARGS}"
+# Drop stale CMake / pip build dirs from failed dual-arch configures:
+rm -rf cpp/build python/libcuvs/build python/cuvs/build 2>/dev/null || true
+# Rebuild with explicit arch flag (do NOT use NATIVE / auto-detect):
+./build.sh libcuvs python --gpu-arch="gfx1100"
 
 # If build.sh python target is awkward, install wheels manually:
 #   cd "${WORKDIR}/hipVS/python/libcuvs" && pip install -v --no-build-isolation .
