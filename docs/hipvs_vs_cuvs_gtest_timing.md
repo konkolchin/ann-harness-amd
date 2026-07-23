@@ -108,8 +108,9 @@ test -d cuvs || git clone --depth 1 --branch branch-25.02 https://github.com/rap
 cd cuvs
 # Prefer a RAPIDS-compatible env if you have one; otherwise system CUDA + cmake.
 ./build.sh libcuvs tests \
-  --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST \
-  --gpu-arch="89-real"
+  --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST
+# branch-25.02 has no --gpu-arch; defaults to NATIVE (detects RTX 4080).
+# Optional pin: '--cmake-args="-DCMAKE_CUDA_ARCHITECTURES=89"'
 
 ls -la "$(pwd)/cpp/build/gtests/NEIGHBORS_ANN_IVF_FLAT_TEST"
 

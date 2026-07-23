@@ -47,8 +47,8 @@ if [ ! -d "${GTEST_DIR}" ]; then
   echo "    # locate / clone cuVS, then:" >&2
   echo "    cd /path/to/cuvs" >&2
   echo "    ./build.sh libcuvs tests \\" >&2
-  echo "      --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST \\" >&2
-  echo "      --gpu-arch=\"90-real;89-real;80-real\"   # or just 89-real for RTX 4080" >&2
+  echo "      --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST" >&2
+  echo "    # (branch-25.02: no --gpu-arch; uses NATIVE / local GPU)" >&2
   echo "    GTEST_DIR=\$(pwd)/cpp/build/gtests \\" >&2
   echo "      GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST \\" >&2
   echo "      bash ${REPO_ROOT}/scripts/run_cuvs_gtest_timing.sh" >&2
