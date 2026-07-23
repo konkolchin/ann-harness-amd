@@ -45,24 +45,71 @@ git pull --ff-only origin master
 
 ## 1) AMD — hipVS Python (RX 7900 XTX)
 
-hipVS installs the **same** `import cuvs` package name.
+Layer‑1 already built **C++** `libcuvs` for Knowhere/Milvus. The library microbench needs
+the **Python** package too (`import cuvs` — same name as NVIDIA). **No conda** — use `venv`.
 
-Layer-1 style (from porting doc):
+### 1a) Venv + ROCm CuPy + deps
 
 ```bash
-# After hipRAFT + hipVS C++ install under $INSTALL_PREFIX:
-cd $WORKDIR/hipVS
-./build.sh libcuvs python   # or project-equivalent Python build
-python3 -c "import cuvs, cupy; print('ok', cuvs.__file__)"
+export WORKDIR=~/rocmds_check_gfx1100
+export ROCM_HOME=/opt/rocm
+export PATH="$ROCM_HOME/bin:$PATH"
+
+# Prefer 3.11+ if available
+python3 -m venv ~/hipvs-bench-venv
+source ~/hipvs-bench-venv/bin/activate
+pip install -U pip setuptools wheel
+pip install numpy h5py cython scikit-build-core
+
+# CuPy for ROCm (AMD-hosted wheel when available):
+pip install amd-cupy --extra-index-url=https://pypi.amd.com/simple \
+  || {
+    echo "No amd-cupy wheel — building CuPy from source (slow)..."
+    export CUPY_INSTALL_USE_HIP=1
+    export HCC_AMDGPU_TARGET=gfx1100
+    pip install cupy --no-cache-dir
+  }
+
+python3 -c "import cupy; print('cupy OK', cupy.__version__)"
 ```
 
-CuPy must be the **ROCm** build matching your ROCm version.
+### 1b) Build / install hipVS Python into that venv
 
-Run FLAT then PQ:
+C++ hipVS must already be installed (Layer‑1). Then:
+
+```bash
+source ~/hipvs-bench-venv/bin/activate
+export WORKDIR=~/rocmds_check_gfx1100
+export ROCM_HOME=/opt/rocm
+export CMAKE_PREFIX_PATH="${WORKDIR}/install:${ROCM_HOME}:${CMAKE_PREFIX_PATH:-}"
+# If your Layer-1 prefix differs, set it explicitly:
+#   export CMAKE_PREFIX_PATH="$INSTALL_PREFIX:$ROCM_HOME"
+
+cd "${WORKDIR}/hipVS"
+# Rebuild python bindings against the installed libcuvs:
+./build.sh libcuvs python
+
+# If build.sh python target is awkward, install wheels manually:
+#   cd "${WORKDIR}/hipVS/python/libcuvs" && pip install -v --no-build-isolation .
+#   cd "${WORKDIR}/hipVS/python/cuvs"    && pip install -v --no-build-isolation .
+
+python3 -c "import cuvs, cupy; print('ok', cuvs.__file__)"
+python3 -c "from cuvs.neighbors import ivf_flat; print('neighbors OK')"
+```
+
+You may also need:
+
+```bash
+export LD_LIBRARY_PATH="${WORKDIR}/install/lib:${ROCM_HOME}/lib:${LD_LIBRARY_PATH:-}"
+```
+
+### 1c) Run the library bench
 
 ```bash
 cd ~/ann-harness-amd
+source ~/hipvs-bench-venv/bin/activate
 export WORKDIR=~/rocmds_check_gfx1100
+export LD_LIBRARY_PATH="${WORKDIR}/install/lib:${ROCM_HOME:-/opt/rocm}/lib:${LD_LIBRARY_PATH:-}"
 
 bash scripts/run_hipvs_ivf_bench.sh
 INDEX_TYPE=IVF_PQ M=32 bash scripts/run_hipvs_ivf_bench.sh
