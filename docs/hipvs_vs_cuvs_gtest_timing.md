@@ -41,23 +41,44 @@ Scripts:
 
 ## 1) AMD — hipVS (RX 7900 XTX)
 
-hipVS must already be built **with tests** and `USE_WARPSIZE_32=ON` for gfx1100
-(Layer 1 / 1.5). Binaries under e.g. `$WORKDIR/hipVS/cpp/build/gtests`.
+hipVS must be built **with tests** and `USE_WARPSIZE_32=ON` for gfx1100
+(Layer 1 / 1.5). If `cpp/build/gtests` was cleaned, rebuild first.
+
+### 1a) Locate or rebuild gtests
 
 ```bash
 export WORKDIR=~/rocmds_check_gfx1100
-export ROCR_VISIBLE_DEVICES=0
-export HIP_VISIBLE_DEVICES=0
+export HIPVS_ROOT=$WORKDIR/hipVS
+export INSTALL_PREFIX=$WORKDIR/install
+export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
 
+# Already built?
+find "$WORKDIR" -name NEIGHBORS_ANN_IVF_FLAT_TEST -type f 2>/dev/null | head
+
+# If empty — rebuild float IVF suite only (~98 cases; enough for manager ask):
+cd "$HIPVS_ROOT"
+INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
+  --gpu-arch=gfx1100 \
+  '--cmake-args=-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF' \
+  --limit-tests=NEIGHBORS_ANN_IVF_FLAT_TEST
+
+ls -la "$HIPVS_ROOT/cpp/build/gtests/NEIGHBORS_ANN_IVF_FLAT_TEST"
+```
+
+### 1b) Time them
+
+```bash
 cd ~/ann-harness-amd
-bash scripts/run_hipvs_gtest_timing.sh
+GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST \
+  bash scripts/run_hipvs_gtest_timing.sh
 # JSON → $WORKDIR/logs/gtest_timing_hipvs_*.json
 ```
 
-Float-IVF-only (exactly the 98-case packer story):
+If the binary lives elsewhere:
 
 ```bash
-GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST bash scripts/run_hipvs_gtest_timing.sh
+GTEST_DIR=/path/to/gtests GTEST_BINARIES=NEIGHBORS_ANN_IVF_FLAT_TEST \
+  bash scripts/run_hipvs_gtest_timing.sh
 ```
 
 Full binaries (no float-only filter):
