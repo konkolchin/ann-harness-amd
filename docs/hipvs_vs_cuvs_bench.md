@@ -86,6 +86,13 @@ export CMAKE_PREFIX_PATH="${WORKDIR}/install:${ROCM_HOME}:${CMAKE_PREFIX_PATH:-}
 #   export CMAKE_PREFIX_PATH="$INSTALL_PREFIX:$ROCM_HOME"
 
 cd "${WORKDIR}/hipVS"
+# Pin discrete GPU only (host also has Raphael iGPU gfx1036 — breaks cmake arch detect)
+export ROCR_VISIBLE_DEVICES=0
+export HIP_VISIBLE_DEVICES=0
+export AMDGPU_TARGETS=gfx1100
+export CMAKE_HIP_ARCHITECTURES=gfx1100
+# Drop stale CMake cache from the failed dual-arch configure:
+rm -rf cpp/build CMakeCache.txt 2>/dev/null || true
 # Rebuild python bindings against the installed libcuvs:
 ./build.sh libcuvs python
 
