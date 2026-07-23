@@ -108,9 +108,10 @@ def main() -> None:
         from cuvs.neighbors import ivf_flat, ivf_pq
     except ImportError as exc:
         raise SystemExit(
-            "Need cupy + cuvs Python packages.\n"
-            "  NVIDIA: conda/pip RAPIDS cuVS\n"
-            "  AMD:    build hipVS Python (import still named cuvs)\n"
+            "Need cupy + cuvs Python packages with neighbors importable.\n"
+            "  NVIDIA (pip): source scripts/cuvs_pip_ld_path.sh then "
+            "from cuvs.neighbors import ivf_flat\n"
+            "  AMD: build hipVS Python (import still named cuvs)\n"
             f"Import error: {exc}"
         ) from exc
 

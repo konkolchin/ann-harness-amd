@@ -113,30 +113,33 @@ pip install "numpy" "h5py" \
   --extra-index-url=https://pypi.nvidia.com
 
 python3 -c "import cuvs, cupy; print('ok', getattr(cuvs,'__version__','?'), cupy.__version__)"
+# neighbors needs libcuvs_c.so on LD_LIBRARY_PATH (pip wheels):
+source ~/ann-harness-amd/scripts/cuvs_pip_ld_path.sh
+python3 -c "from cuvs.neighbors import ivf_flat; print('neighbors OK')"
 nvidia-smi -L
 ```
 
 If your toolkit/driver reports **CUDA 13.x**, use `cuvs-cu13` and the matching CuPy CUDA 13 wheel instead.
 
-### 2c) Conda alternative
-
-```bash
-# miniforge/mamba already installed
-mamba create -n cuvs-bench -c rapidsai -c conda-forge python=3.12 cuvs cupy h5py numpy cuda-version=12.9
-mamba activate cuvs-bench
-python -c "import cuvs, cupy; print('ok')"
-```
-
-### 2d) Run the library bench
+### 2c) Run the library bench
 
 ```bash
 cd ~/ann-harness-amd
 source ~/cuvs-bench-venv/bin/activate    # must have import cuvs
 export WORKDIR=~/milvus_cuda_4080
+# wrappers source scripts/cuvs_pip_ld_path.sh automatically
 
 bash scripts/run_cuvs_ivf_bench.sh
 INDEX_TYPE=IVF_PQ M=32 bash scripts/run_cuvs_ivf_bench.sh
 # or: bash scripts/run_lib_bench_both_indexes.sh
+```
+
+If you still see `libcuvs_c.so: cannot open shared object file`:
+
+```bash
+find ~/cuvs-bench-venv -name 'libcuvs_c.so*'
+source ~/ann-harness-amd/scripts/cuvs_pip_ld_path.sh
+echo "$LD_LIBRARY_PATH" | tr ':' '\n' | head
 ```
 
 JSON under `$WORKDIR/logs/lib_cuvs_*.json`.

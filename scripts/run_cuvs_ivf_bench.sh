@@ -27,6 +27,10 @@ RESULTS_JSON="${RESULTS_JSON:-${LOG_DIR}/lib_${TAG}_${TS}.json}"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
+# pip wheels put libcuvs_c.so under site-packages; dlopen needs LD_LIBRARY_PATH
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/scripts/cuvs_pip_ld_path.sh"
+
 if [ ! -f "${DATA_PATH}" ]; then
   echo "ERROR: missing ${DATA_PATH}" >&2
   exit 1
@@ -38,7 +42,7 @@ echo "    index=${INDEX_TYPE} nlist=${NLIST} m=${M} nbits=${NBITS}"
 echo "    results=${RESULTS_JSON}"
 
 cd "${REPO_ROOT}"
-python3 -c "import cuvs, cupy; print('cuvs', getattr(cuvs,'__version__','?'), 'cupy', cupy.__version__)"
+python3 -c "from cuvs.neighbors import ivf_flat; import cupy; print('cuvs neighbors OK', cupy.__version__)"
 
 EXTRA=()
 if [ "${INDEX_TYPE}" = "IVF_PQ" ]; then
