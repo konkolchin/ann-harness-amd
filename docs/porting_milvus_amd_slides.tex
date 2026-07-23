@@ -309,68 +309,58 @@
   Detail tables (recall + QPS + speed-up) are in the \textbf{Appendix}.
 \end{frame}
 
-%----- 5g2 library framing -----
-\begin{frame}{hipVS vs cuVS --- library speed (management)}
+%----- 5g2 library framing (management) -----
+\begin{frame}{hipVS vs cuVS --- is the \emph{library} competitive?}
   \footnotesize
-  \textbf{Ask:} compare hipVS and cuVS \emph{as libraries} (not via Milvus).\\[0.35em]
+  \textbf{Context:} hipVS now runs on RDNA3 with \texttt{warp\_size}=32
+  (\texttt{USE\_WARPSIZE\_32}). Manager ask: is that lib competitive with cuVS?\\[0.35em]
 
-  \begin{columns}[T]
-    \begin{column}{0.48\textwidth}
-      \textbf{What we built}
-      \begin{itemize}
-        \item Same Python API: \texttt{import cuvs}
-              (hipVS keeps the cuVS name)
-        \item Script: \texttt{scripts/bench\_cuvs\_ivf.py}
-        \item Recipe: SIFT-1M, \texttt{nlist}=1024,
-              \texttt{k}=10, \texttt{nprobe} grid,
-              \texttt{IVF\_FLAT} + \texttt{IVF\_PQ} (\texttt{m}=32)
-      \end{itemize}
-    \end{column}
-    \begin{column}{0.50\textwidth}
-      \begin{block}{Fairness caveat}
-        \footnotesize
-        Peer GPUs, not same silicon:\\
-        RX 7900 XTX (hipVS) vs RTX 4080 (cuVS).\\[0.3em]
-        Report \textbf{QPS + recall@10}.\\
-        Runbook: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}
-      \end{block}
-    \end{column}
-  \end{columns}
+  \textbf{Method (no index jargon):}
+  \begin{itemize}
+    \item Take the \textbf{same 100+ unit tests} both hipVS and cuVS ship
+    \item Keep correctness (pass/fail)
+    \item Add \textbf{wall-clock timing} per case (Google Test already prints ms)
+    \item Report geo-mean / median of hipVS ms $\,/\,$ cuVS ms on peer GPUs
+  \end{itemize}
 
-  \vspace{0.5em}
-  \textbf{Status (2026-07-23):} library \texttt{IVF\_PQ} (\texttt{m}=32) measured on both
-  GPUs --- recall matched; see next slide.\\
-  {\small Library \texttt{IVF\_FLAT} on AMD: re-run with \texttt{--p99-sample 0}
-  (nq$=$1 path bug on gfx1100). Product-path plots remain the Milvus story.}
+  \vspace{0.35em}
+  \begin{block}{Fairness}
+    \footnotesize
+    Same tests, same API surface.\\
+    GPUs differ: RX 7900 XTX vs RTX 4080 (peer-class, not identical silicon).\\
+    Unit tests are correctness-sized --- not a production QPS claim.
+  \end{block}
+
+  \vspace{0.3em}
+  Runbook: \texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}\\
+  {\small Status: harness ready; fill numbers after lab JSON on both boxes.}
 \end{frame}
 
-%----- 5g3 library PQ results -----
-\begin{frame}{Library hipVS vs cuVS --- IVF\_PQ (\texttt{m}=32)}
+%----- 5g3 gtest timing results (placeholder) -----
+\begin{frame}{Shared unit-test timing --- results}
   \footnotesize
-  Direct \texttt{cuvs} API (no Milvus). Speed-up $=$ hipVS QPS / cuVS QPS.
-  Recall@10 matches.\\[0.25em]
+  Ratio $=$ hipVS case-ms $/$ cuVS case-ms.~$<1$ $=$ hip faster; $\sim 1$ $=$ parity.\\[0.3em]
 
   \begin{center}
-  \begin{tabular}{@{}lrrrr@{}}
+  \begin{tabular}{@{}lrr@{}}
     \toprule
-    \textbf{nprobe}
-      & \textbf{hipVS QPS} & \textbf{cuVS QPS}
-      & \textbf{R@10} & \textbf{Speed-up} \\
+    \textbf{Metric} & \textbf{hipVS (7900 XTX)} & \textbf{cuVS (4080)} \\
     \midrule
-    1  & 1.59M & 4.33M & 0.35 & $0.37\times$ \\
-    4  & 1.27M & 2.30M & 0.59 & $0.55\times$ \\
-    8  & 0.71M & 1.41M & 0.67 & $0.50\times$ \\
-    16 & 0.39M & 0.81M & 0.71 & $0.49\times$ \\
-    32 & 0.22M & 0.45M & 0.72 & $0.48\times$ \\
+    Cases pass & \textit{TBD} & \textit{TBD} \\
+    Sum case ms & \textit{TBD} & \textit{TBD} \\
+    Geo-mean ratio (hip/cu) & \multicolumn{2}{c}{\textit{TBD}} \\
+    Median ratio (hip/cu) & \multicolumn{2}{c}{\textit{TBD}} \\
     \bottomrule
   \end{tabular}
   \end{center}
 
-  \vspace{0.4em}
-  \textbf{Takeaway:} same answer quality; on this library microbench cuVS is about
-  \textbf{$\sim$2$\times$} hipVS QPS (peer GPUs).\\
-  {\small Product path (Milvus) was $\sim$1$\times$ --- overhead dominates there.
-  Library QPS $\gg$ Milvus QPS on both sides (expected).}
+  \vspace{0.45em}
+  \textbf{Manager line (after fill):}
+  \textit{``RDNA3 warp32 hipVS passes the same suite; wall time is
+  \underline{\hspace{1.2cm}}$\times$ cuVS on peer GPUs.''}\\[0.35em]
+
+  {\small Engineers: optional SIFT Python microbench still in
+  \texttt{docs/hipvs\_vs\_cuvs\_bench.md} --- not the management brief.}
 \end{frame}
 
 %----- 5g4 product path reminder -----
@@ -397,7 +387,8 @@
   \textbf{How to brief management:}
   \begin{itemize}
     \item \textbf{Product (Milvus):} AMD competitive / slightly faster
-    \item \textbf{Library (raw hipVS/cuVS PQ):} recall match; cuVS $\sim$2$\times$ QPS
+    \item \textbf{Library:} same unit-test suite + timing
+          (not a custom IVF recipe) --- fill next
   \end{itemize}
 \end{frame}
 
@@ -747,8 +738,9 @@
 \begin{frame}{Next steps}
   \begin{block}{Immediate}
     \begin{itemize}
-      \item Capture hipVS / cuVS \textbf{library} JSON on both lab hosts
-            (\texttt{docs/hipvs\_vs\_cuvs\_bench.md})
+      \item Run shared gtest timing on both lab hosts
+            (\texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}); fill manager slide
+      \item Optional engineer microbench: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}
       \item Optional: CAGRA (next index after FLAT / PQ)
       \item Copy repo from DXC GitHub to public GitHub
       \item Optional: VectorDBBench concurrent on CUDA for
@@ -792,7 +784,8 @@
   \begin{itemize}
     \item AMD HIP: \texttt{GPU\_IVF\_PQ} detail tables / vs FLAT
     \item HIP vs CUDA (product path): FLAT + PQ recall / QPS
-    \item Library hipVS vs cuVS: harness ready; fill after lab JSON
+    \item Library competitive?: shared gtest timing
+      (\texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}); SIFT microbench is appendix/engineer only
       (\texttt{docs/hipvs\_vs\_cuvs\_bench.md})
   \end{itemize}
   \vspace{0.8em}

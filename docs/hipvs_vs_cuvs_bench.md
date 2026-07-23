@@ -1,5 +1,9 @@
 # hipVS vs cuVS — library speed microbench
 
+> **Management brief uses a different method:** shared gtest suite + wall-clock
+> timing (`docs/hipvs_vs_cuvs_gtest_timing.md`). This SIFT Python microbench is
+> for engineers; do not lead with IVF_FLAT/PQ recipes to the manager.
+
 Goal: compare **hipVS** (AMD ROCm) and **cuVS** (NVIDIA CUDA) **directly** via the
 shared Python `cuvs` API — **no Milvus / Knowhere**.
 
