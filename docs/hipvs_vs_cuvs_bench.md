@@ -100,6 +100,14 @@ rm -rf cpp/build python/libcuvs/build python/cuvs/build 2>/dev/null || true
 # Rebuild with explicit arch flag (do NOT use NATIVE / auto-detect):
 ./build.sh libcuvs python --gpu-arch="gfx1100"
 
+# If amd-hipvs fails on missing hip-python-as-cuda:
+pip install -U pip
+pip install -i https://test.pypi.org/simple --extra-index-url https://pypi.org/simple \
+  "hip-python-as-cuda"
+# then finish the high-level package:
+cd "${WORKDIR}/hipVS/python/cuvs"
+pip install -v --no-build-isolation --no-cache-dir .
+
 # If build.sh python target is awkward, install wheels manually:
 #   cd "${WORKDIR}/hipVS/python/libcuvs" && pip install -v --no-build-isolation .
 #   cd "${WORKDIR}/hipVS/python/cuvs"    && pip install -v --no-build-isolation .
