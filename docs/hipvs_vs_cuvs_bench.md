@@ -111,6 +111,9 @@ pip install "numpy" "h5py" \
   "cupy-cuda12x" \
   "cuvs-cu12" \
   --extra-index-url=https://pypi.nvidia.com
+# Optional if CuPy later asks for CUDA headers:
+#   pip install "cupy-cuda12x[ctk]"
+# or: export CUDA_PATH=/usr/local/cuda
 
 python3 -c "import cuvs, cupy; print('ok', getattr(cuvs,'__version__','?'), cupy.__version__)"
 # neighbors needs libcuvs_c.so on LD_LIBRARY_PATH (pip wheels):

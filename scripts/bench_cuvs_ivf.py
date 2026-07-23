@@ -69,6 +69,17 @@ def sync_resources(resources) -> None:
         resources.sync()
 
 
+def device_ids_to_numpy(neighbors, cp_mod) -> np.ndarray:
+    """Copy ANN neighbor ids to host int64 without CuPy JIT (no CUDA headers)."""
+    # cuVS often returns a DLPack / CAI wrapper; prefer .get() on a cupy view.
+    if hasattr(neighbors, "__cuda_array_interface__"):
+        return np.asarray(cp_mod.asarray(neighbors).get(), dtype=np.int64)
+    if hasattr(neighbors, "copy_to_host"):
+        return np.asarray(neighbors.copy_to_host(), dtype=np.int64)
+    arr = np.asarray(neighbors)
+    return arr.astype(np.int64, copy=False)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="hipVS/cuVS library IVF microbench")
     parser.add_argument("--data", default=DEFAULT_DATA_PATH, help="sift-128-euclidean.hdf5")
@@ -215,7 +226,7 @@ def main() -> None:
         elapsed = time.perf_counter() - t0
         qps = xq.shape[0] / elapsed
 
-        pred = cp.asnumpy(neighbors).astype(np.int64)
+        pred = device_ids_to_numpy(neighbors, cp)
         r = recall_at_k(pred, gt, args.k)
 
         lat_ms: list[float] = []
