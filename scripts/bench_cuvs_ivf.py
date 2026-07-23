@@ -231,13 +231,29 @@ def main() -> None:
 
         lat_ms: list[float] = []
         sample_n = min(args.p99_sample, xq.shape[0])
-        for i in range(sample_n):
-            q = xq_g[i : i + 1]
-            s0 = time.perf_counter()
-            search_mod.search(search_params, index, q, args.k, **search_kw)
-            _sync()
-            lat_ms.append((time.perf_counter() - s0) * 1000.0)
+        p99_err = None
+        try:
+            for i in range(sample_n):
+                # Some hipVS/gfx1100 builds crash on n_queries=1; use a tiny batch.
+                end = min(i + 1, xq_g.shape[0])
+                start = max(0, end - 1)
+                if end - start < 1:
+                    break
+                # Prefer 2-row slice when possible (avoids nq=1 path bugs).
+                if xq_g.shape[0] >= 2:
+                    q = xq_g[i : i + 2] if i + 2 <= xq_g.shape[0] else xq_g[i - 1 : i + 1]
+                else:
+                    q = xq_g[start:end]
+                s0 = time.perf_counter()
+                search_mod.search(search_params, index, q, args.k, **search_kw)
+                _sync()
+                lat_ms.append((time.perf_counter() - s0) * 1000.0)
+        except Exception as exc:  # noqa: BLE001 - p99 is optional
+            p99_err = str(exc)
+            lat_ms = []
         p99 = float(np.percentile(lat_ms, 99)) if lat_ms else float("nan")
+        if p99_err:
+            print(f"  (p99 skipped: {p99_err.splitlines()[0][:120]})")
 
         print(f"nprobe={nprobe:2d} qps={qps:8.1f} p99_ms={p99:7.2f} recall@{args.k}={r:.4f}")
         results["nprobe_results"].append(
@@ -247,6 +263,7 @@ def main() -> None:
                 f"recall@{args.k}": r,
                 "p99_ms": p99,
                 "batch_search_s": elapsed,
+                "p99_error": p99_err,
             }
         )
 

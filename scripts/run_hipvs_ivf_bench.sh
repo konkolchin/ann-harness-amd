@@ -56,12 +56,15 @@ EXTRA=()
 if [ "${INDEX_TYPE}" = "IVF_PQ" ]; then
   EXTRA+=(--m "${M}" --nbits "${NBITS}")
 fi
+# hipVS on gfx1100 can hit hipErrorInvalidValue on n_queries=1 (p99 path); skip by default
+P99_SAMPLE="${P99_SAMPLE:-0}"
 
 python3 scripts/bench_cuvs_ivf.py \
   --backend hipvs \
   --index-type "${INDEX_TYPE}" \
   --nlist "${NLIST}" \
   --nprobes "${NPROBES}" \
+  --p99-sample "${P99_SAMPLE}" \
   --data "${DATA_PATH}" \
   --results-json "${RESULTS_JSON}" \
   "${EXTRA[@]}"
