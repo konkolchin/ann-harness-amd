@@ -49,7 +49,8 @@
   \end{itemize}
 
   \vspace{0.5em}
-  {\footnotesize Not a Milvus product-path compare --- that is $\sim$1$\times$ (see last slides).}
+  {\footnotesize Not a product-path speed claim --- SIFT Milvus is stack-limited
+  (see later slides). Fair Milvus NVIDIA-ahead hunt: GIST PQ.}
 \end{frame}
 
 %----- setup -----
@@ -164,9 +165,10 @@
 \end{frame}
 
 %----- QPS plot -----
-\begin{frame}{QPS --- hipVS vs cuVS (IVF\_PQ $m{=}32$)}
+\begin{frame}{QPS --- hipVS vs cuVS (IVF\_PQ $m=32$)}
   \vspace{-0.2em}
-  {\footnotesize Batched search. Higher is faster.}\\[0.1em]
+  {\footnotesize Batched search. Higher is faster.
+  {\color{red}AMD~7900} / {\color{green!60!black}NVIDIA~4080}.}\\[0.1em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
@@ -181,14 +183,14 @@
       grid=major,
       major grid style={gray!30},
     ]
-      \addplot+[thick,mark=*,blue] coordinates {
+      \addplot[thick,red,mark=*,mark size=2.5pt] coordinates {
         (1,1593707) (4,1268942) (8,710989) (16,393742) (32,217275)
       };
-      \addlegendentry{hipVS (7900 XTX)}
-      \addplot+[thick,mark=square*,red] coordinates {
+      \addlegendentry{AMD hipVS (7900 XTX)}
+      \addplot[thick,green!60!black,mark=square*,mark size=2.5pt] coordinates {
         (1,4326105) (4,2297667) (8,1411722) (16,806267) (32,453316)
       };
-      \addlegendentry{cuVS (RTX 4080)}
+      \addlegendentry{NVIDIA cuVS (RTX 4080)}
     \end{axis}
   \end{tikzpicture}
 \end{frame}
@@ -211,13 +213,13 @@
       grid=major,
       major grid style={gray!30},
     ]
-      \addplot+[thick,mark=*,teal] coordinates {
+      \addplot[thick,red,mark=*,mark size=2.5pt] coordinates {
         (1,0.368) (4,0.552) (8,0.504) (16,0.488) (32,0.479)
       };
       \addplot[dashed,gray,thick] coordinates {(0,1) (34,1)};
       \node[anchor=west,gray,font=\small] at (axis cs:20,1.05) {parity};
-      \addplot[dashed,teal!60!black] coordinates {(0,0.5) (34,0.5)};
-      \node[anchor=west,teal!60!black,font=\small] at (axis cs:20,0.55) {$\sim$0.5$\times$};
+      \addplot[dashed,red!50!black] coordinates {(0,0.5) (34,0.5)};
+      \node[anchor=west,red!50!black,font=\small] at (axis cs:20,0.55) {$\sim$0.5$\times$};
     \end{axis}
   \end{tikzpicture}
 \end{frame}
@@ -225,7 +227,7 @@
 %----- recall -----
 \begin{frame}{Recall@10 --- same on both}
   \vspace{-0.2em}
-  {\footnotesize Quality tracks; the gap is throughput, not accuracy.}\\[0.1em]
+  {\footnotesize Curves overlap ($\Delta{<}0.002$). Markers: filled~{\color{red}AMD}, open~{\color{green!60!black}NVIDIA}.}\\[0.1em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
@@ -240,76 +242,87 @@
       grid=major,
       major grid style={gray!30},
     ]
-      \addplot+[thick,mark=*,blue] coordinates {
-        (1,0.3477) (4,0.5918) (8,0.6672) (16,0.7086) (32,0.7247)
-      };
-      \addlegendentry{hipVS}
-      \addplot+[thick,mark=square*,red] coordinates {
+      % Draw NVIDIA first (under), AMD on top --- values match within noise
+      \addplot[
+        thick,dashed,green!60!black,
+        mark=square*,
+        mark size=3.2pt,
+        mark options={solid,fill=white,draw=green!60!black},
+      ] coordinates {
         (1,0.3463) (4,0.5911) (8,0.6673) (16,0.7085) (32,0.7249)
       };
-      \addlegendentry{cuVS}
+      \addlegendentry{NVIDIA cuVS}
+      \addplot[
+        thick,red,
+        mark=*,
+        mark size=2.2pt,
+      ] coordinates {
+        (1,0.3477) (4,0.5918) (8,0.6672) (16,0.7086) (32,0.7247)
+      };
+      \addlegendentry{AMD hipVS}
     \end{axis}
   \end{tikzpicture}
 \end{frame}
 
 %----- library vs milvus -----
-\begin{frame}{Library vs Milvus (same GPUs, IVF\_PQ $m{=}32$)}
+\begin{frame}{SIFT Milvus is stack-limited (not a speed verdict)}
   \footnotesize
-  Same peer GPUs and PQ recipe. \textbf{Library} $=$ direct \texttt{cuvs} API;
+  Same peer GPUs, IVF\_PQ $m{=}32$. \textbf{Library} $=$ direct \texttt{cuvs} API;
   \textbf{Milvus} $=$ product path (RPC + Knowhere).\\[0.3em]
 
   \begin{center}
   \begin{tabular}{@{}llrrrr@{}}
     \toprule
     \textbf{Path} & \textbf{nprobe}
-      & \textbf{AMD 7900 QPS} & \textbf{NVIDIA QPS}
+      & \textbf{{\color{red}AMD} QPS} & \textbf{{\color{green!60!black}NVIDIA} QPS}
       & \textbf{AMD/NVIDIA} & \textbf{Scale} \\
     \midrule
     Library & 8  & 0.71M & 1.41M & $0.50\times$ & --- \\
     Library & 32 & 0.22M & 0.45M & $0.48\times$ & --- \\
     \midrule
-    Milvus  & 8  & 19500 & 19786 & $0.99\times$ & $\sim$36$\times$ below lib \\
-    Milvus  & 32 & 14784 & 14144 & $1.05\times$ & $\sim$15$\times$ below lib \\
+    Milvus SIFT & 8  & 19500 & 19786 & $0.99\times$ & $\sim$36$\times$ below lib \\
+    Milvus SIFT & 32 & 14784 & 14144 & $1.05\times$ & $\sim$15$\times$ below lib \\
     \bottomrule
   \end{tabular}
   \end{center}
 
   \vspace{0.35em}
   {\scriptsize
-  ``Scale'' $=$ how much lower Milvus QPS is than library QPS on the same GPU
-  (order-of-magnitude; AMD column).}\\[0.25em]
+  ``Scale'' $=$ how much lower Milvus QPS is than library QPS (AMD column).
+  SIFT product path hides the library gap --- do \textbf{not} call this
+  ``AMD competitive on ANN.''}\\[0.25em]
 
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
       \begin{block}{Library}
         \footnotesize
         Kernels dominate.\\
-        hipVS $\sim$0.5$\times$ cuVS.\\
+        hipVS $\sim$0.5$\times$ cuVS (PQ).\\
         QPS in the $10^5$--$10^6$ range.
       \end{block}
     \end{column}
     \begin{column}{0.48\textwidth}
-      \begin{block}{Milvus}
+      \begin{block}{Milvus SIFT}
         \footnotesize
         RPC / stack dominate.\\
-        AMD $\sim$1$\times$ NVIDIA.\\
-        QPS $\sim$15k--20k.
+        Ratio $\sim$1$\times$ is expected.\\
+        Need GPU-heavy recipe next.
       \end{block}
     \end{column}
   \end{columns}
 \end{frame}
 
 %----- product contrast -----
-\begin{frame}{Contrast: under Milvus the gap disappears}
+\begin{frame}{SIFT product path --- recall OK, speed inconclusive}
   \footnotesize
-  Same GPUs, batched SIFT-1M \textbf{product path} (Knowhere + Milvus).
-  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.35em]
+  Batched SIFT-1M Milvus (Knowhere + RPC). Speed-up $=$ AMD QPS / CUDA QPS.\\
+  Valid for \textbf{port correctness}; \textbf{not} for ``who is faster at ANN.''\\[0.35em]
 
   \begin{center}
   \begin{tabular}{@{}llrrr@{}}
     \toprule
     \textbf{Index} & \textbf{nprobe}
-      & \textbf{AMD 7900 QPS} & \textbf{CUDA QPS} & \textbf{Speed-up} \\
+      & \textbf{{\color{red}AMD} QPS} & \textbf{{\color{green!60!black}CUDA} QPS} & \textbf{Speed-up} \\
     \midrule
     IVF\_FLAT & 8  & 21838 & 19800 & $1.10\times$ \\
     IVF\_FLAT & 32 & 19578 & 13868 & $1.41\times$ \\
@@ -320,10 +333,13 @@
   \end{center}
 
   \vspace{0.5em}
-  \begin{block}{Why both can be true}
+  \begin{block}{Next fair Milvus speed compare}
     \footnotesize
-    Library microbench: ratio is kernel-dependent (PQ $\sim$0.5$\times$; FLAT heavy $\sim$1.3$\times$).\\
-    Product path: RPC / Knowhere / batching dominate $\Rightarrow$ AMD $\sim$1$\times$ on SIFT FLAT/PQ.
+    \textbf{GIST-1M} (960-d) + \texttt{GPU\_IVF\_PQ} $m{=}32$,
+    \texttt{nprobe}$\in\{8,16,32,64,128\}$ --- same client both GPUs.\\
+    Goal: AMD/NVIDIA $\le\sim$0.85$\times$ at matched recall
+    (runbook: \texttt{docs/milvus\_amd\_behind\_nvidia\_plan.md}).
+    Results slot: \texttt{results/milvus\_gist\_pq/}.
   \end{block}
 \end{frame}
 
@@ -333,22 +349,21 @@
     \item \textbf{RDNA3 hipVS works} (\texttt{warp\_size}=32) --- answers match cuVS.
     \item \textbf{Raw library:} ratio is kernel-dependent ---
           IVF\_PQ $m{=}32$ $\sim$0.5$\times$; IVF\_FLAT high-\texttt{nprobe} $\sim$1.3$\times$.
-    \item \textbf{In Milvus:} AMD \textbf{competitive} ($\sim$1$\times$); hipVS is not the
-          product-path bottleneck on SIFT FLAT/PQ today.
+    \item \textbf{Milvus SIFT:} stack-limited --- $\sim$1$\times$ is \textbf{not}
+          proof of ANN parity. Fair product speed trial = \textbf{GIST PQ} (pending lab).
   \end{enumerate}
 
   \vspace{0.6em}
   \begin{center}
     \large
-    Correct port. Library gap depends on workload;\\[0.15em]
-    product path already peer-competitive for FLAT/PQ.
+    Correct port. Library gap is real on PQ.\\[0.15em]
+    Product-path speed needs a GPU-heavy Milvus recipe.
   \end{center}
 
   \vspace{0.5em}
   {\footnotesize
-  Lab dates 2026-07-23 (PQ) / 2026-07-27 (FLAT heavy).
-  Details: \texttt{docs/hipvs\_vs\_cuvs\_bench.md},
-  \texttt{results/lib\_bench/}.}
+  Lab dates 2026-07-23 (lib PQ) / 2026-07-27 (lib FLAT heavy).
+  GIST Milvus: \texttt{docs/milvus\_amd\_behind\_nvidia\_plan.md}.}
 \end{frame}
 
 \end{document}

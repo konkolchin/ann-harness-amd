@@ -169,6 +169,34 @@ On CUDA: match **recall ladder** first; then compare QPS at the same nprobe.
 
 ---
 
+## 6) GIST-1M GPU_IVF_PQ (GPU-heavy — fair NVIDIA-ahead hunt)
+
+SIFT Layer-4 is stack-dominated (AMD≈CUDA). For a **Milvus** compare where
+GPU kernels matter, use GIST-960 + high nprobe. Full plan:
+[`docs/milvus_amd_behind_nvidia_plan.md`](milvus_amd_behind_nvidia_plan.md).
+
+```bash
+cd ~/ann-harness-amd && git pull
+mkdir -p data
+test -f data/gist-960-euclidean.hdf5 || \
+  wget -c https://ann-benchmarks.com/gist-960-euclidean.hdf5 \
+    -O data/gist-960-euclidean.hdf5
+
+export WORKDIR=~/milvus_cuda_4080
+source ~/milvus-bench-venv/bin/activate
+bash scripts/start_milvus_cuda_gpu_docker.sh
+
+# Smoke then full (tmux; long insert/index)
+SMOKE=1 bash scripts/run_milvus_layer4_gist_pq.sh
+bash scripts/run_milvus_layer4_gist_pq.sh
+# JSON: $WORKDIR/logs/layer4_gist_gpu_ivf_pq_*.json
+```
+
+Compare to AMD JSON with `scripts/compare_milvus_layer4_json.py`.
+Target: **AMD/CUDA ≤ ~0.85×** at matched recall.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |

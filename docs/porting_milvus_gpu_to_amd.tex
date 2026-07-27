@@ -2,6 +2,7 @@
 
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{booktabs}
+\usepackage{xcolor}
 \usepackage{tabularx}
 \usepackage{graphicx}
 \usepackage{float}
@@ -40,9 +41,11 @@ and \texttt{GPU\_IVF\_PQ}; full SIFT-1M FLAT recall@10 $0.38\rightarrow0.98$; fa
 batched $\sim$5--7$\times$, VDBBench concurrent $\sim$2--4$\times$ at high \texttt{nprobe}).
 Fair HIP vs CUDA on RTX~4080 (\texttt{milvusdb/milvus:v2.5.4-gpu}): FLAT and PQ
 \texttt{m}=32 recall ladders \textbf{match} AMD. Library hipVS vs cuVS
-(\texttt{IVF\_PQ} $m{=}32$): recall match; hipVS $\sim$0.5$\times$ cuVS QPS; under Milvus
-AMD $\sim$1$\times$ --- Section~\ref{sec:hipvs-vs-cuvs-lib}.
-See Sections~\ref{sec:layer-progress}, \ref{sec:layer4-pq}, \ref{sec:hip-vs-cuda}.
+(\texttt{IVF\_PQ} $m{=}32$): recall match; hipVS $\sim$0.5$\times$ cuVS QPS; Milvus SIFT
+is stack-limited ($\sim$1$\times$, not an ANN-speed verdict). Fair Milvus
+NVIDIA-ahead hunt: GIST PQ --- Section~\ref{sec:milvus-gist-pq}.
+See Sections~\ref{sec:layer-progress}, \ref{sec:layer4-pq}, \ref{sec:hip-vs-cuda},
+\ref{sec:hipvs-vs-cuvs-lib}.
 \end{abstract}
 
 \tableofcontents
@@ -1800,23 +1803,71 @@ Milvus  & 32 & 14784 & 14144 & $1.05\times$ & $\sim$15$\times$ \\
 \end{table}
 
 \paragraph{Is hipVS the bottleneck in Milvus?}
-On this SIFT product path: \textbf{no}.
-Evidence: (1)~library path shows cuVS $\sim$2$\times$ hipVS;
-(2)~Milvus path shows AMD $\sim$1$\times$ NVIDIA;
+On the measured \textbf{SIFT} product path: \textbf{no} (stack dominates).
+Evidence: (1)~library path shows cuVS $\sim$2$\times$ hipVS on PQ;
+(2)~Milvus SIFT path shows AMD $\sim$1$\times$ NVIDIA;
 (3)~Milvus QPS is $\sim$15--36$\times$ below library QPS on the same GPU.
-End-to-end time is dominated by the service stack (RPC, Knowhere, batching),
-not by hipVS vs cuVS kernel time.
-\textbf{Caveat:} a thinner client stack or a much heavier GPU index could make the
-library the limiter later; this claim is for the measured Milvus+SIFT path.
+That $\sim$1$\times$ is \textbf{not} a fair ANN-speed verdict --- it is a
+stack-overhead verdict.
+\textbf{Fair product-path speed trial:} GIST-1M + \texttt{GPU\_IVF\_PQ}
+(Section~\ref{sec:milvus-gist-pq}).
 
 \paragraph{How to brief.}
 \begin{itemize}[leftmargin=*]
   \item RDNA3 hipVS (\texttt{warp\_size}=32) is \textbf{correct} (recall match).
   \item Raw library: ratio depends on kernel --- PQ $m{=}32$ $\sim$0.5$\times$;
         FLAT high-\texttt{nprobe} $\sim$1.3$\times$ on peer GPUs.
-  \item Under Milvus: AMD \textbf{competitive} ($\sim$1$\times$); hipVS is not the
-        product-path bottleneck today (SIFT FLAT/PQ).
+  \item Milvus SIFT: stack-limited $\sim$1$\times$ --- do not call this ANN parity.
+  \item Fair Milvus speed compare (NVIDIA-ahead hunt): GIST PQ
+        (Section~\ref{sec:milvus-gist-pq}; lab pending).
 \end{itemize}
+
+\subsection{Fair Milvus speed: GIST-1M + GPU\_IVF\_PQ}
+\label{sec:milvus-gist-pq}
+
+Goal: product-path QPS where GPU kernels dominate, so a cuVS advantage can
+appear under Milvus (same client both GPUs).
+
+\begin{table}[H]
+\centering
+\caption{Freeze --- GIST Milvus HIP↔CUDA (NVIDIA-ahead hunt)}
+\label{tab:gist-milvus-freeze}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Field} & \textbf{Value} \\
+\midrule
+Dataset & GIST-1M (\texttt{gist-960-euclidean.hdf5}, 960-d) \\
+Index & \texttt{GPU\_IVF\_PQ}, $m{=}32$, $nbits{=}8$, $nlist{=}1024$, flush \\
+Search & $k{=}10$; \texttt{nprobe}$\in\{8,16,32,64,128\}$ \\
+Client & \texttt{scripts/run\_milvus\_hdf5.py} (batched) \\
+Script & \texttt{scripts/run\_milvus\_layer4\_gist\_pq.sh} \\
+Compare & \texttt{scripts/compare\_milvus\_layer4\_json.py} \\
+Success & matched recall; AMD/CUDA QPS $\le\sim 0.85\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Runbook: \texttt{docs/milvus\_amd\_behind\_nvidia\_plan.md}.
+Results dir: \texttt{results/milvus\_gist\_pq/}.
+
+\begin{table}[H]
+\centering
+\caption{Milvus GIST \texttt{GPU\_IVF\_PQ} ($m{=}32$) --- HIP vs CUDA
+(speed-up $=$ AMD QPS / CUDA QPS). \textbf{Lab pending} (hosts unreachable
+from agent; fill after lab).}
+\label{tab:milvus-gist-pq-qps}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{{\color{red}AMD 7900}} & \textbf{{\color{green!60!black}CUDA 4080}} & \textbf{Speed-up} \\
+\midrule
+8   & --- & --- & --- \\
+16  & --- & --- & --- \\
+32  & --- & --- & --- \\
+64  & --- & --- & --- \\
+128 & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Metrics matrix}
 

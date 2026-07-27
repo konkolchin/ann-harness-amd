@@ -87,7 +87,8 @@ parser.add_argument(
     "--m",
     type=int,
     default=16,
-    help="PQ sub-quantizers (IVF_PQ / GPU_IVF_PQ); must divide vector dim (SIFT=128 ? 8/16/32/64)",
+    help="PQ sub-quantizers (IVF_PQ / GPU_IVF_PQ); must divide vector dim "
+    "(SIFT-128: 8/16/32/64; GIST-960: e.g. 32)",
 )
 parser.add_argument(
     "--nbits",
@@ -158,7 +159,8 @@ d = xb.shape[1]
 print(f"xb={xb.shape}, xq={xq.shape}, gt={gt.shape}, dim={d}")
 if "PQ" in args.index_type and d % args.m != 0:
     raise SystemExit(
-        f"PQ m={args.m} must divide dim={d} (try m in {{8,16,32,64}} for SIFT-128)"
+        f"PQ m={args.m} must divide dim={d} "
+        f"(SIFT-128: 8/16/32/64; GIST-960: 32/60/64/80/...)"
     )
 
 results = {
