@@ -1,0 +1,24 @@
+{
+  "protocol": "library_cuvs_api",
+  "backend": "hipvs",
+  "gpu_name": "gfx1100",
+  "host": "amd-rx7900xtx",
+  "index_type": "IVF_FLAT",
+  "nlist": 1024,
+  "m": null,
+  "nbits": null,
+  "k": 10,
+  "nprobes": [32, 64, 128, 256],
+  "xb_shape": [1000000, 128],
+  "xq_shape": [10000, 128],
+  "data_path": "/home/amd/ann-harness-amd/data/sift-128-euclidean.hdf5",
+  "timings_s": {"index_build": 0.8545079089817591},
+  "nprobe_results": [
+    {"nprobe": 32, "qps": 64142.00155047183, "recall@10": 0.97832, "p99_ms": null, "batch_search_s": 0.1559040840365924},
+    {"nprobe": 64, "qps": 33381.275078645005, "recall@10": 0.99519, "p99_ms": null, "batch_search_s": 0.29956914397189394},
+    {"nprobe": 128, "qps": 17199.599761625228, "recall@10": 0.99904, "p99_ms": null, "batch_search_s": 0.5814088780316524},
+    {"nprobe": 256, "qps": 8784.35149088966, "recall@10": 0.99937, "p99_ms": null, "batch_search_s": 1.1383879630011506}
+  ],
+  "cuvs": "00.01.00",
+  "note": "GPU-heavy library FLAT; nprobe grid 32..256; p99 skipped (P99_SAMPLE=0)"
+}

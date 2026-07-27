@@ -1,25 +1,20 @@
 # Library bench results (hipVS vs cuVS)
 
-JSON files from lab runs should be copied here (or keep under `$WORKDIR/logs/` and
-point `compare_cuvs_lib_json.py` at those paths).
+JSON from lab runs live here.
 
-## Status (agent environment)
+## Filled compares
 
-Lab hosts (`amd-rx7900xtx`, `kvkol-B650-AORUS-PRO-AX`) are **not reachable** from
-the Cursor agent (no SSH). Runs must be executed on the boxes:
+| File | What |
+|------|------|
+| [FILLED_pq_m32.md](FILLED_pq_m32.md) | IVF_PQ m=32 — hip ~0.5× cu (2026-07-23) |
+| [FILLED_flat_heavy.md](FILLED_flat_heavy.md) | IVF_FLAT nprobe 32..256 — hip ~1.3× cu (2026-07-27) |
+
+## How to re-run
 
 | Host | Command |
 |------|---------|
-| AMD RX 7900 XTX | `bash scripts/run_hipvs_ivf_bench.sh` then `INDEX_TYPE=IVF_PQ M=32 bash scripts/run_hipvs_ivf_bench.sh` |
-| NVIDIA RTX 4080 | `WORKDIR=~/milvus_cuda_4080 bash scripts/run_cuvs_ivf_bench.sh` then PQ similarly |
+| AMD RX 7900 XTX | `INDEX_TYPE=IVF_PQ M=32 bash scripts/run_hipvs_ivf_bench.sh` |
+| AMD (GPU-heavy FLAT) | `INDEX_TYPE=IVF_FLAT NPROBES=32,64,128,256 P99_SAMPLE=0 bash scripts/run_hipvs_ivf_bench.sh` |
+| NVIDIA RTX 4080 | `WORKDIR=~/milvus_cuda_4080 INDEX_TYPE=… bash scripts/run_cuvs_ivf_bench.sh` |
 
 See [hipvs_vs_cuvs_bench.md](../docs/hipvs_vs_cuvs_bench.md).
-
-## Expected filenames
-
-- `lib_hipvs_ivf_flat_YYYYMMDD_HHMMSS.json`
-- `lib_hipvs_ivf_pq_m32_YYYYMMDD_HHMMSS.json`
-- `lib_cuvs_ivf_flat_YYYYMMDD_HHMMSS.json`
-- `lib_cuvs_ivf_pq_m32_YYYYMMDD_HHMMSS.json`
-
-After both sides exist, fill `FILLED.md` with the compare script output.

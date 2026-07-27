@@ -1,0 +1,25 @@
+{
+  "protocol": "library_cuvs_api",
+  "backend": "cuvs",
+  "gpu_name": "NVIDIA GeForce RTX 4080",
+  "host": "kvkol-B650-AORUS-PRO-AX",
+  "index_type": "IVF_FLAT",
+  "nlist": 1024,
+  "m": null,
+  "nbits": null,
+  "k": 10,
+  "nprobes": [32, 64, 128, 256],
+  "xb_shape": [1000000, 128],
+  "xq_shape": [10000, 128],
+  "data_path": "data/sift-128-euclidean.hdf5",
+  "timings_s": {"index_build": 0.34},
+  "nprobe_results": [
+    {"nprobe": 32, "qps": 49038.8, "recall@10": 0.9788, "p99_ms": 0.20},
+    {"nprobe": 64, "qps": 24758.9, "recall@10": 0.9957, "p99_ms": 0.23},
+    {"nprobe": 128, "qps": 12497.6, "recall@10": 0.9990, "p99_ms": 0.37},
+    {"nprobe": 256, "qps": 6331.6, "recall@10": 0.9992, "p99_ms": 0.57}
+  ],
+  "cuvs": "14.1.1",
+  "note": "GPU-heavy library FLAT; nprobe grid 32..256; peer to lib_hipvs_ivf_flat_heavy_20260727_195243.json",
+  "source_log": "/home/kvkol/milvus_cuda_4080/logs/lib_cuvs_ivf_flat_20260727_200221.json"
+}

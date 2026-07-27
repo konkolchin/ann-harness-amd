@@ -33,15 +33,16 @@ runbook (\texttt{ann\_framework\_runbook.tex}): Milvus Standalone CPU results on
 \texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
 through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
 
-\textbf{Status (2026-07-22):} Layers~\textbf{0--4 done} on the 7900 XTX lab host
+\textbf{Status (2026-07-24):} Layers~\textbf{0--4 done} on the 7900 XTX lab host
 (ROCm~7.0.2; hipVS IVF packer fixed; Knowhere HIP L2 search 108 assertions; DXC Knowhere
 \texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT}
 and \texttt{GPU\_IVF\_PQ}; full SIFT-1M FLAT recall@10 $0.38\rightarrow0.98$; fair CPU vs GPU:
 batched $\sim$5--7$\times$, VDBBench concurrent $\sim$2--4$\times$ at high \texttt{nprobe}).
 Fair HIP vs CUDA on RTX~4080 (\texttt{milvusdb/milvus:v2.5.4-gpu}): FLAT and PQ
-\texttt{m}=32 recall ladders \textbf{match} AMD. Library hipVS vs cuVS harness:
-Section~\ref{sec:hipvs-vs-cuvs-lib}. See Sections~\ref{sec:layer-progress},
-\ref{sec:layer4-pq}, \ref{sec:hip-vs-cuda}.
+\texttt{m}=32 recall ladders \textbf{match} AMD. Library hipVS vs cuVS
+(\texttt{IVF\_PQ} $m{=}32$): recall match; hipVS $\sim$0.5$\times$ cuVS QPS; under Milvus
+AMD $\sim$1$\times$ --- Section~\ref{sec:hipvs-vs-cuvs-lib}.
+See Sections~\ref{sec:layer-progress}, \ref{sec:layer4-pq}, \ref{sec:hip-vs-cuda}.
 \end{abstract}
 
 \tableofcontents
@@ -1066,7 +1067,8 @@ wrappers, not in \texttt{run\_milvus\_hdf5.py}.
 
 \begin{table}[h]
 \centering
-\caption{Layer~2 results (\texttt{amd-rx7900xtx}, 2026-07-09)}
+\caption{Layer~2 results (\texttt{amd-rx7900xtx}; gate first green 2026-07-09,
+reconfirmed 2026-07-26)}
 \begin{tabular}{@{}ll@{}}
 \toprule
 \textbf{Item} & \textbf{Result} \\
@@ -1082,13 +1084,73 @@ DXC merge & squash \texttt{bd82ff28} on \texttt{2.5} (PR~\#2) \\
 \end{table}
 
 \subsection{Known gaps on gfx1100 (not Layer~2 blockers)}
+\label{sec:layer2-catch2-gaps}
 
-\begin{itemize}[leftmargin=*]
-  \item \textbf{CAGRA + bitset:} recall $0.0$ in Bitset / Simple Bitset sections.
-  \item \textbf{IVF\_PQ TopK:} occasional threshold miss (e.g.\ $0.8368 < 0.85$).
-  \item Full suite may show $\sim$3--4 failed assertions among hundreds; treat as triage
-        backlog, not a Layer~2 fail.
-\end{itemize}
+\paragraph{PoC scope vs full Catch2.}
+For this PoC we treat \textbf{\texttt{GPU\_IVF\_FLAT}} and \textbf{\texttt{GPU\_IVF\_PQ}}
+as in-scope (Layer~2 gate + Layer~4 product path; recall matched vs CUDA).
+\textbf{CAGRA} and the strict \textbf{IVF\_PQ TopK} Catch2 threshold still fail on
+\texttt{gfx1100}; closing them needs \textbf{extra work} and is not a PoC exit criterion.
+
+\paragraph{Gate vs full suite (re-run 2026-07-26).}
+\begin{table}[H]
+\centering
+\caption{Knowhere Catch2 GPU --- gate vs full case on \texttt{amd-rx7900xtx}
+(2026-07-26)}
+\label{tab:layer2-catch2-gate-vs-full}
+\begin{tabular}{@{}llp{0.42\textwidth}@{}}
+\toprule
+\textbf{What ran} & \textbf{Result} & \textbf{Notes} \\
+\midrule
+Section \texttt{Test Gpu Index Search}
+  & \textbf{PASS} (108 assertions)
+  & Layer~2 gate; L2 search over GPU/CUVS indexes \\
+Full case \texttt{Test All GPU Index}
+  & \textbf{FAIL} (579/582 assertions)
+  & Three fails below; expected backlog, not gate fail \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{The three failed assertions in full \texttt{Test All GPU Index}
+(2026-07-26)}
+\label{tab:layer2-catch2-three-fails}
+\begin{tabular}{@{}lllr@{}}
+\toprule
+\textbf{Section} & \textbf{Index} & \textbf{Assert} & \textbf{Got} \\
+\midrule
+Search TopK & \texttt{GPU\_CUVS\_CAGRA} & recall $> 0.7$ & $0.0$ \\
+Search TopK & \texttt{GPU\_CUVS\_IVF\_PQ} & recall $\ge 0.85$ & $0.837$ \\
+Serialize/Deserialize & \texttt{GPU\_CUVS\_CAGRA} & recall $\ge 0.8$ & $0.0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{How to read a red ``GPU gtests'' dashboard.}
+Milvus \texttt{all\_tests} has almost no GPU ANN coverage (only
+\texttt{Init.KnowhereGPUMemoryPoolInit} matched a \texttt{*GPU*} filter --- and it
+\textbf{PASS}es). Real GPU unit coverage is Knowhere Catch2
+(\texttt{knowhere\_tests}).
+If a dashboard runs only section \texttt{Test Gpu Index Search}, expect \textbf{PASS}.
+If it runs the full \texttt{Test All GPU Index} case, expect \textbf{FAIL} from the
+three rows in Table~\ref{tab:layer2-catch2-three-fails} until CAGRA / TopK are fixed.
+That red status does \textbf{not} invalidate the FLAT/PQ PoC or Layer~4 product results.
+
+\paragraph{Historical note.}
+Earlier triage also listed CAGRA + bitset (recall $0.0$) and occasional IVF\_PQ TopK
+threshold misses ($\sim$0.84 vs 0.85). The 2026-07-26 full-suite log matches that
+pattern (CAGRA recall $0.0$ on TopK / serialize; IVF\_PQ TopK near-miss).
+
+\paragraph{Reproduce.}
+\begin{verbatim}
+KT=$WORKDIR/knowhere/build/tests/ut/knowhere_tests
+# Gate (PoC / Layer-2):
+"$KT" "Test All GPU Index" --section "Test Gpu Index Search" -s
+# Full case (expect 3 fails until CAGRA/TopK fixed):
+"$KT" "Test All GPU Index" -s
+\end{verbatim}
 
 \section{Layer 3 --- Milvus from source (end-to-end)}
 \label{sec:layer3-milvus-hip}
@@ -1408,7 +1470,7 @@ Higher \texttt{m} $\Rightarrow$ less compression $\Rightarrow$ better recall
 
 \begin{table}[H]
 \centering
-\caption{AMD HIP \texttt{GPU\_IVF\_PQ} recall@10 vs FLAT
+\caption{AMD 7900 \texttt{GPU\_IVF\_PQ} recall@10 vs FLAT
 (SIFT-1M, \texttt{nlist}=1024, \texttt{nbits}=8, batched harness)}
 \label{tab:layer4-pq-recall}
 \begin{tabular}{@{}lrrrr@{}}
@@ -1426,7 +1488,7 @@ Higher \texttt{m} $\Rightarrow$ less compression $\Rightarrow$ better recall
 
 \begin{table}[H]
 \centering
-\caption{AMD HIP \texttt{GPU\_IVF\_PQ} QPS vs FLAT (same runs as Table~\ref{tab:layer4-pq-recall})}
+\caption{AMD 7900 \texttt{GPU\_IVF\_PQ} QPS vs FLAT (same runs as Table~\ref{tab:layer4-pq-recall})}
 \label{tab:layer4-pq-qps}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
@@ -1466,7 +1528,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-flat-recall}
 \begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
 \midrule
 1  & 0.38 & 0.38 \\
 4  & 0.71 & 0.71 \\
@@ -1484,7 +1546,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-flat-qps}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
 \midrule
 1  & 16982 & 11597 & $1.46\times$ \\
 4  & 21882 & 19695 & $1.11\times$ \\
@@ -1505,7 +1567,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-pq8-recall}
 \begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
 \midrule
 1  & 0.26 & 0.25 \\
 4  & 0.35 & 0.35 \\
@@ -1523,7 +1585,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-pq8-qps}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
 \midrule
 1  & 24882 & 15401 & $1.62\times$ \\
 4  & 21221 & 19940 & $1.06\times$ \\
@@ -1544,7 +1606,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-pq16-recall}
 \begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
 \midrule
 1  & 0.33 & 0.33 \\
 4  & 0.50 & 0.50 \\
@@ -1562,7 +1624,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-pq16-qps}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
 \midrule
 1  & 16388 & 15540 & $1.05\times$ \\
 4  & 21084 & 19716 & $1.07\times$ \\
@@ -1583,7 +1645,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-pq-recall}
 \begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
 \midrule
 1  & 0.36 & 0.36 \\
 4  & 0.60 & 0.60 \\
@@ -1601,7 +1663,7 @@ use recall for port correctness and QPS for hardware/stack speed only.
 \label{tab:hip-cuda-pq-qps}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
+\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
 \midrule
 1  & 24273 & 11282 & $2.15\times$ \\
 4  & 20967 & 19714 & $1.06\times$ \\
@@ -1624,29 +1686,36 @@ returns wrong neighbors.
 \subsection{Library-level hipVS vs cuVS (no Milvus)}
 \label{sec:hipvs-vs-cuvs-lib}
 
-Management ask: compare \textbf{hipVS} and \textbf{cuVS} speed as ANN libraries.
+Management ask: after RDNA3 \texttt{warp\_size}=32 hipVS works, is the
+\textbf{library} competitive with NVIDIA cuVS?
 Section~\ref{sec:hip-vs-cuda} is the \emph{product} path (Milvus $\rightarrow$ Knowhere
-$\rightarrow$ hipVS/cuVS). This subsection isolates the libraries.
+$\rightarrow$ hipVS/cuVS). This subsection isolates the libraries, then contrasts
+both paths.
 
 \paragraph{Method.}
 Shared Python API (\texttt{import cuvs}; hipVS keeps the cuVS package name).
 Harness: \texttt{scripts/bench\_cuvs\_ivf.py} with wrappers
 \texttt{run\_hipvs\_ivf\_bench.sh} / \texttt{run\_cuvs\_ivf\_bench.sh}.
 Recipe locked to Layer~4: SIFT-1M HDF5, \texttt{nlist}=1024, \texttt{k}=10,
-\texttt{nprobe}$\in\{1,4,8,16,32\}$, indexes \texttt{IVF\_FLAT} and
-\texttt{IVF\_PQ} (\texttt{m}=32 $\mapsto$ cuVS \texttt{pq\_dim}, \texttt{nbits}=8
-$\mapsto$ \texttt{pq\_bits}). Runbook: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}.
+\texttt{nprobe}$\in\{1,4,8,16,32\}$, index \texttt{IVF\_PQ} (\texttt{m}=32 $\mapsto$ cuVS
+\texttt{pq\_dim}, \texttt{nbits}=8 $\mapsto$ \texttt{pq\_bits}).
+Runbook: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}.
+Slide deck: \texttt{docs/hipvs\_vs\_cuvs\_lib\_speed\_slides.tex}.
 
 \paragraph{Fairness.}
 Same API and recipe; \textbf{different GPUs} (RX~7900~XTX vs RTX~4080).
 Always report recall@10 with QPS. Speed-up $=$ hipVS QPS / cuVS QPS.
 Compare JSON with \texttt{scripts/compare\_cuvs\_lib\_json.py}.
 
-\paragraph{Status.}
-Library \texttt{IVF\_PQ} (\texttt{m}=32) measured 2026-07-23 on both hosts
-(JSON under \texttt{results/lib\_bench/} and \texttt{\$WORKDIR/logs/}).
-Library \texttt{IVF\_FLAT} on AMD: batched search OK; single-query p99 path hits
-\texttt{hipErrorInvalidValue} on gfx1100 --- re-run with \texttt{--p99-sample 0}.
+\paragraph{Status (2026-07-23 / 2026-07-27).}
+Library \texttt{IVF\_PQ} (\texttt{m}=32) measured on both hosts
+(JSON under \texttt{results/lib\_bench/}).
+Recall@10 matches; hipVS QPS is about \textbf{0.37--0.55$\times$} cuVS
+($\sim$0.5$\times$ mid-grid; cuVS $\sim$2$\times$ hipVS).
+Library \texttt{IVF\_FLAT} with high \texttt{nprobe} (GPU-heavy; 2026-07-27):
+recall matches; hipVS is about \textbf{1.31--1.39$\times$} cuVS
+(Table~\ref{tab:lib-hipvs-cuvs-flat-heavy-qps}).
+Ratio is \textbf{kernel-dependent}.
 
 \begin{table}[H]
 \centering
@@ -1684,11 +1753,70 @@ recall@10 (batched; two decimals)}
 \end{tabular}
 \end{table}
 
-\paragraph{How to read library vs product.}
-Recall matches on the library path too. Raw library QPS is orders of magnitude
-above Milvus (no RPC/Knowhere). On this PQ microbench, cuVS is about
-$\sim$2$\times$ hipVS; under Milvus the same GPUs were $\sim$1$\times$
-(Table~\ref{tab:hip-cuda-pq-qps}) because the service stack dominates.
+\begin{table}[H]
+\centering
+\caption{Library hipVS vs cuVS --- GPU-heavy \texttt{IVF\_FLAT}
+(\texttt{nprobe}$\in\{32,64,128,256\}$; speed-up $=$ hipVS / cuVS).
+QPS roughly halves when \texttt{nprobe} doubles (compute-bound search).}
+\label{tab:lib-hipvs-cuvs-flat-heavy-qps}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{nprobe} & \textbf{hipVS (7900)} & \textbf{cuVS (4080)} & \textbf{Speed-up} \\
+\midrule
+32  & 64142 & 49039 & $1.31\times$ \\
+64  & 33381 & 24759 & $1.35\times$ \\
+128 & 17200 & 12498 & $1.38\times$ \\
+256 & 8784  & 6332  & $1.39\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Library vs Milvus (same GPUs, same PQ recipe).}
+Table~\ref{tab:lib-vs-milvus-pq} puts the direct-library microbench next to the
+batched Milvus product path (Section~\ref{sec:hip-vs-cuda}).
+\textbf{Library QPS} means throughput from \texttt{cuvs.neighbors} alone
+(no RPC). \textbf{Milvus QPS} means the full server path
+(client $\xrightarrow{\mathrm{RPC}}$ Milvus $\rightarrow$ Knowhere $\rightarrow$ hipVS/cuVS).
+
+\begin{table}[H]
+\centering
+\caption{Library vs Milvus --- \texttt{IVF\_PQ} (\texttt{m}=32), peer GPUs.
+AMD/NVIDIA $=$ AMD QPS / NVIDIA QPS. ``Below lib'' $=$ how many times lower
+Milvus QPS is than library QPS on the AMD column (order of magnitude).}
+\label{tab:lib-vs-milvus-pq}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+\textbf{Path} & \textbf{nprobe}
+  & \textbf{AMD 7900 QPS} & \textbf{NVIDIA QPS}
+  & \textbf{AMD/NVIDIA} & \textbf{Below lib (AMD)} \\
+\midrule
+Library & 8  & 710989 & 1411722 & $0.50\times$ & --- \\
+Library & 32 & 217275 & 453316  & $0.48\times$ & --- \\
+\midrule
+Milvus  & 8  & 19500 & 19786 & $0.99\times$ & $\sim$36$\times$ \\
+Milvus  & 32 & 14784 & 14144 & $1.05\times$ & $\sim$15$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Is hipVS the bottleneck in Milvus?}
+On this SIFT product path: \textbf{no}.
+Evidence: (1)~library path shows cuVS $\sim$2$\times$ hipVS;
+(2)~Milvus path shows AMD $\sim$1$\times$ NVIDIA;
+(3)~Milvus QPS is $\sim$15--36$\times$ below library QPS on the same GPU.
+End-to-end time is dominated by the service stack (RPC, Knowhere, batching),
+not by hipVS vs cuVS kernel time.
+\textbf{Caveat:} a thinner client stack or a much heavier GPU index could make the
+library the limiter later; this claim is for the measured Milvus+SIFT path.
+
+\paragraph{How to brief.}
+\begin{itemize}[leftmargin=*]
+  \item RDNA3 hipVS (\texttt{warp\_size}=32) is \textbf{correct} (recall match).
+  \item Raw library: ratio depends on kernel --- PQ $m{=}32$ $\sim$0.5$\times$;
+        FLAT high-\texttt{nprobe} $\sim$1.3$\times$ on peer GPUs.
+  \item Under Milvus: AMD \textbf{competitive} ($\sim$1$\times$); hipVS is not the
+        product-path bottleneck today (SIFT FLAT/PQ).
+\end{itemize}
 
 \section{Metrics matrix}
 
@@ -1757,6 +1885,10 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
         the recall--QPS trade-off vs CPU Milvus on the same host (same dataset and IVF recipe).
   \item \textbf{Stock Docker Milvus} remains the CPU control; GPU porting is source-build +
         fork work, not a config toggle.
+  \item \textbf{Library vs product (2026-07-23):} direct hipVS/cuVS \texttt{IVF\_PQ}
+        ($m{=}32$) shows recall match and hipVS $\sim$0.5$\times$ cuVS QPS; under Milvus
+        AMD $\sim$1$\times$ --- hipVS is not the product-path bottleneck on this SIFT path
+        (Section~\ref{sec:hipvs-vs-cuvs-lib}).
 \end{itemize}
 
 \section{Immediate next steps (lab host)}
@@ -1764,15 +1896,19 @@ release $\leftrightarrow$ ROCm version in a single compatibility table per exper
 \textbf{Where we are:} Layers~0--4 complete (Section~\ref{sec:layer4-measured});
 \texttt{GPU\_IVF\_PQ} measured on AMD (Section~\ref{sec:layer4-pq});
 fair HIP vs CUDA on RTX~4080 done (Section~\ref{sec:hip-vs-cuda});
-library hipVS vs cuVS harness ready (Section~\ref{sec:hipvs-vs-cuvs-lib}).
-\textbf{What remains:} capture library JSON on both hosts; optional wider indexes;
+library hipVS vs cuVS \texttt{IVF\_PQ} ($m{=}32$) filled
+(Section~\ref{sec:hipvs-vs-cuvs-lib}; slides
+\texttt{docs/hipvs\_vs\_cuvs\_lib\_speed\_slides.tex}).
+\textbf{What remains:} optional library \texttt{IVF\_FLAT} / wider indexes;
+shared gtest wall-clock compare if a CUDA C++ test env is available;
 public GitHub packaging.
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Library microbench:} on AMD and 4080 hosts run
-        \texttt{bash scripts/run\_lib\_bench\_both\_indexes.sh}
-        (runbook \texttt{docs/hipvs\_vs\_cuvs\_bench.md}); file JSON under
-        \texttt{\$WORKDIR/logs/lib\_*.json}.
+  \item Optional: library \texttt{IVF\_FLAT} on AMD with \texttt{--p99-sample 0}
+        (\texttt{docs/hipvs\_vs\_cuvs\_bench.md}).
+  \item Optional: shared gtest timing on both hosts
+        (\texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}) --- needs cuVS C++ tests
+        on the 4080 box.
   \item Optional: \textbf{CAGRA} smoke + SIFT grid (watch Knowhere bitset gaps).
   \item Optional: VectorDBBench concurrent on CUDA for industry-tool HIP vs CUDA QPS.
   \item Copy / publish DXC HIP line notes to public GitHub when Business Value is agreed.
@@ -1795,6 +1931,9 @@ public GitHub packaging.
   \item Harness (patches + Layer~2/3/4 scripts): \url{https://github.com/konkolchin/ann-harness-amd}
   \item CUDA 4080 runbook: \texttt{docs/cuda\_4080\_benchmark\_runbook.md}
   \item hipVS vs cuVS library bench: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}
+  \item Library speed slides: \texttt{docs/hipvs\_vs\_cuvs\_lib\_speed\_slides.tex}
+  \item Library PQ results: \texttt{results/lib\_bench/FILLED\_pq\_m32.md}
+  \item Shared gtest timing (optional): \texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}
   \item IVF\_PQ AMD$\leftrightarrow$CUDA plan: \texttt{docs/ivf\_pq\_amd\_cuda\_plan.md}
   \item Layer~2 PR notes: \texttt{docs/PR\_knowhere\_amd\_hip\_gfx1100.md}
   \item Layer~3 PR notes: \texttt{docs/PR\_milvus\_amd\_hip\_gfx1100\_layer3.md}

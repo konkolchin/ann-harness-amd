@@ -289,7 +289,7 @@
   \begin{center}
   \begin{tabular}{@{}lll@{}}
     \toprule
-    & \textbf{AMD HIP} & \textbf{NVIDIA CUDA} \\
+    & \textbf{AMD 7900} & \textbf{NVIDIA CUDA} \\
     \midrule
     Host & RX 7900 XTX (\texttt{gfx1100}) & RTX 4080 \\
     Milvus & DXC \texttt{v2.5.4} HIP Standalone
@@ -373,7 +373,7 @@
   \begin{tabular}{@{}llrrr@{}}
     \toprule
     \textbf{Index} & \textbf{nprobe}
-      & \textbf{AMD QPS} & \textbf{CUDA QPS} & \textbf{Speed-up} \\
+      & \textbf{AMD 7900 QPS} & \textbf{CUDA QPS} & \textbf{Speed-up} \\
     \midrule
     FLAT & 8  & 21838 & 19800 & $1.10\times$ \\
     FLAT & 32 & 19578 & 13868 & $1.41\times$ \\
@@ -749,7 +749,7 @@
   \end{block}
 
   \footnotesize
-  Measured: AMD HIP CPU vs GPU (\textbf{IVF\_FLAT}), AMD \textbf{GPU\_IVF\_PQ}
+  Measured: AMD 7900 CPU vs GPU (\textbf{IVF\_FLAT}), AMD \textbf{GPU\_IVF\_PQ}
   (\texttt{m}=8/16/32), and fair \textbf{HIP vs CUDA} on RTX~4080
   (FLAT + PQ \texttt{m}=8/16/32 --- recall matched).\\[0.3em]
 
@@ -782,7 +782,7 @@
 \appendix
 \begin{frame}{Appendix --- backup detail}
   \begin{itemize}
-    \item AMD HIP: \texttt{GPU\_IVF\_PQ} detail tables / vs FLAT
+    \item AMD 7900: \texttt{GPU\_IVF\_PQ} detail tables / vs FLAT
     \item HIP vs CUDA (product path): FLAT + PQ recall / QPS
     \item Library competitive?: shared gtest timing
       (\texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}); SIFT microbench is appendix/engineer only
@@ -795,7 +795,7 @@
 
 \begin{frame}{Appendix --- GPU\_IVF\_PQ detail tables (m = 8 / 16 / 32)}
   \scriptsize
-  AMD HIP, sealed \texttt{GPU\_CUVS\_IVF\_PQ}, 2026-07-21.\\[0.25em]
+  AMD 7900, sealed \texttt{GPU\_CUVS\_IVF\_PQ}, 2026-07-21.\\[0.25em]
 
   \begin{columns}[T]
     \begin{column}{0.32\textwidth}
@@ -847,7 +847,7 @@
   Logs confirm \texttt{GPU\_CUVS\_IVF\_PQ} save + \texttt{CGO\_LOAD}.}
 \end{frame}
 
-\begin{frame}{Appendix --- GPU\_IVF\_PQ recall@10 vs FLAT (AMD HIP)}
+\begin{frame}{Appendix --- GPU\_IVF\_PQ recall@10 vs FLAT (AMD 7900)}
   \footnotesize
   SIFT-1M, \texttt{nlist}=1024, \texttt{nbits}=8, batched harness.\\
   Higher \texttt{m} $\Rightarrow$ less compression $\Rightarrow$ better recall.\\[0.3em]
@@ -874,7 +874,7 @@
   {\small HIP vs CUDA peer done for \texttt{m}=8/16/32.}
 \end{frame}
 
-\begin{frame}{Appendix --- GPU\_IVF\_PQ QPS vs FLAT (AMD HIP)}
+\begin{frame}{Appendix --- GPU\_IVF\_PQ QPS vs FLAT (AMD 7900)}
   \footnotesize
   Same runs as previous slide (batched 10k-query search).\\[0.3em]
 
@@ -907,7 +907,7 @@
   \begin{center}
   \begin{tabular}{@{}lrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
     \midrule
     1  & 0.38 & 0.38 \\
     4  & 0.71 & 0.71 \\
@@ -930,7 +930,7 @@
   \begin{center}
   \begin{tabular}{@{}lrrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
       & \textbf{Speed-up AMD vs NVIDIA} \\
     \midrule
     1  & 16982 & 11597 & $1.46\times$ \\
@@ -952,7 +952,7 @@
   \begin{center}
   \begin{tabular}{@{}lrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
     \midrule
     1  & 0.26 & 0.25 \\
     4  & 0.35 & 0.35 \\
@@ -972,7 +972,7 @@
   \begin{center}
   \begin{tabular}{@{}lrrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
       & \textbf{Speed-up AMD vs NVIDIA} \\
     \midrule
     1  & 24882 & 15401 & $1.62\times$ \\
@@ -990,7 +990,7 @@
   \begin{center}
   \begin{tabular}{@{}lrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
     \midrule
     1  & 0.33 & 0.33 \\
     4  & 0.50 & 0.50 \\
@@ -1010,7 +1010,7 @@
   \begin{center}
   \begin{tabular}{@{}lrrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
       & \textbf{Speed-up AMD vs NVIDIA} \\
     \midrule
     1  & 16388 & 15540 & $1.05\times$ \\
@@ -1030,7 +1030,7 @@
   \begin{center}
   \begin{tabular}{@{}lrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080} \\
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
     \midrule
     1  & 0.36 & 0.36 \\
     4  & 0.60 & 0.60 \\
@@ -1052,7 +1052,7 @@
   \begin{center}
   \begin{tabular}{@{}lrrr@{}}
     \toprule
-    \textbf{nprobe} & \textbf{AMD HIP} & \textbf{CUDA 4080}
+    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
       & \textbf{Speed-up AMD vs NVIDIA} \\
     \midrule
     1  & 24273 & 11282 & $2.15\times$ \\

@@ -262,9 +262,26 @@ PQ note: script maps Milvus **`m`** → cuVS **`pq_dim`**, **`nbits`** → **`pq
 
 ---
 
-## 5) Interim (product path) until lab JSON lands
+## 5) Lab results (filled)
 
-Milvus Layer-4 on the same hosts already showed **matched recall** and roughly
-**~1.0–1.5×** AMD vs NVIDIA QPS for `GPU_IVF_FLAT` / `GPU_IVF_PQ`. That is
-**hipVS under Knowhere+Milvus** vs **cuVS under Knowhere+Milvus**, not this
+| Recipe | Compare | Result |
+|--------|---------|--------|
+| IVF_PQ m=32, nprobe 1–32 | `results/lib_bench/FILLED_pq_m32.md` | recall match; hip/cu ≈ **0.37–0.55×** |
+| IVF_FLAT nprobe 32–256 | `results/lib_bench/FILLED_flat_heavy.md` | recall match; hip/cu ≈ **1.31–1.39×** |
+
+GPU-heavy FLAT re-run:
+
+```bash
+# AMD
+INDEX_TYPE=IVF_FLAT NPROBES=32,64,128,256 P99_SAMPLE=0 \
+  bash scripts/run_hipvs_ivf_bench.sh
+
+# CUDA (same env vars)
+WORKDIR=~/milvus_cuda_4080 INDEX_TYPE=IVF_FLAT NPROBES=32,64,128,256 P99_SAMPLE=0 \
+  bash scripts/run_cuvs_ivf_bench.sh
+```
+
+Milvus Layer-4 on the same hosts: matched recall and roughly **~1.0–1.5×** AMD vs
+NVIDIA QPS for `GPU_IVF_FLAT` / `GPU_IVF_PQ` (product path, not this microbench).
+Slides: `docs/hipvs_vs_cuvs_lib_speed_slides.tex`.
 library microbench. Use product numbers only with that caveat.
