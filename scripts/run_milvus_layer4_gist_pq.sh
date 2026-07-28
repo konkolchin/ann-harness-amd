@@ -26,6 +26,8 @@ INDEX_WAIT_S="${INDEX_WAIT_S:-7200}"
 NLIST="${NLIST:-1024}"
 NPROBES="${NPROBES:-8,16,32,64,128}"
 SMOKE="${SMOKE:-0}"
+# GIST-960: 50k * 960 * 4B ≈ 192MB > gRPC 64MB default → RESOURCE_EXHAUSTED
+INSERT_BATCH="${INSERT_BATCH:-8000}"
 
 if [ -z "${WORKDIR:-}" ]; then
   if [ -d "${HOME}/milvus_cuda_4080" ]; then
@@ -81,6 +83,7 @@ fi
 
 echo "    data=${DATA_PATH}"
 echo "    nlist=${NLIST} m=${M} nbits=${NBITS} nprobes=${NPROBES}"
+echo "    insert_batch=${INSERT_BATCH}"
 echo "    collection=${COLLECTION}"
 echo "    results=${RESULTS_JSON}"
 
@@ -94,6 +97,7 @@ python3 scripts/run_milvus_hdf5.py \
   --m "${M}" \
   --nbits "${NBITS}" \
   --nprobes "${NPROBES}" \
+  --insert-batch "${INSERT_BATCH}" \
   --data "${DATA_PATH}" \
   --collection "${COLLECTION}" \
   --results-json "${RESULTS_JSON}" \

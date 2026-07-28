@@ -41,6 +41,8 @@ curl -sf http://127.0.0.1:9091/healthz && echo OK
 
 # Optional smoke (slice; recall meaningless)
 SMOKE=1 bash scripts/run_milvus_layer4_gist_pq.sh
+# If insert hits gRPC RESOURCE_EXHAUSTED, script already uses INSERT_BATCH=8000;
+# override lower if needed: INSERT_BATCH=4000 SMOKE=1 bash ...
 
 # Full GIST-1M (long)
 tmux new -s gist-pq-amd
