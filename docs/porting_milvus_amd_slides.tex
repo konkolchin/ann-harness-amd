@@ -526,47 +526,15 @@
 
 %----- GIST Milvus fair speed -----
 \begin{frame}{Fair Milvus speed --- GIST-1M GPU\_IVF\_PQ}
-  \footnotesize
-  Why GIST: 960-d (+ higher \texttt{nprobe}) raises GPU fraction so a library gap
-  can appear in \textbf{product} QPS. SIFT $\sim$1$\times$ was stack-limited.\\[0.25em]
-
-  \textbf{Freeze:} \texttt{GPU\_IVF\_PQ}, \texttt{m}=32, \texttt{nbits}=8,
-  \texttt{nlist}=1024, $k{=}10$, \texttt{nprobe}$\in\{8,16,32,64,128\}$,
-  sealed; same client both GPUs (2026-07-28).\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrrrr@{}}
-    \toprule
-    \textbf{nprobe}
-      & \textbf{{\color{red}AMD} QPS}
-      & \textbf{{\color{green!60!black}CUDA} QPS}
-      & \textbf{R@10} & \textbf{AMD/CUDA} \\
-    \midrule
-    8   & 4867 & 7167 & 0.25 & $0.68\times$ \\
-    16  & 2945 & 4102 & 0.26 & $0.72\times$ \\
-    32  & 2228 & 2774 & 0.27 & $0.80\times$ \\
-    64  & 1145 & 1908 & 0.27 & $0.60\times$ \\
-    128 & 700  & 959  & 0.27 & $0.73\times$ \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.35em}
-  \textbf{Takeaway:} recall matches; NVIDIA ahead
-  (AMD/CUDA $\approx$0.60--0.80$\times$).
-  Low absolute recall $=$ PQ tax on 960-d (\texttt{m}=32), not a port bug.\\
-  {\scriptsize \texttt{results/milvus\_gist\_pq/FILLED.md}}
-\end{frame}
-
-\begin{frame}{GIST Milvus QPS --- AMD vs NVIDIA}
-  \vspace{-0.2em}
-  {\footnotesize Batched GIST-1M \texttt{GPU\_IVF\_PQ} \texttt{m}=32.
-  {\color{red}AMD} / {\color{green!60!black}NVIDIA}.}\\[0.1em]
+  \vspace{-0.15em}
+  {\footnotesize 960-d + high \texttt{nprobe} $\Rightarrow$ GPU-heavy product path
+  (SIFT $\sim$1$\times$ was stack-limited).
+  {\color{red}AMD} / {\color{green!60!black}NVIDIA}; \texttt{m}=32, 2026-07-28.}\\[0.1em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
       width=0.92\textwidth,
-      height=0.58\textheight,
+      height=0.55\textheight,
       xlabel={nprobe},
       ylabel={QPS},
       xmin=0, xmax=140,
@@ -587,7 +555,16 @@
       \addlegendentry{NVIDIA (4080, CUDA)}
     \end{axis}
   \end{tikzpicture}
+
+  \vspace{0.15em}
+  {\footnotesize \textbf{Takeaway:} NVIDIA ahead (AMD/CUDA $\approx$0.60--0.80$\times$).
+  \texttt{results/milvus\_gist\_pq/FILLED.md}}
+  \note{Recall@10 (matched both GPUs): nprobe 8$\rightarrow$0.25, 16$\rightarrow$0.26,
+    32/64/128$\rightarrow$0.27. Absolute recall low = PQ tax on 960-d with m=32
+    (not a port bug). Freeze: GPU\_IVF\_PQ, nlist=1024, nbits=8, k=10, sealed.}
 \end{frame}
+
+% (GIST QPS plot lives on ``Fair Milvus speed'' frame; duplicate removed)
 
 %----- 6 -----
 \begin{frame}[fragile]{What is recall@10?}
@@ -1133,30 +1110,41 @@
 \end{frame}
 
 \begin{frame}{Appendix --- GIST Milvus GPU\_IVF\_PQ (fair speed)}
-  \footnotesize
-  GIST-1M, \texttt{m}=32, \texttt{nbits}=8, \texttt{nlist}=1024 (2026-07-28).
-  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
+  \vspace{-0.15em}
+  {\footnotesize GIST-1M, \texttt{m}=32, \texttt{nlist}=1024 (2026-07-28).
+  {\color{red}AMD} / {\color{green!60!black}NVIDIA}.}\\[0.1em]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.92\textwidth,
+      height=0.58\textheight,
+      xlabel={nprobe},
+      ylabel={QPS},
+      xmin=0, xmax=140,
+      ymin=0, ymax=8000,
+      xtick={8,16,32,64,128},
+      grid=both,
+      major grid style={gray!40},
+      legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+      thick,
+    ]
+      \addplot[red, mark=*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (8,4867) (16,2945) (32,2228) (64,1145) (128,700)
+      };
+      \addlegendentry{AMD (7900 XTX, HIP)}
+      \addplot[green!70!black, mark=square*, mark size=2.8pt, line width=1.2pt] coordinates {
+        (8,7167) (16,4102) (32,2774) (64,1908) (128,959)
+      };
+      \addlegendentry{NVIDIA (4080, CUDA)}
+    \end{axis}
+  \end{tikzpicture}
 
-  \begin{center}
-  \begin{tabular}{@{}lrrr@{}}
-    \toprule
-    \textbf{nprobe}
-      & \textbf{{\color{red}AMD 7900}}
-      & \textbf{{\color{green!60!black}CUDA 4080}}
-      & \textbf{Speed-up} \\
-    \midrule
-    8   & 4867 & 7167 & $0.68\times$ \\
-    16  & 2945 & 4102 & $0.72\times$ \\
-    32  & 2228 & 2774 & $0.80\times$ \\
-    64  & 1145 & 1908 & $0.60\times$ \\
-    128 & 700  & 959  & $0.73\times$ \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.4em}
-  Recall@10 matches ($\sim$0.25--0.27). Absolute recall low $=$ PQ on 960-d.
-  \textbf{Product ANN speed:} NVIDIA ahead ($\sim$0.60--0.80$\times$).
+  \vspace{0.1em}
+  {\footnotesize \textbf{Product ANN speed:} NVIDIA ahead (AMD/CUDA $\sim$0.60--0.80$\times$).}
+  \note{Recall@10 matches both GPUs ($\sim$0.25--0.27). Low absolute recall =
+    PQ compression on 960-d with m=32, not a wrong port. Speed-up = AMD QPS / CUDA QPS.
+    Sources: layer4\_gist\_gpu\_ivf\_pq\_20260728\_100624.json (AMD),
+    \_095805.json (CUDA).}
 \end{frame}
 
 \end{document}
