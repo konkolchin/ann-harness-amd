@@ -19,6 +19,22 @@ This recipe raises GPU work so product-path QPS can show AMD trailing NVIDIA.
 
 Avoid `GPU_CAGRA` (AMD gaps). Do not lead with library microbench for this claim.
 
+## Optional: GIST + GPU_IVF_FLAT
+
+Same dataset / nprobe grid / client; full float vectors in probed lists
+(higher recall, lower QPS, more GPU/VRAM than PQ).
+
+```bash
+# AMD / CUDA (Milvus up)
+SMOKE=1 bash scripts/run_milvus_layer4_gist_flat.sh
+bash scripts/run_milvus_layer4_gist_flat.sh
+```
+
+Caveats:
+- VRAM: ~3.8 GB raw floats + index; OK on 7900 24 GB; watch 4080 16 GB.
+- Library FLAT-heavy favored AMD ~1.3× — Milvus FLAT may **not** show NVIDIA ahead
+  (unlike GIST PQ). Still valid for recall ladders + GPU-heavy product QPS.
+
 ## 0) Data
 
 ```bash
