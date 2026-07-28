@@ -333,13 +333,26 @@
   \end{center}
 
   \vspace{0.5em}
-  \begin{block}{Next fair Milvus speed compare}
+  \begin{block}{Fair Milvus speed --- GIST-1M \texttt{GPU\_IVF\_PQ} $m{=}32$ (2026-07-28)}
     \footnotesize
-    \textbf{GIST-1M} (960-d) + \texttt{GPU\_IVF\_PQ} $m{=}32$,
-    \texttt{nprobe}$\in\{8,16,32,64,128\}$ --- same client both GPUs.\\
-    Goal: AMD/NVIDIA $\le\sim$0.85$\times$ at matched recall
-    (runbook: \texttt{docs/milvus\_amd\_behind\_nvidia\_plan.md}).
-    Results slot: \texttt{results/milvus\_gist\_pq/}.
+    \begin{center}
+    \begin{tabular}{@{}lrrr@{}}
+      \toprule
+      \textbf{nprobe}
+        & \textbf{{\color{red}AMD} QPS}
+        & \textbf{{\color{green!60!black}CUDA} QPS}
+        & \textbf{AMD/CUDA} \\
+      \midrule
+      8   & 4867 & 7167 & $0.68\times$ \\
+      16  & 2945 & 4102 & $0.72\times$ \\
+      32  & 2228 & 2774 & $0.80\times$ \\
+      64  & 1145 & 1908 & $0.60\times$ \\
+      128 & 700  & 959  & $0.73\times$ \\
+      \bottomrule
+    \end{tabular}
+    \end{center}
+    Recall@10 matches ($\sim$0.25--0.27). NVIDIA ahead;
+    runbook: \texttt{docs/milvus\_amd\_behind\_nvidia\_plan.md}.
   \end{block}
 \end{frame}
 
@@ -349,21 +362,21 @@
     \item \textbf{RDNA3 hipVS works} (\texttt{warp\_size}=32) --- answers match cuVS.
     \item \textbf{Raw library:} ratio is kernel-dependent ---
           IVF\_PQ $m{=}32$ $\sim$0.5$\times$; IVF\_FLAT high-\texttt{nprobe} $\sim$1.3$\times$.
-    \item \textbf{Milvus SIFT:} stack-limited --- $\sim$1$\times$ is \textbf{not}
-          proof of ANN parity. Fair product speed trial = \textbf{GIST PQ} (pending lab).
+    \item \textbf{Milvus:} SIFT is stack-limited ($\sim$1$\times$);
+          \textbf{GIST PQ} shows NVIDIA ahead (AMD/CUDA $\sim$0.60--0.80$\times$).
   \end{enumerate}
 
   \vspace{0.6em}
   \begin{center}
     \large
-    Correct port. Library gap is real on PQ.\\[0.15em]
-    Product-path speed needs a GPU-heavy Milvus recipe.
+    Correct port. Library PQ gap is real.\\[0.15em]
+    Under GPU-heavy Milvus, AMD trails --- fair product signal.
   \end{center}
 
   \vspace{0.5em}
   {\footnotesize
-  Lab dates 2026-07-23 (lib PQ) / 2026-07-27 (lib FLAT heavy).
-  GIST Milvus: \texttt{docs/milvus\_amd\_behind\_nvidia\_plan.md}.}
+  Lab 2026-07-23/27 (lib) / 2026-07-28 (Milvus GIST).
+  \texttt{results/milvus\_gist\_pq/FILLED.md}.}
 \end{frame}
 
 \end{document}

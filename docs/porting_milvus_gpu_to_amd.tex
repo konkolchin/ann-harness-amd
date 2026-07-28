@@ -43,7 +43,8 @@ Fair HIP vs CUDA on RTX~4080 (\texttt{milvusdb/milvus:v2.5.4-gpu}): FLAT and PQ
 \texttt{m}=32 recall ladders \textbf{match} AMD. Library hipVS vs cuVS
 (\texttt{IVF\_PQ} $m{=}32$): recall match; hipVS $\sim$0.5$\times$ cuVS QPS; Milvus SIFT
 is stack-limited ($\sim$1$\times$, not an ANN-speed verdict). Fair Milvus
-NVIDIA-ahead hunt: GIST PQ --- Section~\ref{sec:milvus-gist-pq}.
+GIST PQ (2026-07-28): AMD/CUDA $\sim$0.60--0.80$\times$ at matched recall ---
+Section~\ref{sec:milvus-gist-pq}.
 See Sections~\ref{sec:layer-progress}, \ref{sec:layer4-pq}, \ref{sec:hip-vs-cuda},
 \ref{sec:hipvs-vs-cuvs-lib}.
 \end{abstract}
@@ -1818,8 +1819,9 @@ stack-overhead verdict.
   \item Raw library: ratio depends on kernel --- PQ $m{=}32$ $\sim$0.5$\times$;
         FLAT high-\texttt{nprobe} $\sim$1.3$\times$ on peer GPUs.
   \item Milvus SIFT: stack-limited $\sim$1$\times$ --- do not call this ANN parity.
-  \item Fair Milvus speed compare (NVIDIA-ahead hunt): GIST PQ
-        (Section~\ref{sec:milvus-gist-pq}; lab pending).
+  \item Fair Milvus speed (GIST PQ, 2026-07-28): AMD/CUDA
+        $\sim$0.60--0.80$\times$ at matched recall
+        (Section~\ref{sec:milvus-gist-pq}).
 \end{itemize}
 
 \subsection{Fair Milvus speed: GIST-1M + GPU\_IVF\_PQ}
@@ -1853,21 +1855,31 @@ Results dir: \texttt{results/milvus\_gist\_pq/}.
 \begin{table}[H]
 \centering
 \caption{Milvus GIST \texttt{GPU\_IVF\_PQ} ($m{=}32$) --- HIP vs CUDA
-(speed-up $=$ AMD QPS / CUDA QPS). \textbf{Lab pending} (hosts unreachable
-from agent; fill after lab).}
+(2026-07-28; speed-up $=$ AMD QPS / CUDA QPS).
+Recall@10 matches; NVIDIA ahead on QPS.}
 \label{tab:milvus-gist-pq-qps}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
 \textbf{nprobe} & \textbf{{\color{red}AMD 7900}} & \textbf{{\color{green!60!black}CUDA 4080}} & \textbf{Speed-up} \\
 \midrule
-8   & --- & --- & --- \\
-16  & --- & --- & --- \\
-32  & --- & --- & --- \\
-64  & --- & --- & --- \\
-128 & --- & --- & --- \\
+8   & 4867 & 7167 & $0.68\times$ \\
+16  & 2945 & 4102 & $0.72\times$ \\
+32  & 2228 & 2774 & $0.80\times$ \\
+64  & 1145 & 1908 & $0.60\times$ \\
+128 & 700  & 959  & $0.73\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\noindent JSON: AMD
+\texttt{layer4\_gist\_gpu\_ivf\_pq\_20260728\_100624.json};
+CUDA \texttt{layer4\_gist\_gpu\_ivf\_pq\_20260728\_095805.json}.
+Filled summary: \texttt{results/milvus\_gist\_pq/FILLED.md}.
+
+\paragraph{How to brief (GIST).}
+Under a GPU-heavy Milvus recipe, AMD trails NVIDIA
+($\sim$0.60--0.80$\times$ QPS) at matched recall --- unlike stack-limited SIFT
+($\sim$1$\times$). That is the fair product-path ANN speed signal.
 
 \section{Metrics matrix}
 

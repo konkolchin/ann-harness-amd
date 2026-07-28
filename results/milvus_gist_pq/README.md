@@ -6,32 +6,18 @@ GPU-heavy product-path compare — see [milvus_amd_behind_nvidia_plan.md](../../
 
 | Side | Status |
 |------|--------|
-| AMD RX 7900 XTX (HIP Milvus) | **PENDING lab run** |
-| NVIDIA RTX 4080 (CUDA Milvus) | **PENDING lab run** |
-| Compare (`FILLED.md`) | **PENDING** |
+| AMD RX 7900 XTX (HIP Milvus) | **DONE** `layer4_gist_gpu_ivf_pq_20260728_100624.json` |
+| NVIDIA RTX 4080 (CUDA Milvus) | **DONE** `layer4_gist_gpu_ivf_pq_20260728_095805.json` |
+| Compare | **[FILLED.md](FILLED.md)** — AMD/CUDA ≈ **0.60–0.80×** |
 
-Lab hosts are not reachable from the Cursor agent. Run on the boxes:
+Copy JSON into this folder when convenient:
 
 ```bash
-# AMD
-cd ~/ann-harness-amd && git pull
-export WORKDIR=~/rocmds_check_gfx1100
-bash scripts/run_milvus_layer4_gist_pq.sh
+# from AMD
+scp ~/rocmds_check_gfx1100/logs/layer4_gist_gpu_ivf_pq_20260728_100624.json \
+  user@laptop:ann-harness-amd/results/milvus_gist_pq/
 
-# CUDA
-export WORKDIR=~/milvus_cuda_4080
-bash scripts/start_milvus_cuda_gpu_docker.sh
-bash scripts/run_milvus_layer4_gist_pq.sh
-
-# Compare → copy JSON here then:
-python3 scripts/compare_milvus_layer4_json.py \
-  --amd  results/milvus_gist_pq/layer4_gist_*_amd.json \
-  --cuda results/milvus_gist_pq/layer4_gist_*_cuda.json \
-  --out-md results/milvus_gist_pq/FILLED.md
+# from CUDA
+scp ~/milvus_cuda_4080/logs/layer4_gist_gpu_ivf_pq_20260728_095805.json \
+  user@laptop:ann-harness-amd/results/milvus_gist_pq/
 ```
-
-## Expected filenames
-
-- `layer4_gist_gpu_ivf_pq_<TS>_amd.json` (or copy from `$WORKDIR/logs/`)
-- `layer4_gist_gpu_ivf_pq_<TS>_cuda.json`
-- `FILLED.md` — AMD/CUDA QPS + recall + speed-up
