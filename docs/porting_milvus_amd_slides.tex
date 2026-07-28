@@ -332,35 +332,9 @@
   \end{block}
 
   \vspace{0.3em}
-  Runbook: \texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}\\
-  {\small Status: harness ready; fill numbers after lab JSON on both boxes.}
-\end{frame}
-
-%----- 5g3 gtest timing results (placeholder) -----
-\begin{frame}{Shared unit-test timing --- results}
-  \footnotesize
-  Ratio $=$ hipVS case-ms $/$ cuVS case-ms.~$<1$ $=$ hip faster; $\sim 1$ $=$ parity.\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrr@{}}
-    \toprule
-    \textbf{Metric} & \textbf{hipVS (7900 XTX)} & \textbf{cuVS (4080)} \\
-    \midrule
-    Cases pass & \textit{TBD} & \textit{TBD} \\
-    Sum case ms & \textit{TBD} & \textit{TBD} \\
-    Geo-mean ratio (hip/cu) & \multicolumn{2}{c}{\textit{TBD}} \\
-    Median ratio (hip/cu) & \multicolumn{2}{c}{\textit{TBD}} \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.45em}
-  \textbf{Manager line (after fill):}
-  \textit{``RDNA3 warp32 hipVS passes the same suite; wall time is
-  \underline{\hspace{1.2cm}}$\times$ cuVS on peer GPUs.''}\\[0.35em]
-
-  {\small Engineers: optional SIFT Python microbench still in
-  \texttt{docs/hipvs\_vs\_cuvs\_bench.md} --- not the management brief.}
+  {\small Shared gtest timing deferred (cuVS C++ suite not rebuilt on 4080).
+  Filled library signal: Python microbench + GIST Milvus
+  (\texttt{docs/hipvs\_vs\_cuvs\_bench.md}, \texttt{results/milvus\_gist\_pq/}).}
 \end{frame}
 
 %----- 5g4 product path reminder -----
