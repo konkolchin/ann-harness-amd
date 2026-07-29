@@ -1,5 +1,5 @@
 diff --git a/internal/core/thirdparty/knowhere/CMakeLists.txt b/internal/core/thirdparty/knowhere/CMakeLists.txt
-index bef8d2f..2120c8d 100644
+index bef8d2f..c9b715c 100644
 --- a/internal/core/thirdparty/knowhere/CMakeLists.txt
 +++ b/internal/core/thirdparty/knowhere/CMakeLists.txt
 @@ -14,10 +14,22 @@
@@ -27,7 +27,7 @@ index bef8d2f..2120c8d 100644
  
  message(STATUS "Building knowhere-${KNOWHERE_SOURCE_VER} from source")
  message(STATUS ${CMAKE_BUILD_TYPE})
-@@ -34,12 +46,88 @@ else ()
+@@ -34,12 +46,109 @@ else ()
      set(WITH_CARDINAL OFF CACHE BOOL "" FORCE )
  endif()
  
@@ -109,17 +109,38 @@ index bef8d2f..2120c8d 100644
 -FetchContent_Declare(
 +endif()
 +
-+if(DEFINED MILVUS_KNOWHERE_SOURCE_DIR AND EXISTS "${MILVUS_KNOWHERE_SOURCE_DIR}/CMakeLists.txt")
++# Resolve local Knowhere: -D, env, or default AMD workdir (skip FetchContent / github.dxc.com).
++if(NOT MILVUS_KNOWHERE_SOURCE_DIR)
++  if(DEFINED ENV{MILVUS_KNOWHERE_SOURCE_DIR} AND NOT "$ENV{MILVUS_KNOWHERE_SOURCE_DIR}" STREQUAL "")
++    set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{MILVUS_KNOWHERE_SOURCE_DIR}")
++  elseif(DEFINED ENV{KNOWHERE_DIR} AND NOT "$ENV{KNOWHERE_DIR}" STREQUAL "")
++    set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{KNOWHERE_DIR}")
++  elseif(EXISTS "$ENV{HOME}/rocmds_check_gfx1100/knowhere/CMakeLists.txt")
++    set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{HOME}/rocmds_check_gfx1100/knowhere")
++  endif()
++endif()
++if(MILVUS_KNOWHERE_SOURCE_DIR AND EXISTS "${MILVUS_KNOWHERE_SOURCE_DIR}/CMakeLists.txt")
++  message(STATUS "MILVUS Layer3: using local Knowhere SOURCE_DIR=${MILVUS_KNOWHERE_SOURCE_DIR}")
 +  set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
 +  set(knowhere_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/knowhere-build")
 +  file(MAKE_DIRECTORY "${knowhere_BINARY_DIR}")
 +  add_subdirectory( ${knowhere_SOURCE_DIR} ${knowhere_BINARY_DIR} )
++elseif(WITH_HIP)
++  message(FATAL_ERROR
++    "HIP build requires a local Knowhere tree (FetchContent to github.dxc.com is not used).
++"
++    "  cmake ... -DMILVUS_KNOWHERE_SOURCE_DIR=/path/to/knowhere
++"
++    "  or: export MILVUS_KNOWHERE_SOURCE_DIR=/path/to/knowhere
++"
++    "  got MILVUS_KNOWHERE_SOURCE_DIR='${MILVUS_KNOWHERE_SOURCE_DIR}'")
 +else()
++  message(STATUS "MILVUS Layer3: FetchContent knowhere from ${GIT_REPOSITORY} (${KNOWHERE_VERSION})")
 +  FetchContent_Declare(
          knowhere
          GIT_REPOSITORY  ${GIT_REPOSITORY}
          GIT_TAG         ${KNOWHERE_VERSION}
-@@ -47,14 +135,15 @@ FetchContent_Declare(
+@@ -47,14 +156,15 @@ FetchContent_Declare(
          BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/knowhere-build
          DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )
  

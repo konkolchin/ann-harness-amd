@@ -175,12 +175,30 @@ else()
 set( CMAKE_PREFIX_PATH ${CONAN_BOOST_ROOT} )
 endif()
 
-if(DEFINED MILVUS_KNOWHERE_SOURCE_DIR AND EXISTS "${MILVUS_KNOWHERE_SOURCE_DIR}/CMakeLists.txt")
+# Resolve local Knowhere: -D, env, or default AMD workdir (skip FetchContent / github.dxc.com).
+if(NOT MILVUS_KNOWHERE_SOURCE_DIR)
+  if(DEFINED ENV{MILVUS_KNOWHERE_SOURCE_DIR} AND NOT "$ENV{MILVUS_KNOWHERE_SOURCE_DIR}" STREQUAL "")
+    set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{MILVUS_KNOWHERE_SOURCE_DIR}")
+  elseif(DEFINED ENV{KNOWHERE_DIR} AND NOT "$ENV{KNOWHERE_DIR}" STREQUAL "")
+    set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{KNOWHERE_DIR}")
+  elseif(EXISTS "$ENV{HOME}/rocmds_check_gfx1100/knowhere/CMakeLists.txt")
+    set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{HOME}/rocmds_check_gfx1100/knowhere")
+  endif()
+endif()
+if(MILVUS_KNOWHERE_SOURCE_DIR AND EXISTS "${MILVUS_KNOWHERE_SOURCE_DIR}/CMakeLists.txt")
+  message(STATUS "MILVUS Layer3: using local Knowhere SOURCE_DIR=${MILVUS_KNOWHERE_SOURCE_DIR}")
   set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
   set(knowhere_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/knowhere-build")
   file(MAKE_DIRECTORY "${knowhere_BINARY_DIR}")
   add_subdirectory( ${knowhere_SOURCE_DIR} ${knowhere_BINARY_DIR} )
+elseif(WITH_HIP)
+  message(FATAL_ERROR
+    "HIP build requires a local Knowhere tree (FetchContent to github.dxc.com is not used).\n"
+    "  cmake ... -DMILVUS_KNOWHERE_SOURCE_DIR=/path/to/knowhere\n"
+    "  or: export MILVUS_KNOWHERE_SOURCE_DIR=/path/to/knowhere\n"
+    "  got MILVUS_KNOWHERE_SOURCE_DIR='${MILVUS_KNOWHERE_SOURCE_DIR}'")
 else()
+  message(STATUS "MILVUS Layer3: FetchContent knowhere from ${GIT_REPOSITORY} (${KNOWHERE_VERSION})")
   FetchContent_Declare(
         knowhere
         GIT_REPOSITORY  ${GIT_REPOSITORY}

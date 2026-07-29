@@ -84,9 +84,12 @@ echo "==> apply Layer 3 patches"
 bash "${REPO_ROOT}/scripts/apply_milvus_layer3_patches.sh" "${MILVUS_DIR}"
 
 # Prefer the already-patched Layer-2 knowhere tree on the lab host.
+# Export too: milvus Knowhere CMakeLists also reads ENV{MILVUS_KNOWHERE_SOURCE_DIR}.
 CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS:-}"
+export KNOWHERE_DIR
 if [ -f "${KNOWHERE_DIR}/CMakeLists.txt" ] && grep -q 'Early WITH_HIP before project' "${KNOWHERE_DIR}/CMakeLists.txt" 2>/dev/null; then
   echo "==> using local HIP Knowhere: ${KNOWHERE_DIR}"
+  export MILVUS_KNOWHERE_SOURCE_DIR="${MILVUS_KNOWHERE_SOURCE_DIR:-${KNOWHERE_DIR}}"
   # Nested under Milvus: CMAKE_SOURCE_DIR is Milvus internal/core, not Knowhere.
   # Patch 0034 used CMAKE_SOURCE_DIR for cuvs_knowhere_index_hip.cu — fix in place.
   _kh_fixup="${KNOWHERE_DIR}/cmake/libs/knowhere_hip_host_fixup.cmake"
