@@ -182,11 +182,15 @@ set -e
 if [ "${_build_rc}" -ne 0 ]; then
   echo ""
   echo "BUILD FAILED (exit ${_build_rc}). CMake / make errors:" >&2
-  grep -iE 'CMake Error|Configuring incomplete|No rule to make target|fatal error:|error:|undefined reference|ld\.lld:|linker command failed|ConanException|Error downloading|FAILED:|Stop\.' \
-    "${LOG}" | grep -viE 'deprecated|FMT_DEPRECATED|-Wdeprecated|note:|warning:' | tail -60 >&2 || true
+  # Prefer real configure failures; avoid matching random 'error:' substrings in Makefile helpers.
+  grep -nE 'CMake Error|Configuring incomplete|FATAL_ERROR|WITH_HIP=ON but WITH_CUVS|No rule to make target|undefined reference|ld\.lld:|linker command failed|ConanException|Error downloading|FAILED:' \
+    "${LOG}" | grep -viE 'deprecated|FMT_DEPRECATED|-Wdeprecated|note:|warning:|CPU_ARCH|machdep\.cpu' | tail -80 >&2 || true
   echo "" >&2
-  echo "---- last 40 log lines ----" >&2
-  tail -40 "${LOG}" >&2
+  echo "---- KNOWHERE / HIP flags (last match) ----" >&2
+  grep -E 'WITH_CUVS=|WITH_HIP=|MILVUS Layer3|CMAKE_EXTRA_ARGS=' "${LOG}" | tail -30 >&2 || true
+  echo "" >&2
+  echo "---- last 30 log lines ----" >&2
+  tail -30 "${LOG}" >&2
   echo "" >&2
   echo "Full log: ${LOG}" >&2
   echo "Tip: FORCE_CLEAN_CMAKE=1 SKIP_CLONE=1 bash scripts/build_milvus_layer3.sh" >&2
