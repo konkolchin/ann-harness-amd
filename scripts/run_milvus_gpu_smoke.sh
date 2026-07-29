@@ -47,6 +47,14 @@ fi
 
 mkdir -p "${LOG_DIR}"
 
+# Standalone defaults to /var/lib/milvus (needs root). Keep data under WORKDIR.
+_MILVUS_DATA="${MILVUS_DATA_DIR:-${WORKDIR}/volumes/milvus}"
+mkdir -p "${_MILVUS_DATA}/rdb_data" "${_MILVUS_DATA}/rdb_data_meta_kv" "${_MILVUS_DATA}/data"
+export ROCKSMQ_PATH="${ROCKSMQ_PATH:-${_MILVUS_DATA}/rdb_data}"
+export MQ_ROCKSMQ_PATH="${MQ_ROCKSMQ_PATH:-${ROCKSMQ_PATH}}"
+export LOCAL_STORAGE_PATH="${LOCAL_STORAGE_PATH:-${_MILVUS_DATA}/data}"
+echo "==> milvus data dir: ${_MILVUS_DATA} (ROCKSMQ_PATH=${ROCKSMQ_PATH})"
+
 _milvus_bin=""
 for c in \
   "${MILVUS_DIR}/bin/milvus" \
@@ -122,7 +130,12 @@ if [ "${SKIP_START:-0}" != "1" ]; then
     echo "==> starting milvus standalone (log: ${MILVUS_LOG})"
     cd "${MILVUS_DIR}"
     set +e
-    nohup env LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" LD_PRELOAD="${LD_PRELOAD:-}" \
+    nohup env \
+      LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" \
+      LD_PRELOAD="${LD_PRELOAD:-}" \
+      ROCKSMQ_PATH="${ROCKSMQ_PATH}" \
+      MQ_ROCKSMQ_PATH="${MQ_ROCKSMQ_PATH}" \
+      LOCAL_STORAGE_PATH="${LOCAL_STORAGE_PATH}" \
       "${_milvus_bin}" run standalone >"${MILVUS_LOG}" 2>&1 &
     echo $! >"${PID_FILE}"
     _pid=$(cat "${PID_FILE}")
@@ -135,6 +148,12 @@ if [ "${SKIP_START:-0}" != "1" ]; then
         echo "" >&2
         echo "This is the duplicate-gflags abort. Diagnose:" >&2
         echo "  bash ${REPO_ROOT}/scripts/prepare_milvus_gflags.sh" >&2
+      fi
+      if grep -q 'permission denied' "${MILVUS_LOG}" 2>/dev/null; then
+        echo "" >&2
+        echo "Permission denied on data path. Retry with:" >&2
+        echo "  export MILVUS_DATA_DIR=${WORKDIR}/volumes/milvus" >&2
+        echo "  mkdir -p \"\$MILVUS_DATA_DIR\"/{rdb_data,data}" >&2
       fi
       set -e
       exit 1
