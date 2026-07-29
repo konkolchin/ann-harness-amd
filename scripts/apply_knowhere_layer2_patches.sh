@@ -55,6 +55,14 @@ verify_patches() {
     echo "VERIFY FAIL: CMakeLists.txt missing patch 0010 early WITH_HIP block" >&2
     ok=0
   fi
+  if ! grep -q 'explicit opt-in only' CMakeLists.txt; then
+    echo "VERIFY FAIL: missing patch 0049 WITH_HIP explicit opt-in (INSTALL_PREFIX auto-ON must be gone)" >&2
+    ok=0
+  fi
+  if grep -q 'INSTALL_PREFIX.*-> WITH_HIP' CMakeLists.txt; then
+    echo "VERIFY FAIL: INSTALL_PREFIX still auto-enables WITH_HIP (breaks CUDA CI)" >&2
+    ok=0
+  fi
   if ! grep -q 'knowhere_cuvs_hip WHOLE_ARCHIVE' cmake/libs/knowhere_hip_host_fixup.cmake; then
     echo "VERIFY FAIL: missing patch 0030 knowhere_cuvs_hip WHOLE_ARCHIVE + --hip-link" >&2
     ok=0
@@ -186,5 +194,5 @@ echo ""
 echo "Layer 2 patches applied under ${KNOWHERE_DIR}"
 echo "Next:"
 echo "  bash ${REPO_ROOT}/scripts/configure_knowhere_hip.sh"
-echo "  # or manually: export INSTALL_PREFIX=\$HOME/rocmds_check_gfx1100/install"
+echo "  # or: export KNOWHERE_WITH_HIP=1 INSTALL_PREFIX=\$HOME/rocmds_check_gfx1100/install"
 echo "  # cmake .. -DWITH_CUVS=ON -DWITH_HIP=ON -DCMAKE_PREFIX_PATH=\"\$INSTALL_PREFIX;/opt/rocm\" ..."

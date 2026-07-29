@@ -1,0 +1,63 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0000000..1111111 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -14,32 +14,26 @@
+ 
+ cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
+ 
+-# Early WITH_HIP before project(): Conan injects WITH_CUVS at project() time, so do
+-# not read or default WITH_CUVS here. Auto-detect HIP from INSTALL_PREFIX env.
++# Early WITH_HIP before project(): Conan injects WITH_CUVS at project() time.
++# Default OFF. Enable HIP only via explicit opt-in (never auto from INSTALL_PREFIX:
++# that path also exists for CUDA cuVS and breaks NVIDIA CI / clean CUDA builds).
++# Opt-in: -DWITH_HIP=ON  or  KNOWHERE_WITH_HIP=1|ON|TRUE|YES
+ if(NOT DEFINED WITH_HIP)
+   set(_knowhere_want_hip OFF)
+-  if(DEFINED ENV{KNOWHERE_WITH_HIP} AND NOT "$ENV{KNOWHERE_WITH_HIP}" STREQUAL "0")
+-    set(_knowhere_want_hip ON)
+-  elseif(DEFINED ENV{INSTALL_PREFIX})
+-    set(_knowhere_install_prefix "$ENV{INSTALL_PREFIX}")
+-    if(_knowhere_install_prefix MATCHES "^~")
+-      if(DEFINED ENV{HOME})
+-        string(REPLACE "~" "$ENV{HOME}" _knowhere_install_prefix "${_knowhere_install_prefix}")
+-      endif()
+-    endif()
+-    get_filename_component(_knowhere_install_prefix "${_knowhere_install_prefix}" ABSOLUTE)
+-    if(EXISTS "${_knowhere_install_prefix}/lib/cmake/cuvs/cuvs-config.cmake")
++  if(DEFINED ENV{KNOWHERE_WITH_HIP})
++    string(TOUPPER "$ENV{KNOWHERE_WITH_HIP}" _knowhere_hip_env)
++    if(_knowhere_hip_env STREQUAL "1"
++       OR _knowhere_hip_env STREQUAL "ON"
++       OR _knowhere_hip_env STREQUAL "TRUE"
++       OR _knowhere_hip_env STREQUAL "YES")
+       set(_knowhere_want_hip ON)
+     endif()
++    unset(_knowhere_hip_env)
+   endif()
+   set(WITH_HIP ${_knowhere_want_hip} CACHE BOOL
+       "Link prebuilt hipVS/hipRAFT (ROCm) instead of CUDA cuVS")
+-  if(DEFINED _knowhere_install_prefix)
+-    message(STATUS "KNOWHERE: INSTALL_PREFIX=${_knowhere_install_prefix} -> WITH_HIP=${WITH_HIP}")
+-    unset(_knowhere_install_prefix)
+-  else()
+-    message(STATUS "KNOWHERE: WITH_HIP=${WITH_HIP}")
+-  endif()
++  message(STATUS "KNOWHERE: early WITH_HIP=${WITH_HIP} (explicit opt-in only; INSTALL_PREFIX ignored)")
+   unset(_knowhere_want_hip)
+ endif()
+ if(WITH_HIP)
+@@ -69,9 +63,11 @@
+   find_program(_knowhere_nvcc nvcc)
+   if(NOT _knowhere_nvcc)
+     message(FATAL_ERROR
+       "WITH_CUVS=ON but nvcc not found. For AMD ROCm / hipVS builds set\n"
+-      "  export INSTALL_PREFIX=$HOME/rocmds_check_gfx1100/install\n"
+-      "  cmake ... -DWITH_HIP=ON   (or export KNOWHERE_WITH_HIP=1)\n"
+-      "See ann-harness-amd Layer 2 runbook.")
++      "  export KNOWHERE_WITH_HIP=1\n"
++      "  export INSTALL_PREFIX=$HOME/rocmds_check_gfx1100/install   # hipVS/hipRAFT only\n"
++      "  cmake ... -DWITH_HIP=ON -DWITH_CUVS=ON\n"
++      "CUDA builds: leave WITH_HIP=OFF (default). Do not set KNOWHERE_WITH_HIP.")
+   endif()
+   unset(_knowhere_nvcc)

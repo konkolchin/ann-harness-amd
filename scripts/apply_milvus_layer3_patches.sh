@@ -119,8 +119,12 @@ if ! grep -q 'MILVUS Layer3 HIP' internal/core/thirdparty/knowhere/CMakeLists.tx
   echo "VERIFY FAIL: Layer 3 HIP Knowhere markers missing" >&2
   exit 1
 fi
-if ! grep -q 'WITH_HIP ON' internal/core/thirdparty/knowhere/CMakeLists.txt; then
-  echo "VERIFY FAIL: WITH_HIP not forced in knowhere CMakeLists" >&2
+if ! grep -q 'MILVUS_WITH_HIP' internal/core/thirdparty/knowhere/CMakeLists.txt; then
+  echo "VERIFY FAIL: WITH_HIP must be opt-in via MILVUS_WITH_HIP (not forced ON)" >&2
+  exit 1
+fi
+if grep -qE 'set\(WITH_HIP ON CACHE BOOL "" FORCE' internal/core/thirdparty/knowhere/CMakeLists.txt; then
+  echo "VERIFY FAIL: WITH_HIP still unconditionally FORCE ON (breaks CUDA CI)" >&2
   exit 1
 fi
 if ! grep -q 'without CUDA language' internal/core/src/CMakeLists.txt; then

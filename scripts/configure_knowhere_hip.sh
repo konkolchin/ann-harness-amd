@@ -9,6 +9,7 @@ BUILD_DIR="${KNOWHERE_DIR}/build"
 ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 
 export INSTALL_PREFIX
+export KNOWHERE_WITH_HIP="${KNOWHERE_WITH_HIP:-1}"
 export ROCM_PATH HIP_PATH="${HIP_PATH:-${ROCM_PATH}}"
 export PATH="${ROCM_PATH}/llvm/bin:${HOME}/.local/bin:${PATH}"
 

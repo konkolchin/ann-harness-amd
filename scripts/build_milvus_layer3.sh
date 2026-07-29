@@ -25,6 +25,9 @@ SHIM_DIR="${SHIM_DIR:-${WORKDIR}/libshims}"
 # INSTALL_PREFIX for its own output tree — keep the ROCmDS prefix separately.
 export MILVUS_HIP_INSTALL_PREFIX="${MILVUS_HIP_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
 export ROCMDS_INSTALL_PREFIX="${ROCMDS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
+# WITH_HIP is opt-in only (never auto from GPU=ON / INSTALL_PREFIX). AMD lab must set these.
+export MILVUS_WITH_HIP="${MILVUS_WITH_HIP:-1}"
+export KNOWHERE_WITH_HIP="${KNOWHERE_WITH_HIP:-1}"
 export INSTALL_PREFIX ROCM_PATH HIP_PATH="${HIP_PATH:-${ROCM_PATH}}"
 export PATH="${ROCM_PATH}/llvm/bin:${HOME}/.local/bin:${PATH}"
 export LD_LIBRARY_PATH="${MILVUS_HIP_INSTALL_PREFIX}/lib:${ROCM_PATH}/lib:${LD_LIBRARY_PATH:-}"
@@ -159,8 +162,13 @@ set +e
   echo "MILVUS_DIR=${MILVUS_DIR}"
   echo "MILVUS_HIP_INSTALL_PREFIX=${MILVUS_HIP_INSTALL_PREFIX}"
   echo "ROCM_PATH=${ROCM_PATH}"
-  echo "CMAKE_EXTRA_ARGS=${CMAKE_EXTRA_ARGS}"
   export MILVUS_GPU_VERSION=ON
+  export MILVUS_WITH_HIP="${MILVUS_WITH_HIP:-1}"
+  export KNOWHERE_WITH_HIP="${KNOWHERE_WITH_HIP:-1}"
+  CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -DMILVUS_WITH_HIP=ON -DWITH_HIP=ON"
+  export CMAKE_EXTRA_ARGS
+  echo "CMAKE_EXTRA_ARGS=${CMAKE_EXTRA_ARGS}"
+  echo "MILVUS_WITH_HIP=${MILVUS_WITH_HIP} KNOWHERE_WITH_HIP=${KNOWHERE_WITH_HIP}"
   if [ -f Makefile ] && grep -q '^milvus-gpu:' Makefile; then
     echo "==== make milvus-gpu ===="
     make milvus-gpu
