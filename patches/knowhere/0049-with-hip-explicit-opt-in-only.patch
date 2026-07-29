@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 0000000..1111111 100644
+index ea5b426..ac237ca 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -14,32 +14,26 @@
+@@ -14,32 +14,25 @@
  
  cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
  
@@ -47,8 +47,7 @@ index 0000000..1111111 100644
    unset(_knowhere_want_hip)
  endif()
  if(WITH_HIP)
-@@ -69,9 +63,11 @@
-   find_program(_knowhere_nvcc nvcc)
+@@ -70,9 +63,10 @@ elseif(WITH_CUVS)
    if(NOT _knowhere_nvcc)
      message(FATAL_ERROR
        "WITH_CUVS=ON but nvcc not found. For AMD ROCm / hipVS builds set\n"
@@ -61,3 +60,4 @@ index 0000000..1111111 100644
 +      "CUDA builds: leave WITH_HIP=OFF (default). Do not set KNOWHERE_WITH_HIP.")
    endif()
    unset(_knowhere_nvcc)
+   set(CMAKE_CUDA_ARCHITECTURES RAPIDS)

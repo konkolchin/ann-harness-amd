@@ -78,12 +78,41 @@ set( GIT_REPOSITORY ${MILVUS_KNOWHERE_GIT_REPOSITORY} )
     )
     new_raft = (
         'if ( MILVUS_GPU_VERSION STREQUAL "ON" )\n'
-        "  # NVIDIA path used WITH_RAFT; AMD Layer-3 HIP Knowhere uses WITH_CUVS + WITH_HIP\n"
-        "  # against prebuilt hipVS/hipRAFT under INSTALL_PREFIX.\n"
+        "  # GPU Knowhere uses WITH_CUVS. WITH_HIP is AMD-only and MUST stay OFF for CUDA CI:\n"
+        "  # never FORCE ON just because MILVUS_GPU_VERSION=ON (that pulls ROCm and breaks NVIDIA).\n"
+        "  # Opt-in: -DMILVUS_WITH_HIP=ON  or  export MILVUS_WITH_HIP=1  or  KNOWHERE_WITH_HIP=1\n"
         '  set(WITH_CUVS ON CACHE BOOL "" FORCE )\n'
-        '  set(WITH_HIP ON CACHE BOOL "" FORCE )\n'
-        '  set(WITH_RAFT OFF CACHE BOOL "" FORCE )\n'
-        '  message(STATUS "MILVUS Layer3 HIP: WITH_CUVS=ON WITH_HIP=ON (hipVS/hipRAFT)")\n'
+        "  set(_milvus_want_hip OFF)\n"
+        "  if(DEFINED MILVUS_WITH_HIP AND MILVUS_WITH_HIP)\n"
+        "    set(_milvus_want_hip ON)\n"
+        "  elseif(DEFINED ENV{MILVUS_WITH_HIP})\n"
+        '    string(TOUPPER "$ENV{MILVUS_WITH_HIP}" _milvus_hip_env)\n'
+        '    if(_milvus_hip_env STREQUAL "1"\n'
+        '       OR _milvus_hip_env STREQUAL "ON"\n'
+        '       OR _milvus_hip_env STREQUAL "TRUE"\n'
+        '       OR _milvus_hip_env STREQUAL "YES")\n'
+        "      set(_milvus_want_hip ON)\n"
+        "    endif()\n"
+        "    unset(_milvus_hip_env)\n"
+        "  elseif(DEFINED ENV{KNOWHERE_WITH_HIP})\n"
+        '    string(TOUPPER "$ENV{KNOWHERE_WITH_HIP}" _milvus_hip_env)\n'
+        '    if(_milvus_hip_env STREQUAL "1"\n'
+        '       OR _milvus_hip_env STREQUAL "ON"\n'
+        '       OR _milvus_hip_env STREQUAL "TRUE"\n'
+        '       OR _milvus_hip_env STREQUAL "YES")\n'
+        "      set(_milvus_want_hip ON)\n"
+        "    endif()\n"
+        "    unset(_milvus_hip_env)\n"
+        "  endif()\n"
+        "  set(WITH_HIP ${_milvus_want_hip} CACHE BOOL\n"
+        '      "Link Knowhere against hipVS/hipRAFT (ROCm); OFF for CUDA" FORCE)\n'
+        "  if(_milvus_want_hip)\n"
+        '    set(WITH_RAFT OFF CACHE BOOL "" FORCE )\n'
+        '    message(STATUS "MILVUS Layer3 HIP: WITH_CUVS=ON WITH_HIP=ON (hipVS/hipRAFT)")\n'
+        "  else()\n"
+        '    message(STATUS "MILVUS GPU: WITH_CUVS=ON WITH_HIP=OFF (CUDA; set MILVUS_WITH_HIP=1 for AMD)")\n'
+        "  endif()\n"
+        "  unset(_milvus_want_hip)\n"
         "endif ()\n"
     )
     if old_raft not in new:
@@ -107,7 +136,8 @@ set( GIT_REPOSITORY ${MILVUS_KNOWHERE_GIT_REPOSITORY} )
     if end < 0:
         raise SystemExit("missing prometheus COMPILE_OPTIONS marker")
 
-    replacement = """# Prefer hipVS/hipRAFT + ROCm ahead of Conan boost for find_package(cuvs/raft/hip).
+    replacement = """if(WITH_HIP)
+# Prefer hipVS/hipRAFT + ROCm ahead of Conan boost for find_package(cuvs/raft/hip).
 # Do NOT read ENV{INSTALL_PREFIX}: Milvus core_build.sh overwrites it to the Milvus
 # output tree, which hides hipVS/xxHash under ~/rocmds_check_gfx1100/install.
 # Do NOT prepend Knowhere Conan CMakeDeps generators - their xxHashConfig.cmake
@@ -135,6 +165,9 @@ foreach(_xx_cand
 endforeach()
 message(STATUS "MILVUS Layer3 Knowhere CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
 message(STATUS "MILVUS Layer3 Knowhere xxHash_DIR: ${xxHash_DIR}")
+else()
+set( CMAKE_PREFIX_PATH ${CONAN_BOOST_ROOT} )
+endif()
 
 if(DEFINED MILVUS_KNOWHERE_SOURCE_DIR AND EXISTS "${MILVUS_KNOWHERE_SOURCE_DIR}/CMakeLists.txt")
   set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
@@ -183,7 +216,10 @@ def main() -> None:
         (td / REL).write_text(new, encoding="utf-8", newline="\n")
         diff = subprocess.check_output(["git", "diff", "--", str(REL)], cwd=td, text=True)
         OUT.parent.mkdir(parents=True, exist_ok=True)
-        OUT.write_text(diff, encoding="utf-8", newline="\n")
+        # Always LF: git apply on Linux rejects CRLF as "corrupt patch".
+        OUT.write_bytes(diff.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8"))
+        if not OUT.read_bytes().endswith(b"\n"):
+            OUT.write_bytes(OUT.read_bytes() + b"\n")
         print(f"wrote {OUT} ({len(diff.splitlines())} lines)")
     finally:
         shutil.rmtree(td, ignore_errors=True)
