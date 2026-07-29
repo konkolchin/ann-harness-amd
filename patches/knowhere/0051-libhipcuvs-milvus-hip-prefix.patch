@@ -1,0 +1,19 @@
+diff --git a/cmake/libs/libhipcuvs.cmake b/cmake/libs/libhipcuvs.cmake
+index c832502..48784ff 100644
+--- a/cmake/libs/libhipcuvs.cmake
++++ b/cmake/libs/libhipcuvs.cmake
+@@ -22,6 +22,14 @@ if(EXISTS "${_knowhere_rocm_prefix}/lib/cmake/hip")
+   set(hip_DIR "${_knowhere_rocm_prefix}/lib/cmake/hip" CACHE PATH "ROCm hip cmake dir")
+ endif()
+ 
++# Milvus Layer-3 unsets INSTALL_PREFIX before configure (own install layout).
++# Prefer HIPVS_PREFIX / MILVUS_HIP_INSTALL_PREFIX / ROCMDS_INSTALL_PREFIX.
++if(DEFINED ENV{MILVUS_HIP_INSTALL_PREFIX} AND NOT "$ENV{MILVUS_HIP_INSTALL_PREFIX}" STREQUAL "")
++  list(PREPEND CMAKE_PREFIX_PATH "$ENV{MILVUS_HIP_INSTALL_PREFIX}")
++endif()
++if(DEFINED ENV{ROCMDS_INSTALL_PREFIX} AND NOT "$ENV{ROCMDS_INSTALL_PREFIX}" STREQUAL "")
++  list(PREPEND CMAKE_PREFIX_PATH "$ENV{ROCMDS_INSTALL_PREFIX}")
++endif()
+ if(DEFINED ENV{INSTALL_PREFIX})
+   list(PREPEND CMAKE_PREFIX_PATH "$ENV{INSTALL_PREFIX}")
+ endif()

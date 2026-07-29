@@ -132,8 +132,8 @@ if ! grep -q 'set(WITH_HIP ${_milvus_want_hip} CACHE BOOL' internal/core/thirdpa
   echo "VERIFY FAIL: missing opt-in WITH_HIP=\${_milvus_want_hip} assignment" >&2
   exit 1
 fi
-if ! grep -q 'MILVUS_KNOWHERE_CONFIGURED' internal/core/thirdparty/knowhere/CMakeLists.txt; then
-  echo "VERIFY FAIL: missing MILVUS_KNOWHERE_CONFIGURED latch against double Knowhere configure" >&2
+if ! grep -q 'MILVUS_KNOWHERE_ADDED\|MILVUS_KNOWHERE_CONFIGURED' internal/core/thirdparty/knowhere/CMakeLists.txt; then
+  echo "VERIFY FAIL: missing MILVUS_KNOWHERE_ADDED/CONFIGURED latch against double Knowhere configure" >&2
   exit 1
 fi
 if ! grep -q 'without CUDA language' internal/core/src/CMakeLists.txt; then

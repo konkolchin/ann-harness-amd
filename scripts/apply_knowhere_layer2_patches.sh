@@ -71,6 +71,10 @@ verify_patches() {
     echo "VERIFY FAIL: missing patch 0050 WITH_HIP implies WITH_CUVS" >&2
     ok=0
   fi
+  if ! grep -q 'MILVUS_HIP_INSTALL_PREFIX' cmake/libs/libhipcuvs.cmake; then
+    echo "VERIFY FAIL: missing patch 0051 MILVUS_HIP_INSTALL_PREFIX in libhipcuvs.cmake" >&2
+    ok=0
+  fi
   if ! grep -q 'knowhere_cuvs_hip WHOLE_ARCHIVE' cmake/libs/knowhere_hip_host_fixup.cmake; then
     echo "VERIFY FAIL: missing patch 0030 knowhere_cuvs_hip WHOLE_ARCHIVE + --hip-link" >&2
     ok=0

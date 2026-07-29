@@ -25,6 +25,9 @@ SHIM_DIR="${SHIM_DIR:-${WORKDIR}/libshims}"
 # INSTALL_PREFIX for its own output tree — keep the ROCmDS prefix separately.
 export MILVUS_HIP_INSTALL_PREFIX="${MILVUS_HIP_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
 export ROCMDS_INSTALL_PREFIX="${ROCMDS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
+# libhipcuvs.cmake find_package(raft/cuvs) uses HIPVS_PREFIX or INSTALL_PREFIX.
+# We must unset INSTALL_PREFIX before Milvus install (layout), so export HIPVS_PREFIX.
+export HIPVS_PREFIX="${HIPVS_PREFIX:-${MILVUS_HIP_INSTALL_PREFIX}}"
 # WITH_HIP is opt-in only (never auto from GPU=ON / INSTALL_PREFIX). AMD lab must set these.
 export MILVUS_WITH_HIP="${MILVUS_WITH_HIP:-1}"
 export KNOWHERE_WITH_HIP="${KNOWHERE_WITH_HIP:-1}"
@@ -157,25 +160,60 @@ cd "${MILVUS_DIR}"
 # CMAKE_EXTRA_ARGS is consumed by core_build.sh (-DMILVUS_KNOWHERE_SOURCE_DIR=...).
 # Unset INSTALL_PREFIX so core_build.sh uses its default (internal/core/output) and does
 # not inherit the hipVS prefix (which would break Milvus install layout).
-# hipVS path is passed via MILVUS_HIP_INSTALL_PREFIX / ROCMDS_INSTALL_PREFIX only.
+# hipVS path is passed via MILVUS_HIP_INSTALL_PREFIX / HIPVS_PREFIX / ROCMDS_INSTALL_PREFIX only.
+# Keep HIPVS_PREFIX set — Knowhere libhipcuvs.cmake find_package(raft) needs it.
+export HIPVS_PREFIX="${HIPVS_PREFIX:-${MILVUS_HIP_INSTALL_PREFIX}}"
+# Explicit package dirs so a nested Knowhere configure still finds hipRAFT/hipVS.
+_raft_dir=""
+_cuvs_dir=""
+_rmm_dir=""
+for _d in \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/raft" \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib64/cmake/raft"
+do
+  if [ -f "${_d}/raft-config.cmake" ] || [ -f "${_d}/raftConfig.cmake" ]; then _raft_dir="${_d}"; break; fi
+done
+for _d in \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/cuvs" \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib64/cmake/cuvs"
+do
+  if [ -f "${_d}/cuvs-config.cmake" ] || [ -f "${_d}/cuvsConfig.cmake" ]; then _cuvs_dir="${_d}"; break; fi
+done
+for _d in \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/rmm" \
+  "${MILVUS_HIP_INSTALL_PREFIX}/lib64/cmake/rmm"
+do
+  if [ -f "${_d}/rmm-config.cmake" ] || [ -f "${_d}/rmmConfig.cmake" ]; then _rmm_dir="${_d}"; break; fi
+done
+if [ -z "${_raft_dir}" ]; then
+  echo "ERROR: raft-config.cmake not found under ${MILVUS_HIP_INSTALL_PREFIX}/lib/cmake/raft" >&2
+  echo "  Complete Layer 1 / hipRAFT install first." >&2
+  exit 1
+fi
+CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS:-} -DMILVUS_WITH_HIP=ON -DWITH_HIP=ON -DWITH_CUVS=ON"
+CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Draft_DIR=${_raft_dir}"
+if [ -n "${_cuvs_dir}" ]; then CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Dcuvs_DIR=${_cuvs_dir}"; fi
+if [ -n "${_rmm_dir}" ]; then CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Drmm_DIR=${_rmm_dir}"; fi
+CMAKE_EXTRA_ARGS="$(printf '%s' "${CMAKE_EXTRA_ARGS}" | tr -d '\n\r' | sed 's/  */ /g')"
+export CMAKE_EXTRA_ARGS HIPVS_PREFIX
+
 unset INSTALL_PREFIX
 set +e
 {
   echo "==== $(date -Is) Layer3 milvus build ===="
   echo "MILVUS_DIR=${MILVUS_DIR}"
   echo "MILVUS_HIP_INSTALL_PREFIX=${MILVUS_HIP_INSTALL_PREFIX}"
+  echo "HIPVS_PREFIX=${HIPVS_PREFIX}"
   echo "ROCM_PATH=${ROCM_PATH}"
+  echo "CMAKE_EXTRA_ARGS=${CMAKE_EXTRA_ARGS}"
+  echo "MILVUS_WITH_HIP=${MILVUS_WITH_HIP:-1} KNOWHERE_WITH_HIP=${KNOWHERE_WITH_HIP:-1}"
   export MILVUS_GPU_VERSION=ON
   export MILVUS_WITH_HIP="${MILVUS_WITH_HIP:-1}"
   export KNOWHERE_WITH_HIP="${KNOWHERE_WITH_HIP:-1}"
-  CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -DMILVUS_WITH_HIP=ON -DWITH_HIP=ON -DWITH_CUVS=ON"
-  # core_build.sh can embed a literal newline into CMAKE_CMD if EXTRA_ARGS has one.
-  CMAKE_EXTRA_ARGS="$(printf '%s' "${CMAKE_EXTRA_ARGS}" | tr -d '\n\r' | sed 's/  */ /g')"
+  export HIPVS_PREFIX
   export CMAKE_EXTRA_ARGS
-  echo "CMAKE_EXTRA_ARGS=${CMAKE_EXTRA_ARGS}"
-  echo "MILVUS_WITH_HIP=${MILVUS_WITH_HIP} KNOWHERE_WITH_HIP=${KNOWHERE_WITH_HIP}"
+  echo "==== make milvus-gpu / core_build ===="
   if [ -f Makefile ] && grep -q '^milvus-gpu:' Makefile; then
-    echo "==== make milvus-gpu ===="
     make milvus-gpu
   else
     bash scripts/core_build.sh -t Release -g
