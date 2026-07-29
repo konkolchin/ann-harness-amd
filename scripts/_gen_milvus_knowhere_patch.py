@@ -195,10 +195,9 @@ elseif(MILVUS_KNOWHERE_SOURCE_DIR AND EXISTS "${MILVUS_KNOWHERE_SOURCE_DIR}/CMak
   set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
   set(knowhere_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/knowhere-build")
   file(MAKE_DIRECTORY "${knowhere_BINARY_DIR}")
-  # Re-assert before nested configure (Milvus may re-enter this file after project()).
+  # Re-assert cuVS before nested configure (Milvus may re-enter this file after project()).
   if(WITH_HIP)
     set(WITH_CUVS ON CACHE BOOL "" FORCE)
-    set(WITH_HIP ON CACHE BOOL "" FORCE)
   endif()
   add_subdirectory( ${knowhere_SOURCE_DIR} ${knowhere_BINARY_DIR} )
 elseif(WITH_HIP)

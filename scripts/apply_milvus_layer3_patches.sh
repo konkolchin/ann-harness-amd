@@ -127,6 +127,11 @@ if grep -qE 'set\(WITH_HIP ON CACHE BOOL "" FORCE' internal/core/thirdparty/know
   echo "VERIFY FAIL: WITH_HIP still unconditionally FORCE ON (breaks CUDA CI)" >&2
   exit 1
 fi
+# Opt-in path must set WITH_HIP from _milvus_want_hip, not a bare ON.
+if ! grep -q 'set(WITH_HIP ${_milvus_want_hip} CACHE BOOL' internal/core/thirdparty/knowhere/CMakeLists.txt; then
+  echo "VERIFY FAIL: missing opt-in WITH_HIP=\${_milvus_want_hip} assignment" >&2
+  exit 1
+fi
 if ! grep -q 'knowhere already added; skip second add_subdirectory' internal/core/thirdparty/knowhere/CMakeLists.txt; then
   echo "VERIFY FAIL: missing guard against double Knowhere add_subdirectory" >&2
   exit 1
