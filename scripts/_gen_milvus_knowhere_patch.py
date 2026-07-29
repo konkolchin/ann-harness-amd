@@ -77,7 +77,7 @@ set( GIT_REPOSITORY ${MILVUS_KNOWHERE_GIT_REPOSITORY} )
         "endif ()\n"
     )
     new_raft = (
-        'if ( MILVUS_GPU_VERSION STREQUAL "ON" )\n'
+        'if ( MILVUS_GPU_VERSION )\n'
         "  # GPU Knowhere uses WITH_CUVS. WITH_HIP is AMD-only and MUST stay OFF for CUDA CI:\n"
         "  # never FORCE ON just because MILVUS_GPU_VERSION=ON (that pulls ROCm and breaks NVIDIA).\n"
         "  # Opt-in: -DMILVUS_WITH_HIP=ON  or  export MILVUS_WITH_HIP=1  or  KNOWHERE_WITH_HIP=1\n"
@@ -114,6 +114,12 @@ set( GIT_REPOSITORY ${MILVUS_KNOWHERE_GIT_REPOSITORY} )
         "  endif()\n"
         "  unset(_milvus_want_hip)\n"
         "endif ()\n"
+        # If HIP was enabled via -DWITH_HIP=ON / env without entering the GPU block
+        # (or GPU flag spelling differs), still force cuVS — Knowhere fatals otherwise.
+        "if(WITH_HIP)\n"
+        '  set(WITH_CUVS ON CACHE BOOL "" FORCE )\n'
+        '  message(STATUS "MILVUS Layer3: WITH_HIP=ON -> forcing WITH_CUVS=ON")\n'
+        "endif()\n"
     )
     if old_raft not in new:
         old_raft_alt = (

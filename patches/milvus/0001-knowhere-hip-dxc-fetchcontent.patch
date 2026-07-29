@@ -1,5 +1,5 @@
 diff --git a/internal/core/thirdparty/knowhere/CMakeLists.txt b/internal/core/thirdparty/knowhere/CMakeLists.txt
-index bef8d2f..2ca2070 100644
+index bef8d2f..2120c8d 100644
 --- a/internal/core/thirdparty/knowhere/CMakeLists.txt
 +++ b/internal/core/thirdparty/knowhere/CMakeLists.txt
 @@ -14,10 +14,22 @@
@@ -27,11 +27,13 @@ index bef8d2f..2ca2070 100644
  
  message(STATUS "Building knowhere-${KNOWHERE_SOURCE_VER} from source")
  message(STATUS ${CMAKE_BUILD_TYPE})
-@@ -35,11 +47,83 @@ else ()
+@@ -34,12 +46,88 @@ else ()
+     set(WITH_CARDINAL OFF CACHE BOOL "" FORCE )
  endif()
  
- if ( MILVUS_GPU_VERSION STREQUAL "ON" )
+-if ( MILVUS_GPU_VERSION STREQUAL "ON" )
 -    set(WITH_RAFT ON CACHE BOOL "" FORCE )
++if ( MILVUS_GPU_VERSION )
 +  # GPU Knowhere uses WITH_CUVS. WITH_HIP is AMD-only and MUST stay OFF for CUDA CI:
 +  # never FORCE ON just because MILVUS_GPU_VERSION=ON (that pulls ROCm and breaks NVIDIA).
 +  # Opt-in: -DMILVUS_WITH_HIP=ON  or  export MILVUS_WITH_HIP=1  or  KNOWHERE_WITH_HIP=1
@@ -68,6 +70,10 @@ index bef8d2f..2ca2070 100644
 +  endif()
 +  unset(_milvus_want_hip)
  endif ()
++if(WITH_HIP)
++  set(WITH_CUVS ON CACHE BOOL "" FORCE )
++  message(STATUS "MILVUS Layer3: WITH_HIP=ON -> forcing WITH_CUVS=ON")
++endif()
  
 +if(WITH_HIP)
 +# Prefer hipVS/hipRAFT + ROCm ahead of Conan boost for find_package(cuvs/raft/hip).
@@ -113,7 +119,7 @@ index bef8d2f..2ca2070 100644
          knowhere
          GIT_REPOSITORY  ${GIT_REPOSITORY}
          GIT_TAG         ${KNOWHERE_VERSION}
-@@ -47,14 +131,15 @@ FetchContent_Declare(
+@@ -47,14 +135,15 @@ FetchContent_Declare(
          BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/knowhere-build
          DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )
  
