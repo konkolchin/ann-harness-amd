@@ -185,7 +185,9 @@ if(NOT MILVUS_KNOWHERE_SOURCE_DIR)
     set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{HOME}/rocmds_check_gfx1100/knowhere")
   endif()
 endif()
-if(TARGET knowhere OR TARGET knowhere::knowhere)
+# TARGET knowhere is not always visible yet; use a cache latch against double configure
+# (Milvus re-enters this file around project(core) and was resetting WITH_CUVS).
+if(MILVUS_KNOWHERE_CONFIGURED)
   message(STATUS "MILVUS Layer3: knowhere already added; skip second add_subdirectory")
   if(NOT knowhere_SOURCE_DIR AND MILVUS_KNOWHERE_SOURCE_DIR)
     set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
@@ -195,10 +197,10 @@ elseif(MILVUS_KNOWHERE_SOURCE_DIR AND EXISTS "${MILVUS_KNOWHERE_SOURCE_DIR}/CMak
   set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
   set(knowhere_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/knowhere-build")
   file(MAKE_DIRECTORY "${knowhere_BINARY_DIR}")
-  # Re-assert cuVS before nested configure (Milvus may re-enter this file after project()).
   if(WITH_HIP)
     set(WITH_CUVS ON CACHE BOOL "" FORCE)
   endif()
+  set(MILVUS_KNOWHERE_CONFIGURED ON CACHE BOOL "Knowhere add_subdirectory already done" FORCE)
   add_subdirectory( ${knowhere_SOURCE_DIR} ${knowhere_BINARY_DIR} )
 elseif(WITH_HIP)
   message(FATAL_ERROR

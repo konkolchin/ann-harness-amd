@@ -1,0 +1,13 @@
+diff --git a/scripts/core_build.sh b/scripts/core_build.sh
+index 7169ce0..446352e 100644
+--- a/scripts/core_build.sh
++++ b/scripts/core_build.sh
+@@ -243,7 +243,7 @@ arch=$(uname -m)
+ CMAKE_CMD="cmake \
+ ${CMAKE_EXTRA_ARGS} \
+ -DBUILD_UNIT_TEST=${BUILD_UNITTEST} \
+--DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX}
++-DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
+ -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+ -DCMAKE_CUDA_COMPILER=${CUDA_COMPILER} \
+ -DCMAKE_LIBRARY_ARCHITECTURE=${arch} \

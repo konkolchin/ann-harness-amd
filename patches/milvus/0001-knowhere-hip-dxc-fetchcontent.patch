@@ -1,5 +1,5 @@
 diff --git a/internal/core/thirdparty/knowhere/CMakeLists.txt b/internal/core/thirdparty/knowhere/CMakeLists.txt
-index bef8d2f..61e81c0 100644
+index bef8d2f..a5d9dca 100644
 --- a/internal/core/thirdparty/knowhere/CMakeLists.txt
 +++ b/internal/core/thirdparty/knowhere/CMakeLists.txt
 @@ -14,10 +14,22 @@
@@ -27,7 +27,7 @@ index bef8d2f..61e81c0 100644
  
  message(STATUS "Building knowhere-${KNOWHERE_SOURCE_VER} from source")
  message(STATUS ${CMAKE_BUILD_TYPE})
-@@ -34,12 +46,118 @@ else ()
+@@ -34,12 +46,120 @@ else ()
      set(WITH_CARDINAL OFF CACHE BOOL "" FORCE )
  endif()
  
@@ -119,7 +119,9 @@ index bef8d2f..61e81c0 100644
 +    set(MILVUS_KNOWHERE_SOURCE_DIR "$ENV{HOME}/rocmds_check_gfx1100/knowhere")
 +  endif()
 +endif()
-+if(TARGET knowhere OR TARGET knowhere::knowhere)
++# TARGET knowhere is not always visible yet; use a cache latch against double configure
++# (Milvus re-enters this file around project(core) and was resetting WITH_CUVS).
++if(MILVUS_KNOWHERE_CONFIGURED)
 +  message(STATUS "MILVUS Layer3: knowhere already added; skip second add_subdirectory")
 +  if(NOT knowhere_SOURCE_DIR AND MILVUS_KNOWHERE_SOURCE_DIR)
 +    set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
@@ -129,10 +131,10 @@ index bef8d2f..61e81c0 100644
 +  set(knowhere_SOURCE_DIR "${MILVUS_KNOWHERE_SOURCE_DIR}")
 +  set(knowhere_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/knowhere-build")
 +  file(MAKE_DIRECTORY "${knowhere_BINARY_DIR}")
-+  # Re-assert cuVS before nested configure (Milvus may re-enter this file after project()).
 +  if(WITH_HIP)
 +    set(WITH_CUVS ON CACHE BOOL "" FORCE)
 +  endif()
++  set(MILVUS_KNOWHERE_CONFIGURED ON CACHE BOOL "Knowhere add_subdirectory already done" FORCE)
 +  add_subdirectory( ${knowhere_SOURCE_DIR} ${knowhere_BINARY_DIR} )
 +elseif(WITH_HIP)
 +  message(FATAL_ERROR
@@ -149,7 +151,7 @@ index bef8d2f..61e81c0 100644
          knowhere
          GIT_REPOSITORY  ${GIT_REPOSITORY}
          GIT_TAG         ${KNOWHERE_VERSION}
-@@ -47,14 +165,15 @@ FetchContent_Declare(
+@@ -47,14 +167,15 @@ FetchContent_Declare(
          BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/knowhere-build
          DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )
  
