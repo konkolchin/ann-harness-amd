@@ -63,6 +63,14 @@ verify_patches() {
     echo "VERIFY FAIL: INSTALL_PREFIX still auto-enables WITH_HIP (breaks CUDA CI)" >&2
     ok=0
   fi
+  if grep -q 'WITH_HIP=ON but WITH_CUVS=OFF' CMakeLists.txt; then
+    echo "VERIFY FAIL: patch 0050 missing (WITH_HIP must imply WITH_CUVS, not fatal)" >&2
+    ok=0
+  fi
+  if ! grep -q 'WITH_HIP=ON -> forcing WITH_CUVS=ON' CMakeLists.txt; then
+    echo "VERIFY FAIL: missing patch 0050 WITH_HIP implies WITH_CUVS" >&2
+    ok=0
+  fi
   if ! grep -q 'knowhere_cuvs_hip WHOLE_ARCHIVE' cmake/libs/knowhere_hip_host_fixup.cmake; then
     echo "VERIFY FAIL: missing patch 0030 knowhere_cuvs_hip WHOLE_ARCHIVE + --hip-link" >&2
     ok=0

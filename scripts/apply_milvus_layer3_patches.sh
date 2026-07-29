@@ -127,6 +127,10 @@ if grep -qE 'set\(WITH_HIP ON CACHE BOOL "" FORCE' internal/core/thirdparty/know
   echo "VERIFY FAIL: WITH_HIP still unconditionally FORCE ON (breaks CUDA CI)" >&2
   exit 1
 fi
+if ! grep -q 'knowhere already added; skip second add_subdirectory' internal/core/thirdparty/knowhere/CMakeLists.txt; then
+  echo "VERIFY FAIL: missing guard against double Knowhere add_subdirectory" >&2
+  exit 1
+fi
 if ! grep -q 'without CUDA language' internal/core/src/CMakeLists.txt; then
   echo "VERIFY FAIL: CUDA language skip patch missing in src/CMakeLists.txt" >&2
   exit 1

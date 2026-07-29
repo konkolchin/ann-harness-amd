@@ -169,6 +169,8 @@ set +e
   export MILVUS_WITH_HIP="${MILVUS_WITH_HIP:-1}"
   export KNOWHERE_WITH_HIP="${KNOWHERE_WITH_HIP:-1}"
   CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -DMILVUS_WITH_HIP=ON -DWITH_HIP=ON -DWITH_CUVS=ON"
+  # core_build.sh can embed a literal newline into CMAKE_CMD if EXTRA_ARGS has one.
+  CMAKE_EXTRA_ARGS="$(printf '%s' "${CMAKE_EXTRA_ARGS}" | tr -d '\n\r' | sed 's/  */ /g')"
   export CMAKE_EXTRA_ARGS
   echo "CMAKE_EXTRA_ARGS=${CMAKE_EXTRA_ARGS}"
   echo "MILVUS_WITH_HIP=${MILVUS_WITH_HIP} KNOWHERE_WITH_HIP=${KNOWHERE_WITH_HIP}"
