@@ -13,44 +13,49 @@
 
 ### hipVS Python (bypass Knowhere)
 
-`cagra.build` on SIFT 10k×128 **throws** during graph optimize:
+| Recipe | Result |
+|--------|--------|
+| default / `ivf_pq` | **THROW** `graph_core` invalid/duplicated neighbors |
+| `build_algo=nn_descent` (hipVS lowercase) | **BUILD OK** (~0.2s on 10k×128) |
+| search itopk=64, k=10, N=10k/200 | **recall@10 = 0.0695**, QPS ~1.95e5 |
 
-```text
-RAFT failure ... graph_core.cuh ... Could not generate an intermediate CAGRA graph
-because the initial kNN graph contains too many invalid or duplicated neighbor nodes.
-... overflows occur during the norm computation ...
-```
-
-Log showed IVF-PQ intermediate path: `using ivf_pq::index_params nrows 10000, dim 128, n_lists 100, pq_dim 32`.
+JSON: `$WORKDIR/logs/lib_hipvs_cagra_20260803_234622.json`  
+`verify IndexParams.build_algo=2` (enum for nn_descent).
 
 ### Ownership
 
-**hipVS / ROCm-DS on consumer gfx1100** — not Knowhere wiring.
+**hipVS / ROCm-DS on consumer gfx1100**
 
-Knowhere Catch2 recall 0.0 is consistent (broken/empty graph may not throw; search returns zeros).
+- IVF-PQ graph build path: hard fail  
+- NN-Descent path: runs but **quality unusable** (~7% recall@10 at this smoke size)  
+- Knowhere Catch2 recall 0.0 likely uses default IVF-PQ (or broken graph) — do not treat as Knowhere-only until lib recall is healthy
 
-**Phase B blocked** until library CAGRA build+search works on gfx1100.
+**Phase B blocked** until lib recall is in a useful band (target ≥ ~0.7 at some itopk / degree).
 
 ### Next lab tries
-
-`GRAPH_BUILD_ALGO=NN_DESCENT` on 2026-08-03 **did not apply** — RAFT still logged
-`using ivf_pq::index_params` (Python IndexParams dropped/ignored the algo).
 
 ```bash
 source ~/hipvs-bench-venv/bin/activate
 export WORKDIR=~/rocmds_check_gfx1100
 cd ~/ann-harness-amd && git pull --ff-only
 
-# Must print: verify IndexParams.graph_build_algo=...  and NOT "using ivf_pq::"
-MAX_TRAIN_ROWS=10000 MAX_QUERY_ROWS=200 ITOPK_SIZES=64 \
-  GRAPH_BUILD_ALGO=NN_DESCENT \
+# A) Larger graph / itopk (quality)
+MAX_TRAIN_ROWS=10000 MAX_QUERY_ROWS=200 \
+  GRAPH_DEGREE=64 INTERMEDIATE_GRAPH_DEGREE=128 \
+  ITOPK_SIZES=64,128,256,512 \
+  GRAPH_BUILD_ALGO=nn_descent \
   bash scripts/run_hipvs_cagra_bench.sh
 
-# Quote globs (or pass many paths — newest wins)
-python3 scripts/classify_cagra_triage.py \
-  --hipvs-log "$WORKDIR/logs/cagra_hipvs_"*.log \
-  --catch2-log "$WORKDIR/logs/cagra_catch2_20260803_224122.log"
+# B) Full SIFT-1M (same degrees) — slower build
+GRAPH_BUILD_ALGO=nn_descent ITOPK_SIZES=128,256,512 \
+  GRAPH_DEGREE=64 INTERMEDIATE_GRAPH_DEGREE=128 \
+  bash scripts/run_hipvs_cagra_bench.sh
+
+# C) CUDA peer (same recipe) on 4080
+WORKDIR=~/milvus_cuda_4080 GRAPH_BUILD_ALGO=nn_descent \
+  MAX_TRAIN_ROWS=10000 MAX_QUERY_ROWS=200 ITOPK_SIZES=64 \
+  bash scripts/run_cuvs_cagra_bench.sh
+# then compare_cuvs_lib_json.py
 ```
 
-If ctor cannot set NN_DESCENT → escalate to ROCm-DS (bindings + gfx1100 IVF_PQ graph).
-If NN_DESCENT applies and still throws → same ownership, kernel/graph bug.
+Also try `iterative_cagra_search` if nn_descent recall stays ~0.07.

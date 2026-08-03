@@ -163,10 +163,11 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | 2026-08-03 | Harness + docs landed in ann-harness | **ready** — run on `amd-rx7900xtx` |
 | 2026-08-03 | Stakeholder one-pager + dashboard proposal | `cagra_stakeholder_onepager.md`, `cagra_dashboard_ci_proposal.md` |
 | 2026-08-03 | Catch2 full GPU | 572/576; CAGRA recall **0.0** (×2); IVF_PQ near-misses |
-| 2026-08-03 | hipVS Python CAGRA build | **FAIL** `graph_core` invalid/duplicated neighbors (IVF_PQ knn) |
-| 2026-08-03 | **OWNER** | **hipVS / ROCm-DS on gfx1100** — Phase B blocked |
-| (lab) | Retry `GRAPH_BUILD_ALGO=NN_DESCENT` | *next* |
-| (lab) | Phase B smoke / L4 | *after library green* |
+| 2026-08-03 | hipVS `ivf_pq` build | **FAIL** `graph_core` invalid/duplicated neighbors |
+| 2026-08-03 | hipVS `nn_descent` build | **OK**; recall@10 **0.0695** (10k/200, itopk=64) |
+| 2026-08-03 | **OWNER** | **hipVS / ROCm-DS on gfx1100** — Phase B blocked (quality) |
+| (lab) | Tune degrees/itopk + CUDA peer | *next* |
+| (lab) | Phase B smoke / L4 | *after lib recall usable* |
 
 ### First commands on the lab (copy-paste)
 
