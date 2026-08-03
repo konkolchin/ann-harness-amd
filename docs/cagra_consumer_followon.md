@@ -40,20 +40,36 @@ export WORKDIR=~/rocmds_check_gfx1100
 cd ~/ann-harness-amd   # or clone of ann-harness-amd
 git pull --ff-only
 
+# hipVS Python (needed for library split). IVF microbench venv is fine if it has cagra:
+source ~/hipvs-bench-venv/bin/activate   # create/build: docs/hipvs_vs_cuvs_bench.md §1
+python3 -c "from cuvs.neighbors import cagra; print('cagra OK')"
+
 bash scripts/reproduce_cagra_gfx1100.sh
 # summary: $WORKDIR/logs/cagra_repro_summary_*.md
+
+# Globs expanded inside classify (do not rely on bash alone):
+python3 scripts/classify_cagra_triage.py \
+  --hipvs-json "$WORKDIR/logs/lib_hipvs_cagra_minimal_*.json" \
+  --catch2-log "$WORKDIR/logs/cagra_catch2_*.log"
+# Or Catch2-only while Python cagra is missing:
+# python3 scripts/classify_cagra_triage.py --catch2-log "$WORKDIR/logs/cagra_catch2_*.log"
 ```
+
+Knowhere Catch2 on this tree does **not** accept `-k` (that token errors). The
+repro script runs `"Test All GPU Index" -s` (same as Layer-2 docs).
 
 ### Triage ladder
 
 ```text
 1. hipVS Python CAGRA on small SIFT (bypass Knowhere)
+     source ~/hipvs-bench-venv/bin/activate
      MAX_TRAIN_ROWS=10000 MAX_QUERY_ROWS=200 \
        bash scripts/run_hipvs_cagra_bench.sh
    - recall ~0  → hipVS / RDNA3 kernel / wavefront issue → ROCm-DS / hipVS patch
    - recall OK  → Knowhere GPU_CUVS_CAGRA wiring / serialize → Knowhere HIP patch
+   - import fails → build hipVS Python (docs/hipvs_vs_cuvs_bench.md §1); C++ libcuvs alone is not enough
 
-2. Catch2 -k CAGRA
+2. Catch2 "Test All GPU Index" -s
    - TopK vs Serialize: if only Serialize fails, product load path is the B blocker
 
 3. Capture: ROCm version, hipVS SHA, USE_WARPSIZE_32, BUILD_CAGRA_HNSWLIB,
@@ -155,9 +171,9 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 ```bash
 cd ~/ann-harness-amd && git pull --ff-only
 export WORKDIR=~/rocmds_check_gfx1100
+source ~/hipvs-bench-venv/bin/activate   # if missing, see hipvs_vs_cuvs_bench.md §1
 bash scripts/reproduce_cagra_gfx1100.sh
-# then, if hipVS JSON exists:
 python3 scripts/classify_cagra_triage.py \
-  --hipvs-json $WORKDIR/logs/lib_hipvs_cagra_minimal_*.json \
-  --catch2-log $WORKDIR/logs/cagra_catch2_*.log
+  --hipvs-json "$WORKDIR/logs/lib_hipvs_cagra_minimal_*.json" \
+  --catch2-log "$WORKDIR/logs/cagra_catch2_*.log"
 ```

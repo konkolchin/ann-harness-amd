@@ -13,7 +13,7 @@ parity board (and GitHub Actions when wired).
 
 | Row id | Side | Artifact | Pass |
 |--------|------|----------|------|
-| `amd-cagra-catch2` | AMD | Knowhere `-k CAGRA` log | TopK + Serialize PASS |
+| `amd-cagra-catch2` | AMD | Knowhere `"Test All GPU Index" -s` log | TopK + Serialize PASS |
 | `amd-cagra-lib` | AMD | `lib_hipvs_cagra_*.json` | max recall@10 ≥ 0.7 at itopk≥128 |
 | `nvidia-cagra-lib` | NVIDIA | `lib_cuvs_cagra_*.json` | peer baseline |
 | `cagra-lib-parity` | both | compare script | recall Δ ≤ 0.05; QPS ratio recorded |
