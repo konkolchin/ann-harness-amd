@@ -17,10 +17,13 @@
 |--------|--------|
 | default / `ivf_pq` | **THROW** `graph_core` invalid/duplicated neighbors |
 | `build_algo=nn_descent` (hipVS lowercase) | **BUILD OK** (~0.2s on 10k×128) |
-| search itopk=64, k=10, N=10k/200 | **recall@10 = 0.0695**, QPS ~1.95e5 |
+| search itopk=64, k=10, N=10k/200, deg=32/64 | **recall@10 = 0.0695** |
+| deg=64/128, itopk=64..512 | **recall@10 = 0.0695 flat** (QPS drops; recall unchanged) |
 
-JSON: `$WORKDIR/logs/lib_hipvs_cagra_20260803_234622.json`  
+JSON: `lib_hipvs_cagra_20260803_234622.json`, `…_235045.json`  
 `verify IndexParams.build_algo=2` (enum for nn_descent).
+
+**Escalate signal:** recall independent of itopk ⇒ broken neighbors / metric path on gfx1100, not under-tuned search.
 
 ### Ownership
 
