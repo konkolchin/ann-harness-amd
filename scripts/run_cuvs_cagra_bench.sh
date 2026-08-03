@@ -30,7 +30,7 @@ fi
 
 mkdir -p "${LOG_DIR}"
 echo "==> cuVS CAGRA library bench"
-echo "    results=${RESULTS_JSON}"
+echo "    graph_build_algo=${GRAPH_BUILD_ALGO} results=${RESULTS_JSON}"
 
 cd "${REPO_ROOT}"
 EXTRA=()
@@ -39,6 +39,9 @@ if [ -n "${MAX_TRAIN_ROWS:-}" ] && [ "${MAX_TRAIN_ROWS}" != "0" ]; then
 fi
 if [ -n "${MAX_QUERY_ROWS:-}" ] && [ "${MAX_QUERY_ROWS}" != "0" ]; then
   EXTRA+=(--max-query-rows "${MAX_QUERY_ROWS}")
+fi
+if [ -n "${GRAPH_BUILD_ALGO}" ]; then
+  EXTRA+=(--graph-build-algo "${GRAPH_BUILD_ALGO}")
 fi
 
 python3 scripts/bench_cuvs_cagra.py \
