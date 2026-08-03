@@ -748,11 +748,46 @@
   \end{block}
 \end{frame}
 
+%----- 10a -----
+\begin{frame}{Follow-on: CAGRA on consumer gfx1100}
+  \begin{block}{Why}
+    AMD ROCm-DS materials emphasize Instinct.
+    Challenge: show \textbf{RX~7900~XTX} can run Milvus graph ANN
+    (\texttt{GPU\_CAGRA}), not only IVF.
+  \end{block}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Phase A --- library}\\[0.3em]
+      \footnotesize
+      Catch2 CAGRA TopK/Serialize today:
+      recall \textbf{0.0} (2026-07-26).\\
+      Triage: hipVS-only vs Knowhere.\\
+      Lib microbench vs CUDA~4080.
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Phase B --- product}\\[0.3em]
+      \footnotesize
+      Sealed \texttt{GPU\_CAGRA} smoke.\\
+      Layer-4 SIFT (GIST if VRAM).\\
+      Dashboard rows \texttt{amd-cagra-*}.
+    \end{column}
+  \end{columns}
+  \vspace{0.6em}
+  \footnotesize
+  Harness: \texttt{scripts/reproduce\_cagra\_gfx1100.sh},
+  \texttt{run\_*\_cagra\_bench.sh},
+  \texttt{run\_milvus\_gpu\_cagra\_smoke.sh},
+  \texttt{run\_milvus\_layer4\_cagra.sh}.\\
+  Doc: \texttt{docs/cagra\_consumer\_followon.md}.
+\end{frame}
+
 %----- 10 -----
 \begin{frame}{Next steps}
   \begin{block}{Immediate}
     \begin{itemize}
-      \item Optional: CAGRA (next index after FLAT / PQ; known Catch2 gaps)
+      \item \textbf{CAGRA follow-on} (consumer \texttt{gfx1100}): Phase~A library
+            then Phase~B Milvus \texttt{GPU\_CAGRA} --- see
+            \texttt{docs/cagra\_consumer\_followon.md}
       \item Suggest GIST PQ recipe to dashboard (Leonid) for fair AMD$<$CUDA signal
       \item Copy repo from DXC GitHub to public GitHub
       \item Optional: VectorDBBench concurrent on CUDA / GIST

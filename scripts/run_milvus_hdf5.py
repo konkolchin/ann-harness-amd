@@ -80,7 +80,7 @@ parser.add_argument("--p99-sample", type=int, default=DEFAULT_P99_SAMPLE, help="
 parser.add_argument(
     "--index-type",
     default=DEFAULT_INDEX_TYPE,
-    choices=["IVF_FLAT", "GPU_IVF_FLAT", "IVF_PQ", "GPU_IVF_PQ"],
+    choices=["IVF_FLAT", "GPU_IVF_FLAT", "IVF_PQ", "GPU_IVF_PQ", "GPU_CAGRA"],
     help="Index type (GPU_* requires HIP/CUDA Milvus GPU build)",
 )
 parser.add_argument(
@@ -95,6 +95,31 @@ parser.add_argument(
     type=int,
     default=8,
     help="PQ bits per sub-quantizer (IVF_PQ / GPU_IVF_PQ); typically 8",
+)
+parser.add_argument(
+    "--graph-degree",
+    type=int,
+    default=32,
+    help="GPU_CAGRA index param graph_degree",
+)
+parser.add_argument(
+    "--intermediate-graph-degree",
+    type=int,
+    default=64,
+    help="GPU_CAGRA index param intermediate_graph_degree",
+)
+parser.add_argument(
+    "--itopk-sizes",
+    default="",
+    help="GPU_CAGRA search sweep (comma-separated itopk_size). "
+    "If empty and index is GPU_CAGRA, defaults to 32,64,128,256. "
+    "IVF indexes ignore this and use --nprobes.",
+)
+parser.add_argument(
+    "--search-width",
+    type=int,
+    default=1,
+    help="GPU_CAGRA search_params search_width",
 )
 parser.add_argument(
     "--cache-dataset-on-device",
@@ -133,16 +158,28 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
+is_cagra = args.index_type == "GPU_CAGRA"
 nprobes = [int(x.strip()) for x in args.nprobes.split(",") if x.strip()]
+if is_cagra:
+    itopk_raw = args.itopk_sizes.strip() or "32,64,128,256"
+    sweep = [int(x.strip()) for x in itopk_raw.split(",") if x.strip()]
+else:
+    sweep = nprobes
 do_flush = args.flush if args.flush is not None else args.index_type.startswith("GPU_")
 
 print(f"milvus_uri={args.uri}")
 print(
     f"collection={args.collection}, k={args.k}, nlist={args.nlist}, "
-    f"nprobes={nprobes}, index_type={args.index_type}, flush={do_flush}"
+    f"sweep={sweep}, index_type={args.index_type}, flush={do_flush}"
 )
 if "PQ" in args.index_type:
     print(f"pq_params: m={args.m}, nbits={args.nbits}")
+if is_cagra:
+    print(
+        f"cagra_params: graph_degree={args.graph_degree}, "
+        f"intermediate_graph_degree={args.intermediate_graph_degree}, "
+        f"search_width={args.search_width}, itopk_sizes={sweep}"
+    )
 
 with h5py.File(args.data, "r") as f:
     xb = np.array(f["train"], dtype=np.float32)
@@ -168,17 +205,22 @@ results = {
     "collection": args.collection,
     "index_type": args.index_type,
     "flush": do_flush,
-    "nlist": args.nlist,
+    "nlist": None if is_cagra else args.nlist,
     "m": args.m if "PQ" in args.index_type else None,
     "nbits": args.nbits if "PQ" in args.index_type else None,
+    "graph_degree": args.graph_degree if is_cagra else None,
+    "intermediate_graph_degree": args.intermediate_graph_degree if is_cagra else None,
+    "search_width": args.search_width if is_cagra else None,
     "k": args.k,
-    "nprobes": nprobes,
+    "nprobes": nprobes if not is_cagra else None,
+    "itopk_sizes": sweep if is_cagra else None,
     "xb_shape": list(xb.shape),
     "xq_shape": list(xq.shape),
     "data_path": args.data,
     "timings_s": {},
     "load": None,
     "nprobe_results": [],
+    "itopk_results": [],
 }
 
 client = MilvusClient(uri=args.uri)
@@ -208,10 +250,16 @@ if do_flush:
     print(f"flush_time_s={t1 - t0:.2f}")
 
 index_params = client.prepare_index_params()
-idx_extra = {"nlist": args.nlist}
-if "PQ" in args.index_type:
-    idx_extra["m"] = args.m
-    idx_extra["nbits"] = args.nbits
+if is_cagra:
+    idx_extra = {
+        "graph_degree": args.graph_degree,
+        "intermediate_graph_degree": args.intermediate_graph_degree,
+    }
+else:
+    idx_extra = {"nlist": args.nlist}
+    if "PQ" in args.index_type:
+        idx_extra["m"] = args.m
+        idx_extra["nbits"] = args.nbits
 if args.index_type.startswith("GPU_") and args.cache_dataset_on_device:
     idx_extra["cache_dataset_on_device"] = True
 index_params.add_index(
@@ -246,8 +294,19 @@ else:
     results["load"] = {"load_state": "Loaded"}
 
 print(f"\nMilvus {args.index_type} results:")
-for nprobe in nprobes:
-    search_params = {"metric_type": "L2", "params": {"nprobe": nprobe}}
+for sweep_val in sweep:
+    if is_cagra:
+        search_params = {
+            "metric_type": "L2",
+            "params": {
+                "itopk_size": sweep_val,
+                "search_width": args.search_width,
+            },
+        }
+        label = f"itopk={sweep_val:4d}"
+    else:
+        search_params = {"metric_type": "L2", "params": {"nprobe": sweep_val}}
+        label = f"nprobe={sweep_val:2d}"
 
     t0 = time.time()
     res = client.search(
@@ -281,15 +340,20 @@ for nprobe in nprobes:
         lat_ms.append((s1 - s0) * 1000.0)
     p99 = float(np.percentile(lat_ms, 99)) if lat_ms else float("nan")
 
-    print(f"nprobe={nprobe:2d} qps={qps:8.1f} p99_ms={p99:7.2f} recall@{args.k}={r:.4f}")
-    results["nprobe_results"].append(
-        {
-            "nprobe": nprobe,
-            "qps": qps,
-            f"recall@{args.k}": r,
-            "p99_ms": p99,
-        }
-    )
+    print(f"{label} qps={qps:8.1f} p99_ms={p99:7.2f} recall@{args.k}={r:.4f}")
+    row = {
+        "qps": qps,
+        f"recall@{args.k}": r,
+        "p99_ms": p99,
+    }
+    if is_cagra:
+        row["itopk_size"] = sweep_val
+        row["nprobe"] = sweep_val  # alias for compare tooling
+        results["itopk_results"].append(row)
+        results["nprobe_results"].append(row)
+    else:
+        row["nprobe"] = sweep_val
+        results["nprobe_results"].append(row)
 
 if args.results_json:
     out = Path(args.results_json)

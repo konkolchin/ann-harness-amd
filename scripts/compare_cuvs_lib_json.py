@@ -23,12 +23,16 @@ def main() -> None:
     if a.get("index_type") != b.get("index_type"):
         raise SystemExit(f"index_type mismatch: {a.get('index_type')} vs {b.get('index_type')}")
 
+    idx = a.get("index_type")
+    sweep_name = "itopk" if idx == "CAGRA" else "nprobe"
     print(
-        f"index={a.get('index_type')}  "
+        f"index={idx}  "
         f"hipVS={a.get('gpu_name')}  cuVS={b.get('gpu_name')}"
     )
-    print(f"{'nprobe':>6}  {'hipVS QPS':>10}  {'cuVS QPS':>10}  {'speed-up':>10}  "
-          f"{'R@10 hip':>8}  {'R@10 cu':>8}")
+    print(
+        f"{sweep_name:>6}  {'hipVS QPS':>10}  {'cuVS QPS':>10}  {'speed-up':>10}  "
+        f"{'R@10 hip':>8}  {'R@10 cu':>8}"
+    )
     by_np_b = {r["nprobe"]: r for r in b["nprobe_results"]}
     for ra in a["nprobe_results"]:
         npv = ra["nprobe"]

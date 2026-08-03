@@ -17,6 +17,10 @@ shared Python `cuvs` API — **no Milvus / Knowhere**.
 | Indexes | `IVF_FLAT`, then `IVF_PQ` with **`m=32`**, `nbits=8` |
 | Metric | `sqeuclidean` (L2²; matches Milvus L2 ranking for recall) |
 
+**CAGRA follow-on:** separate recipe in `docs/cagra_consumer_followon.md`
+(`bench_cuvs_cagra.py`, `run_*_cagra_bench.sh`). Do not mix CAGRA itopk sweeps
+into IVF nprobe tables.
+
 **Fairness:** same API + same recipe. GPUs differ (RX 7900 XTX vs RTX 4080) —
 peer-class, not identical silicon. Report QPS **and** recall@10.
 

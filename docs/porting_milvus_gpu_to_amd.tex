@@ -1095,6 +1095,10 @@ For this PoC we treat \textbf{\texttt{GPU\_IVF\_FLAT}} and \textbf{\texttt{GPU\_
 as in-scope (Layer~2 gate + Layer~4 product path; recall matched vs CUDA).
 \textbf{CAGRA} and the strict \textbf{IVF\_PQ TopK} Catch2 threshold still fail on
 \texttt{gfx1100}; closing them needs \textbf{extra work} and is not a PoC exit criterion.
+\textbf{Follow-on:} consumer-\texttt{gfx1100} CAGRA plan (Phase~A library then Phase~B
+Milvus product) is documented in the harness as
+\texttt{docs/cagra\_consumer\_followon.md} with reproduce/bench/smoke scripts;
+Instinct remains documentation reference only---the challenge is RDNA3.
 
 \paragraph{Gate vs full suite (re-run 2026-07-26).}
 \begin{table}[H]
