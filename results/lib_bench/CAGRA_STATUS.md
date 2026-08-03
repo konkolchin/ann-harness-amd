@@ -33,19 +33,24 @@ Knowhere Catch2 recall 0.0 is consistent (broken/empty graph may not throw; sear
 
 ### Next lab tries
 
+`GRAPH_BUILD_ALGO=NN_DESCENT` on 2026-08-03 **did not apply** — RAFT still logged
+`using ivf_pq::index_params` (Python IndexParams dropped/ignored the algo).
+
 ```bash
 source ~/hipvs-bench-venv/bin/activate
 export WORKDIR=~/rocmds_check_gfx1100
 cd ~/ann-harness-amd && git pull --ff-only
 
-# Prefer NN_DESCENT (script default after fix)
+# Must print: verify IndexParams.graph_build_algo=...  and NOT "using ivf_pq::"
 MAX_TRAIN_ROWS=10000 MAX_QUERY_ROWS=200 ITOPK_SIZES=64 \
   GRAPH_BUILD_ALGO=NN_DESCENT \
   bash scripts/run_hipvs_cagra_bench.sh
 
+# Quote globs (or pass many paths — newest wins)
 python3 scripts/classify_cagra_triage.py \
-  --hipvs-log "$WORKDIR/logs/cagra_hipvs_minimal_*.log" \
+  --hipvs-log "$WORKDIR/logs/cagra_hipvs_"*.log \
   --catch2-log "$WORKDIR/logs/cagra_catch2_20260803_224122.log"
 ```
 
-If NN_DESCENT also fails → escalate minimal repro to AMD (consumer-card challenge).
+If ctor cannot set NN_DESCENT → escalate to ROCm-DS (bindings + gfx1100 IVF_PQ graph).
+If NN_DESCENT applies and still throws → same ownership, kernel/graph bug.

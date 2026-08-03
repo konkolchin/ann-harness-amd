@@ -191,28 +191,126 @@ def main() -> None:
     build_kw = {"resources": resources} if resources is not None else {}
     search_kw = dict(build_kw)
 
-    build_params_kw: dict = {
-        "metric": "sqeuclidean",
-        "graph_degree": args.graph_degree,
-        "intermediate_graph_degree": args.intermediate_graph_degree,
-    }
-    if args.graph_build_algo:
-        # cuVS Python: graph_build_algo="NN_DESCENT" | "IVF_PQ"
-        build_params_kw["graph_build_algo"] = args.graph_build_algo
+    def _make_cagra_params(
+        *,
+        metric: str,
+        graph_degree: int,
+        intermediate_graph_degree: int,
+        graph_build_algo: str,
+    ):
+        """Build IndexParams; fail loudly if requested algo cannot be applied.
 
-    def _make_params(kw: dict):
-        try:
-            return cagra.IndexParams(**kw)
-        except TypeError:
-            kw2 = dict(kw)
-            kw2.pop("intermediate_graph_degree", None)
+        Older hipVS Python silently dropped graph_build_algo (TypeError → retry
+        without it) while RAFT still used IVF_PQ — the 2026-08-03 gfx1100 trap.
+        """
+        algo = (graph_build_algo or "").strip()
+        algo_norm = algo.upper().replace("-", "_") if algo else ""
+
+        base_attempts = [
+            {
+                "metric": metric,
+                "graph_degree": graph_degree,
+                "intermediate_graph_degree": intermediate_graph_degree,
+            },
+            {"metric": metric, "graph_degree": graph_degree},
+            {"graph_degree": graph_degree},
+        ]
+        params = None
+        last_err: Exception | None = None
+        for kw in base_attempts:
             try:
-                return cagra.IndexParams(**kw2)
-            except TypeError:
-                kw2.pop("graph_build_algo", None)
-                return cagra.IndexParams(**kw2)
+                params = cagra.IndexParams(**kw)
+                print(f"IndexParams ctor OK keys={sorted(kw)}")
+                break
+            except TypeError as exc:
+                last_err = exc
+        if params is None:
+            raise SystemExit(f"cagra.IndexParams() failed: {last_err}")
 
-    build_params = _make_params(build_params_kw)
+        if not algo_norm:
+            return params
+
+        applied = False
+        # 1) ctor with algo (preferred when supported)
+        for key in ("graph_build_algo", "build_algo"):
+            kw = {
+                "metric": metric,
+                "graph_degree": graph_degree,
+                "intermediate_graph_degree": intermediate_graph_degree,
+                key: algo_norm,
+            }
+            try:
+                params = cagra.IndexParams(**kw)
+                print(f"IndexParams ctor with {key}={algo_norm!r}")
+                applied = True
+                break
+            except TypeError:
+                kw.pop("intermediate_graph_degree", None)
+                try:
+                    params = cagra.IndexParams(**kw)
+                    print(f"IndexParams ctor (no intermediate) with {key}={algo_norm!r}")
+                    applied = True
+                    break
+                except TypeError:
+                    pass
+
+        # 2) setattr / enum on existing params
+        if not applied:
+            for attr in ("graph_build_algo", "build_algo"):
+                if not hasattr(params, attr):
+                    continue
+                for candidate in (algo_norm, algo, algo_norm.lower()):
+                    try:
+                        setattr(params, attr, candidate)
+                        print(f"IndexParams.{attr} set to {getattr(params, attr)!r}")
+                        applied = True
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"setattr {attr}={candidate!r} failed: {exc}")
+                if applied:
+                    break
+            # enum style: cagra.GraphBuildAlgo.NN_DESCENT
+            if not applied:
+                for enum_name in ("GraphBuildAlgo", "graph_build_algo"):
+                    enum_cls = getattr(cagra, enum_name, None)
+                    if enum_cls is None:
+                        continue
+                    for member in (algo_norm, "NN_DESCENT", "IVF_PQ"):
+                        if hasattr(enum_cls, member):
+                            try:
+                                setattr(params, "graph_build_algo", getattr(enum_cls, member))
+                                print(
+                                    f"IndexParams.graph_build_algo = {enum_name}.{member}"
+                                )
+                                applied = True
+                                break
+                            except Exception as exc:  # noqa: BLE001
+                                print(f"enum set failed: {exc}")
+                    if applied:
+                        break
+
+        if not applied:
+            raise SystemExit(
+                f"Requested graph_build_algo={algo_norm!r} but this hipVS/cuVS Python "
+                f"IndexParams cannot set it (ctor last error: {last_err}).\n"
+                "  Inspect: python3 -c \"from cuvs.neighbors import cagra; "
+                "import inspect; print(inspect.signature(cagra.IndexParams)); "
+                "print([x for x in dir(cagra.IndexParams) if 'algo' in x.lower() or 'build' in x.lower()])\"\n"
+                "  Without a real NN_DESCENT switch, RAFT keeps IVF_PQ and gfx1100 often throws "
+                "invalid/duplicated neighbors — escalate to ROCm-DS."
+            )
+
+        for attr in ("graph_build_algo", "build_algo"):
+            if hasattr(params, attr):
+                print(f"verify IndexParams.{attr}={getattr(params, attr)!r}")
+        return params
+
+    build_params = _make_cagra_params(
+        metric="sqeuclidean",
+        graph_degree=args.graph_degree,
+        intermediate_graph_degree=args.intermediate_graph_degree,
+        graph_build_algo=args.graph_build_algo,
+    )
 
     t0 = time.perf_counter()
     try:
@@ -222,9 +320,11 @@ def main() -> None:
         print(f"CAGRA build FAILED: {msg.splitlines()[0][:300]}")
         if "invalid or duplicated neighbor" in msg or "norm computation" in msg:
             print(
-                "OWNER HINT: hipVS/cuVS CAGRA intermediate knn graph on this GPU "
-                "(often IVF_PQ path). Try --graph-build-algo NN_DESCENT or escalate to ROCm-DS."
+                "OWNER HINT: hipVS CAGRA intermediate knn graph on gfx1100 "
+                "(IVF_PQ path if log shows 'using ivf_pq::index_params'). "
+                "If NN_DESCENT was requested but log still shows IVF_PQ, bindings ignored algo."
             )
+            print("Escalate to ROCm-DS with this RAFT error + gfx1100 + ROCm 7.0.2.")
         raise
     _sync()
     build_s = time.perf_counter() - t0
