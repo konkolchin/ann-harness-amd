@@ -57,18 +57,46 @@ def main() -> None:
         default="",
         help="Lib bench JSON (glob OK). Optional if only Catch2 available.",
     )
+    p.add_argument(
+        "--hipvs-log",
+        default="",
+        help="hipVS bench stdout log (glob OK) — used when build throws before JSON",
+    )
     p.add_argument("--catch2-log", default="", help="Catch2 log (glob OK)")
     p.add_argument("--recall-ok", type=float, default=0.5)
     args = p.parse_args()
 
     hipvs_path = resolve_one(args.hipvs_json, "hipvs-json")
+    hipvs_log = resolve_one(args.hipvs_log, "hipvs-log")
     catch2_path = resolve_one(args.catch2_log, "catch2-log")
 
-    if hipvs_path is None and catch2_path is None:
+    if hipvs_path is None and catch2_path is None and hipvs_log is None:
         raise SystemExit(
-            "Need at least one of --hipvs-json or --catch2-log (existing file).\n"
+            "Need at least one of --hipvs-json, --hipvs-log, or --catch2-log.\n"
             "If hipVS Python lacks cagra: source ~/hipvs-bench-venv/bin/activate and re-run reproduce."
         )
+
+    if hipvs_log is not None:
+        htext = hipvs_log.read_text(encoding="utf-8", errors="replace")
+        print(f"hipVS log: {hipvs_log}")
+        if "invalid or duplicated neighbor" in htext or "norm computation" in htext:
+            print()
+            print("OWNER: hipVS / ROCm-DS (CAGRA intermediate knn graph on gfx1100)")
+            print(
+                "EVIDENCE: RAFT graph_core — too many invalid/duplicated neighbors "
+                "(often IVF_PQ path / norm overflow)."
+            )
+            print("ACTION:")
+            print("  1) Retry: GRAPH_BUILD_ALGO=NN_DESCENT bash scripts/run_hipvs_cagra_bench.sh")
+            print("  2) If still broken: minimal repro → ROCm-DS/hipVS (consumer gfx1100)")
+            print("  3) BLOCK Phase B (Milvus GPU_CAGRA) until library build/search works")
+            print(
+                "NOTE: Knowhere Catch2 recall 0.0 is consistent with broken hipVS CAGRA "
+                "(build may not throw; search returns garbage)."
+            )
+            return
+        if "CAGRA build FAILED" in htext or "CuvsException" in htext:
+            print("hipVS CAGRA build raised an exception (see log); treat as library ownership.")
 
     r = None
     if hipvs_path is not None:

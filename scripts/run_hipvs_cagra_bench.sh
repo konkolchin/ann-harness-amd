@@ -17,6 +17,8 @@ GRAPH_DEGREE="${GRAPH_DEGREE:-32}"
 INTERMEDIATE_GRAPH_DEGREE="${INTERMEDIATE_GRAPH_DEGREE:-64}"
 ITOPK_SIZES="${ITOPK_SIZES:-32,64,128,256}"
 SEARCH_WIDTH="${SEARCH_WIDTH:-1}"
+# gfx1100: default IVF_PQ intermediate graph often throws "invalid or duplicated neighbor"
+GRAPH_BUILD_ALGO="${GRAPH_BUILD_ALGO:-NN_DESCENT}"
 DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/sift-128-euclidean.hdf5}"
 LOG_DIR="${LOG_DIR:-${WORKDIR}/logs}"
 TS="$(date +%Y%m%d_%H%M%S)"
@@ -42,7 +44,8 @@ fi
 mkdir -p "${LOG_DIR}"
 echo "==> hipVS CAGRA library bench"
 echo "    graph_degree=${GRAPH_DEGREE} intermediate=${INTERMEDIATE_GRAPH_DEGREE}"
-echo "    itopk=${ITOPK_SIZES} results=${RESULTS_JSON}"
+echo "    graph_build_algo=${GRAPH_BUILD_ALGO} itopk=${ITOPK_SIZES}"
+echo "    results=${RESULTS_JSON}"
 
 cd "${REPO_ROOT}"
 EXTRA=()
@@ -51,6 +54,12 @@ if [ -n "${MAX_TRAIN_ROWS:-}" ] && [ "${MAX_TRAIN_ROWS}" != "0" ]; then
 fi
 if [ -n "${MAX_QUERY_ROWS:-}" ] && [ "${MAX_QUERY_ROWS}" != "0" ]; then
   EXTRA+=(--max-query-rows "${MAX_QUERY_ROWS}")
+fi
+if [ -n "${GRAPH_BUILD_ALGO}" ]; then
+  EXTRA+=(--graph-build-algo "${GRAPH_BUILD_ALGO}")
+fi
+if [ "${L2_NORMALIZE:-0}" = "1" ]; then
+  EXTRA+=(--l2-normalize)
 fi
 
 python3 scripts/bench_cuvs_cagra.py \

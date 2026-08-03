@@ -162,9 +162,11 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | 2026-07-26 | Catch2 CAGRA TopK/Serialize | FAIL recall 0.0 (baseline) |
 | 2026-08-03 | Harness + docs landed in ann-harness | **ready** — run on `amd-rx7900xtx` |
 | 2026-08-03 | Stakeholder one-pager + dashboard proposal | `cagra_stakeholder_onepager.md`, `cagra_dashboard_ci_proposal.md` |
-| (lab) | hipVS-only minimal | *fill after `reproduce_cagra_gfx1100.sh`* |
-| (lab) | Catch2 green / Knowhere or hipVS patch | *after `classify_cagra_triage.py`* |
-| (lab) | Phase B smoke / L4 | *after A* |
+| 2026-08-03 | Catch2 full GPU | 572/576; CAGRA recall **0.0** (×2); IVF_PQ near-misses |
+| 2026-08-03 | hipVS Python CAGRA build | **FAIL** `graph_core` invalid/duplicated neighbors (IVF_PQ knn) |
+| 2026-08-03 | **OWNER** | **hipVS / ROCm-DS on gfx1100** — Phase B blocked |
+| (lab) | Retry `GRAPH_BUILD_ALGO=NN_DESCENT` | *next* |
+| (lab) | Phase B smoke / L4 | *after library green* |
 
 ### First commands on the lab (copy-paste)
 

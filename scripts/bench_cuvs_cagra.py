@@ -98,6 +98,17 @@ def main() -> None:
         default=1,
         help="CAGRA SearchParams.search_width",
     )
+    parser.add_argument(
+        "--graph-build-algo",
+        default="",
+        help="Optional CAGRA IndexParams.graph_build_algo: IVF_PQ | NN_DESCENT "
+        "(empty = library default; on gfx1100 IVF_PQ intermediate graph often fails)",
+    )
+    parser.add_argument(
+        "--l2-normalize",
+        action="store_true",
+        help="L2-normalize train/query rows before build/search (can reduce norm overflow)",
+    )
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     parser.add_argument("--p99-sample", type=int, default=DEFAULT_P99_SAMPLE)
     parser.add_argument("--max-train-rows", type=int, default=0)
@@ -144,13 +155,26 @@ def main() -> None:
         xq = xq[: args.max_query_rows]
         gt = gt[: args.max_query_rows]
 
+    if args.l2_normalize:
+        def _l2(a: np.ndarray) -> np.ndarray:
+            n = np.linalg.norm(a, axis=1, keepdims=True)
+            n = np.maximum(n, 1e-12)
+            return (a / n).astype(np.float32)
+
+        xb = _l2(xb)
+        xq = _l2(xq)
+        print("l2_normalize=1 (note: gt still Euclidean on original SIFT — recall may drop)")
+
     dim = int(xb.shape[1])
     print(f"backend={backend} gpu={gpu_name!r}")
     print(
         f"index_type=CAGRA graph_degree={args.graph_degree} "
         f"intermediate_graph_degree={args.intermediate_graph_degree}"
     )
-    print(f"itopk_sizes={itopk_sizes} search_width={args.search_width} k={args.k}")
+    print(
+        f"itopk_sizes={itopk_sizes} search_width={args.search_width} k={args.k} "
+        f"graph_build_algo={args.graph_build_algo or 'default'}"
+    )
     print(f"xb={xb.shape} xq={xq.shape} gt={gt.shape} dim={dim}")
 
     xb_g = cp.asarray(xb)
@@ -167,20 +191,41 @@ def main() -> None:
     build_kw = {"resources": resources} if resources is not None else {}
     search_kw = dict(build_kw)
 
-    build_params_kw = {
+    build_params_kw: dict = {
         "metric": "sqeuclidean",
         "graph_degree": args.graph_degree,
         "intermediate_graph_degree": args.intermediate_graph_degree,
     }
-    # Some cuVS/hipVS versions use slightly different IndexParams names.
-    try:
-        build_params = cagra.IndexParams(**build_params_kw)
-    except TypeError:
-        build_params_kw.pop("intermediate_graph_degree", None)
-        build_params = cagra.IndexParams(**build_params_kw)
+    if args.graph_build_algo:
+        # cuVS Python: graph_build_algo="NN_DESCENT" | "IVF_PQ"
+        build_params_kw["graph_build_algo"] = args.graph_build_algo
+
+    def _make_params(kw: dict):
+        try:
+            return cagra.IndexParams(**kw)
+        except TypeError:
+            kw2 = dict(kw)
+            kw2.pop("intermediate_graph_degree", None)
+            try:
+                return cagra.IndexParams(**kw2)
+            except TypeError:
+                kw2.pop("graph_build_algo", None)
+                return cagra.IndexParams(**kw2)
+
+    build_params = _make_params(build_params_kw)
 
     t0 = time.perf_counter()
-    index = cagra.build(build_params, xb_g, **build_kw)
+    try:
+        index = cagra.build(build_params, xb_g, **build_kw)
+    except Exception as exc:  # noqa: BLE001 - surface library ownership clearly
+        msg = str(exc)
+        print(f"CAGRA build FAILED: {msg.splitlines()[0][:300]}")
+        if "invalid or duplicated neighbor" in msg or "norm computation" in msg:
+            print(
+                "OWNER HINT: hipVS/cuVS CAGRA intermediate knn graph on this GPU "
+                "(often IVF_PQ path). Try --graph-build-algo NN_DESCENT or escalate to ROCm-DS."
+            )
+        raise
     _sync()
     build_s = time.perf_counter() - t0
     print(f"index_build_time_s={build_s:.2f}")
@@ -194,6 +239,8 @@ def main() -> None:
         "graph_degree": args.graph_degree,
         "intermediate_graph_degree": args.intermediate_graph_degree,
         "search_width": args.search_width,
+        "graph_build_algo": args.graph_build_algo or "default",
+        "l2_normalize": bool(args.l2_normalize),
         "k": args.k,
         "itopk_sizes": itopk_sizes,
         "xb_shape": list(xb.shape),
