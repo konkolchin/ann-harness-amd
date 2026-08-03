@@ -47,8 +47,10 @@ PY
 
   if [ -z "${extras}" ]; then
     echo "WARNING: no libcuvs*/nvidia lib dirs under ${site}" >&2
-    echo "  Try: find ~/cuvs-bench-venv -name 'libcuvs_c.so*'" >&2
-    return 1
+    echo "  Activate the cuVS venv first: source ~/cuvs-bench-venv/bin/activate" >&2
+    echo "  Then: find \"\$(python3 -c 'import site; print(site.getsitepackages()[0])')\" -name 'libcuvs_c.so*'" >&2
+    # Do not return 1 — wrappers use set -e; missing libs is a soft warning until import.
+    return 0
   fi
 
   export LD_LIBRARY_PATH="${extras}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"

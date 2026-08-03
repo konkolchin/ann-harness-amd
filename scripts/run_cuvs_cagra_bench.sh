@@ -21,15 +21,24 @@ RESULTS_JSON="${RESULTS_JSON:-${LOG_DIR}/lib_cuvs_cagra_${TS}.json}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 # shellcheck source=/dev/null
-source "${REPO_ROOT}/scripts/cuvs_pip_ld_path.sh"
+source "${REPO_ROOT}/scripts/cuvs_pip_ld_path.sh" || true
 
 if [ ! -f "${DATA_PATH}" ]; then
   echo "ERROR: missing ${DATA_PATH}" >&2
   exit 1
 fi
 
+if ! python3 -c "from cuvs.neighbors import cagra" 2>/dev/null; then
+  echo "ERROR: cannot import cuvs.neighbors.cagra" >&2
+  echo "  Use the CUDA cuVS venv (not system python / milvus-only venv):" >&2
+  echo "    source ~/cuvs-bench-venv/bin/activate   # see docs/hipvs_vs_cuvs_bench.md §2" >&2
+  echo "    python3 -c \"from cuvs.neighbors import cagra; print('ok')\"" >&2
+  exit 1
+fi
+
 mkdir -p "${LOG_DIR}"
 echo "==> cuVS CAGRA library bench"
+echo "    python3=$(command -v python3) VIRTUAL_ENV=${VIRTUAL_ENV:-none}"
 echo "    graph_build_algo=${GRAPH_BUILD_ALGO} results=${RESULTS_JSON}"
 
 cd "${REPO_ROOT}"
