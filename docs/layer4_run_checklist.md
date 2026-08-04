@@ -6,11 +6,11 @@ Lab host: `amd-rx7900xtx`. Compare to runbook Tables 5 (FAISS) and 6–7 (CPU Mi
 
 | nprobe | QPS | p99 ms | recall@10 |
 |--------|-----|--------|-----------|
-| 1 | 16981.8 | 2.59 | 0.3824 |
-| 4 | 21881.7 | 2.49 | 0.7091 |
-| 8 | 21838.3 | 2.76 | 0.8436 |
-| 16 | 26181.3 | 2.76 | 0.9337 |
-| 32 | 19578.4 | 2.81 | 0.9803 |
+| 1 | 16981.8 | 2.59 | 0.38 |
+| 4 | 21881.7 | 2.49 | 0.71 |
+| 8 | 21838.3 | 2.76 | 0.84 |
+| 16 | 26181.3 | 2.76 | 0.93 |
+| 32 | 19578.4 | 2.81 | 0.98 |
 
 Sealed path: IndexNode `GPU_CUVS_IVF_FLAT_*` (multi-slice, ~1M rows); QueryNode `CGO_LOAD GPU_CUVS_IVF_FLAT`; no `InvalidDeviceFunction`.
 

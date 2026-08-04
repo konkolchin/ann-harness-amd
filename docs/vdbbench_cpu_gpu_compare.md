@@ -189,13 +189,13 @@ Metric = task-summary QPS over concurrency `{1,10,20,40,80}` (30s each).
 
 | nprobe | CPU QPS | GPU QPS | recall@10† | Speed-up |
 |--------|---------|---------|------------|----------|
-| 1 | 13884 | 11110 | 0.384 | **0.80×** |
-| 4 | 10292 | 11066 | 0.707 | **1.08×** |
-| 8 | 7731 | 11110 | 0.841 | **1.44×** |
-| 16 | 4893 | 10904 | 0.931 | **2.23×** |
-| 32 | 2742 | 10374 | 0.979 | **3.78×** |
+| 1 | 13884 | 11110 | 0.38 | **0.80×** |
+| 4 | 10292 | 11066 | 0.71 | **1.08×** |
+| 8 | 7731 | 11110 | 0.84 | **1.44×** |
+| 16 | 4893 | 10904 | 0.93 | **2.23×** |
+| 32 | 2742 | 10374 | 0.98 | **3.78×** |
 
-†recall@10 from serial companion (same index/`nprobe`); concurrent stage does not report recall. CPU recall@10 matches within ~0.01.
+†recall@10 from serial companion (same index/`nprobe`); concurrent stage does not report recall. CPU and GPU recall@10 agree to two decimals.
 
 GPU stays ~11k QPS as `nprobe` rises; CPU collapses. Best industry-tool headline: **~2–4× at nprobe 16–32**.
 
@@ -205,11 +205,11 @@ Logs: `vdb_cpu_ivf_nprobe_20260718_194011.log`, `vdb_gpu_ivf_nprobe_20260718_195
 
 | nprobe | CPU QPS | CPU recall@10 | GPU QPS | GPU recall@10 | Speed-up |
 |--------|---------|----------|---------|----------|----------|
-| 1 | 1575 | 0.370 | 418 | 0.384 | 0.27× |
-| 4 | 1211 | 0.702 | 412 | 0.707 | 0.34× |
-| 8 | 924 | 0.839 | 345 | 0.841 | 0.37× |
-| 16 | 626 | 0.931 | 676 | 0.931 | 1.08× |
-| 32 | 371 | 0.979 | 773 | 0.979 | 2.08× |
+| 1 | 1575 | 0.37 | 418 | 0.38 | 0.27× |
+| 4 | 1211 | 0.70 | 412 | 0.71 | 0.34× |
+| 8 | 924 | 0.84 | 345 | 0.84 | 0.37× |
+| 16 | 626 | 0.93 | 676 | 0.93 | 1.08× |
+| 32 | 371 | 0.98 | 773 | 0.98 | 2.08× |
 
 Use for: recall correctness. Not the GPU speed headline.
 
@@ -217,13 +217,13 @@ Use for: recall correctness. Not the GPU speed headline.
 
 Same client shape as Layer-4: `run_milvus_hdf5.py` one `search()` with all 10k queries.
 
-| nprobe | CPU QPS† | GPU QPS (L4) | recall@10 (GPU) | Speed-up |
+| nprobe | CPU QPS† | GPU QPS (L4) | recall@10 | Speed-up |
 |--------|----------|--------------|------------|----------|
-| 1 | 22013 | 16982 | 0.382 | 0.77× |
-| 4 | 14509 | 21882 | 0.709 | 1.51× |
-| 8 | 9516 | 21838 | 0.844 | 2.30× |
-| 16 | 5402 | 26181 | 0.934 | 4.85× |
-| 32 | 2749 | 19578 | 0.980 | 7.12× |
+| 1 | 22013 | 16982 | 0.38 | 0.77× |
+| 4 | 14509 | 21882 | 0.71 | 1.51× |
+| 8 | 9516 | 21838 | 0.84 | 2.30× |
+| 16 | 5402 | 26181 | 0.93 | 4.85× |
+| 32 | 2749 | 19578 | 0.98 | 7.12× |
 
 †CPU from same-host batched diagnostic (runbook Table 7). GPU = Layer-4 harness.
 For strict v2.5.4 parity, start Docker CPU and run:
