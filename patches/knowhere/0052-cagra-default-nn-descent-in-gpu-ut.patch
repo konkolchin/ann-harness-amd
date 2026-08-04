@@ -1,0 +1,29 @@
+From: ann-harness-amd CAGRA follow-on
+Subject: [PATCH] ut: default GPU CAGRA build_algo to NN_DESCENT
+
+On consumer gfx1100, hipVS CAGRA with default IVF_PQ intermediate graph
+build yields recall 0.0 (or throws in Python). Library smoke with
+build_algo=nn_descent reaches recall 1.0. Knowhere Catch2 cagra_gen()
+omitted BUILD_ALGO (IVF_PQ default); Hamming tests already set ITERATIVE
+and pass. Set NN_DESCENT for the shared cagra_gen used by L2/bitset/TopK/
+serialize paths.
+
+---
+ tests/ut/test_gpu_search.cc | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tests/ut/test_gpu_search.cc b/tests/ut/test_gpu_search.cc
+index 1111111..2222222 100644
+--- a/tests/ut/test_gpu_search.cc
++++ b/tests/ut/test_gpu_search.cc
+@@ -61,6 +61,7 @@ TEST_CASE("Test All GPU Index", "[search]") {
+     auto cagra_gen = [base_gen]() {
+         knowhere::Json json = base_gen();
+         json[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = 64;
+         json[knowhere::indexparam::GRAPH_DEGREE] = 32;
+         json[knowhere::indexparam::ITOPK_SIZE] = 128;
++        json[knowhere::indexparam::BUILD_ALGO] = "NN_DESCENT";
+         return json;
+     };
+ 
+-- 
