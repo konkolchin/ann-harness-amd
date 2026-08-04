@@ -122,6 +122,12 @@ parser.add_argument(
     help="GPU_CAGRA search_params search_width",
 )
 parser.add_argument(
+    "--build-algo",
+    default="NN_DESCENT",
+    help="GPU_CAGRA index param build_algo (Milvus/Knowhere: IVF_PQ | NN_DESCENT). "
+    "Default NN_DESCENT — required on gfx1100 where hipVS IVF_PQ graph build fails.",
+)
+parser.add_argument(
     "--cache-dataset-on-device",
     action="store_true",
     help="GPU index param: keep dataset on device (GPU_* indexes)",
@@ -178,6 +184,7 @@ if is_cagra:
     print(
         f"cagra_params: graph_degree={args.graph_degree}, "
         f"intermediate_graph_degree={args.intermediate_graph_degree}, "
+        f"build_algo={args.build_algo}, "
         f"search_width={args.search_width}, itopk_sizes={sweep}"
     )
 
@@ -210,6 +217,7 @@ results = {
     "nbits": args.nbits if "PQ" in args.index_type else None,
     "graph_degree": args.graph_degree if is_cagra else None,
     "intermediate_graph_degree": args.intermediate_graph_degree if is_cagra else None,
+    "build_algo": args.build_algo if is_cagra else None,
     "search_width": args.search_width if is_cagra else None,
     "k": args.k,
     "nprobes": nprobes if not is_cagra else None,
@@ -254,6 +262,7 @@ if is_cagra:
     idx_extra = {
         "graph_degree": args.graph_degree,
         "intermediate_graph_degree": args.intermediate_graph_degree,
+        "build_algo": args.build_algo,
     }
 else:
     idx_extra = {"nlist": args.nlist}

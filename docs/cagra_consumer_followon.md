@@ -167,8 +167,9 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | 2026-08-04 | GT bug (10k subset vs full HDF5 neighbors) | caused false 0.0695 on **both** GPUs |
 | 2026-08-04 | hipVS + cuVS `nn_descent` 10k smoke (exact GT) | **recall@10 = 1.0** both; hip QPS ~0.33–0.41× cu |
 | 2026-08-04 | **OWNER (lib quality)** | **cleared for nn_descent** on gfx1100 |
-| (lab) | Full SIFT-1M lib + Catch2 (Knowhere may still use ivf_pq) | *next* |
-| (lab) | Phase B smoke / L4 | *after Catch2 / Knowhere build-algo check* |
+| 2026-08-04 | Fair lib compare (10k) | hip ~0.33–0.41× cu; R@10=1.0 both |
+| (lab) | Catch2: probe + force Knowhere `build_algo=NN_DESCENT` | *next* — `probe_knowhere_cagra_build_algo.sh` |
+| (lab) | Phase B smoke / L4 (`BUILD_ALGO=NN_DESCENT`) | *after Catch2 or parallel smoke* |
 
 ### First commands on the lab (copy-paste)
 

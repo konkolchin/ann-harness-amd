@@ -17,6 +17,8 @@ MILVUS_LOG="${MILVUS_LOG:-${LOG_DIR}/milvus_gpu_standalone.log}"
 COLLECTION="${SMOKE_COLLECTION:-sift_gpu_cagra_smoke}"
 GRAPH_DEGREE="${GRAPH_DEGREE:-32}"
 INTERMEDIATE_GRAPH_DEGREE="${INTERMEDIATE_GRAPH_DEGREE:-64}"
+# gfx1100: hipVS IVF_PQ CAGRA graph build fails; Milvus/Knowhere accept NN_DESCENT
+BUILD_ALGO="${BUILD_ALGO:-NN_DESCENT}"
 ITOPK_SIZES="${ITOPK_SIZES:-64,128}"
 SEARCH_WIDTH="${SEARCH_WIDTH:-1}"
 MAX_TRAIN_ROWS="${MAX_TRAIN_ROWS:-20000}"
@@ -30,7 +32,7 @@ if ! curl -sf "http://127.0.0.1:9091/healthz" >/dev/null 2>&1 \
   exit 1
 fi
 
-echo "==> GPU_CAGRA smoke graph_degree=${GRAPH_DEGREE} itopk=${ITOPK_SIZES}"
+echo "==> GPU_CAGRA smoke graph_degree=${GRAPH_DEGREE} build_algo=${BUILD_ALGO} itopk=${ITOPK_SIZES}"
 echo "    collection=${COLLECTION} train=${MAX_TRAIN_ROWS} query=${MAX_QUERY_ROWS}"
 cd "${REPO_ROOT}"
 python3 scripts/run_milvus_hdf5.py \
@@ -40,6 +42,7 @@ python3 scripts/run_milvus_hdf5.py \
   --index-wait-s "${INDEX_WAIT_S}" \
   --graph-degree "${GRAPH_DEGREE}" \
   --intermediate-graph-degree "${INTERMEDIATE_GRAPH_DEGREE}" \
+  --build-algo "${BUILD_ALGO}" \
   --itopk-sizes "${ITOPK_SIZES}" \
   --search-width "${SEARCH_WIDTH}" \
   --max-train-rows "${MAX_TRAIN_ROWS}" \
