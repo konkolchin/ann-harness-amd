@@ -23,7 +23,14 @@
 JSON: `lib_hipvs_cagra_20260803_234622.json`, `…_235045.json`  
 `verify IndexParams.build_algo=2` (enum for nn_descent).
 
-**Escalate signal:** recall independent of itopk ⇒ broken neighbors / metric path on gfx1100, not under-tuned search.
+**Escalate signal (superseded):** recall independent of itopk looked like a gfx1100 bug,
+but **CUDA RTX 4080 matched exactly (0.0695 flat)** on the same 10k-subset recipe.
+
+**Root cause:** HDF5 `neighbors` are vs **full SIFT-1M train**; indexing only
+`MAX_TRAIN_ROWS=10000` makes that GT invalid → identical bogus recall on both GPUs.
+
+**Fix:** `bench_cuvs_cagra.py` recomputes exact sqeuclidean GT when train is truncated.
+Re-run AMD + CUDA smokes after `git pull`.
 
 ### Ownership
 

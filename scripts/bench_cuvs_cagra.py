@@ -36,6 +36,29 @@ def recall_at_k(pred_ids: np.ndarray, gt_ids: np.ndarray, k: int) -> float:
     return hits / (nq * k)
 
 
+def exact_neighbors_sqeuclidean(
+    xb: np.ndarray, xq: np.ndarray, k: int, batch_q: int = 64
+) -> np.ndarray:
+    """Brute-force top-k under squared L2 (matches CAGRA metric=sqeuclidean)."""
+    nq = xq.shape[0]
+    k = min(k, xb.shape[0])
+    xb_norm = np.sum(xb.astype(np.float64) ** 2, axis=1)  # (n,)
+    out = np.empty((nq, k), dtype=np.int64)
+    for s in range(0, nq, batch_q):
+        e = min(s + batch_q, nq)
+        q = xq[s:e].astype(np.float64)
+        # ||x-q||^2 = ||x||^2 + ||q||^2 - 2 x·q
+        dots = q @ xb.astype(np.float64).T
+        q_norm = np.sum(q**2, axis=1, keepdims=True)
+        dist = xb_norm[None, :] + q_norm - 2.0 * dots
+        # smallest distances
+        part = np.argpartition(dist, kth=k - 1, axis=1)[:, :k]
+        row = np.arange(e - s)[:, None]
+        order = np.argsort(dist[row, part], axis=1)
+        out[s:e] = part[row, order]
+    return out
+
+
 def detect_backend() -> tuple[str, str]:
     try:
         out = subprocess.check_output(
@@ -150,8 +173,11 @@ def main() -> None:
         xq = np.asarray(f["test"], dtype=np.float32)
         gt = np.asarray(f["neighbors"], dtype=np.int64)
 
-    if args.max_train_rows > 0:
+    full_train_n = int(xb.shape[0])
+    truncated_train = False
+    if args.max_train_rows > 0 and args.max_train_rows < full_train_n:
         xb = xb[: args.max_train_rows]
+        truncated_train = True
     if args.max_query_rows > 0:
         xq = xq[: args.max_query_rows]
         gt = gt[: args.max_query_rows]
@@ -164,7 +190,20 @@ def main() -> None:
 
         xb = _l2(xb)
         xq = _l2(xq)
-        print("l2_normalize=1 (note: gt still Euclidean on original SIFT — recall may drop)")
+        print("l2_normalize=1 — will recompute exact GT on normalized vectors")
+
+    # HDF5 neighbors are vs the FULL train set. Indexing a prefix makes that GT invalid
+    # (same bogus recall on CUDA and hipVS — observed 0.0695 flat). Recompute exact GT.
+    gt_source = "hdf5"
+    need_exact_gt = truncated_train or args.l2_normalize
+    if need_exact_gt:
+        gt_k = max(args.k, int(gt.shape[1]) if gt.ndim == 2 else args.k)
+        print(
+            f"recomputing exact GT (sqeuclidean) for xb={xb.shape[0]} "
+            f"xq={xq.shape[0]} k={gt_k} — HDF5 neighbors are for full train={full_train_n}"
+        )
+        gt = exact_neighbors_sqeuclidean(xb, xq, k=gt_k)
+        gt_source = "exact_subset"
 
     dim = int(xb.shape[1])
     print(f"backend={backend} gpu={gpu_name!r}")
@@ -176,7 +215,7 @@ def main() -> None:
         f"itopk_sizes={itopk_sizes} search_width={args.search_width} k={args.k} "
         f"graph_build_algo={args.graph_build_algo or 'default'}"
     )
-    print(f"xb={xb.shape} xq={xq.shape} gt={gt.shape} dim={dim}")
+    print(f"xb={xb.shape} xq={xq.shape} gt={gt.shape} dim={dim} gt_source={gt_source}")
 
     xb_g = cp.asarray(xb)
     xq_g = cp.asarray(xq)
@@ -321,6 +360,8 @@ def main() -> None:
         "xb_shape": list(xb.shape),
         "xq_shape": list(xq.shape),
         "data_path": args.data,
+        "gt_source": gt_source,
+        "full_train_n": full_train_n,
         "timings_s": {"index_build": build_s},
         "itopk_results": [],
         "nprobe_results": [],  # alias for compare_cuvs_lib_json.py (nprobe := itopk)
