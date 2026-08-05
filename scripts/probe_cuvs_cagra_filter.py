@@ -109,10 +109,17 @@ def random_allowed(n: int, exclude_frac: float, seed: int) -> np.ndarray:
 
 def device_ids_to_numpy(neighbors, cp_mod) -> np.ndarray:
     if hasattr(neighbors, "__cuda_array_interface__"):
-        return np.asarray(cp_mod.asarray(neighbors).get(), dtype=np.int64)
-    if hasattr(neighbors, "copy_to_host"):
-        return np.asarray(neighbors.copy_to_host(), dtype=np.int64)
-    return np.asarray(neighbors).astype(np.int64, copy=False)
+        raw = np.asarray(cp_mod.asarray(neighbors).get())
+    elif hasattr(neighbors, "copy_to_host"):
+        raw = np.asarray(neighbors.copy_to_host())
+    else:
+        raw = np.asarray(neighbors)
+    # hipVS/cuVS often use uint32 with 0xFFFFFFFF as "no neighbor"
+    if raw.dtype == np.uint32 or raw.dtype == np.uint64:
+        out = raw.astype(np.int64, copy=True)
+        out[raw == np.iinfo(raw.dtype).max] = -1
+        return out
+    return raw.astype(np.int64, copy=False)
 
 
 def make_filter(cp, filters_mod, allowed: np.ndarray):
@@ -166,11 +173,22 @@ def summarize_case(
     neg = int(np.sum(pred < 0))
     # how many hits land on excluded ids (filter leak)
     leak = 0
+    oob = 0
     total = pred.size
+    n_allow = int(allowed.shape[0])
     for v in pred.ravel():
-        if v >= 0 and not allowed[int(v)]:
+        vi = int(v)
+        if vi < 0:
+            continue
+        if vi >= n_allow:
+            oob += 1
+            continue
+        if not allowed[vi]:
             leak += 1
-    r = recall_at_k(pred, gt, k)
+    # ignore invalid ids in recall (treat as miss)
+    pred_safe = pred.copy()
+    pred_safe[(pred_safe < 0) | (pred_safe >= n_allow)] = -2
+    r = recall_at_k(pred_safe, gt, k)
     sample = []
     for i in range(min(6, pred.shape[0])):
         sample.append(
@@ -186,13 +204,14 @@ def summarize_case(
         "k": k,
         "recall": float(r),
         "neg1": neg,
+        "oob_ids": oob,
         "filter_leaks": leak,
         "allowed_frac": float(allowed.mean()),
         "sample": sample,
     }
     print(
         f"[{tag}] recall@{k}={r:.4f} neg1={neg}/{total} "
-        f"leaks={leak} allowed_frac={allowed.mean():.3f}"
+        f"oob={oob} leaks={leak} allowed_frac={allowed.mean():.3f}"
     )
     for s in sample[:4]:
         print(f"  q{s['q']}: pred={s['pred']} gt={s['gt']}")
