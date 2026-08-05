@@ -46,13 +46,16 @@ Log: `$WORKDIR/logs/lib_hipvs_cagra_filter_20260805_232922.{log,json}`
 | filter_40pct | **0.00** | wrong IDs, `neg1=0` (Catch2 bitset) |
 | simple_bitset_64 | **0.00** | all `-1` (`neg1=64/64`, Catch2 simple bitset) |
 
-**OWNER: hipVS CAGRA filtered search** on gfx1100. Escalate to ROCm-DS / hipVS with that JSON.  
-Unfiltered path (build `nn_descent`, search, serialize) is OK → Phase B smoke can proceed.
+**OWNER: hipVS CAGRA filtered search** on gfx1100.  
+Escalation: [`docs/escalation_hipvs_cagra_filter_gfx1100.md`](../../docs/escalation_hipvs_cagra_filter_gfx1100.md) → https://github.com/ROCm-DS/hipVS/issues  
 
 ```bash
-# CUDA peer contrast (expect filter green):
+bash scripts/collect_hipvs_cagra_filter_escalation.sh   # env bundle to attach
+# optional CUDA peer contrast:
 bash scripts/run_cuvs_cagra_filter_repro.sh
 ```
+
+Unfiltered path OK → Phase B smoke can proceed in parallel.
 
 ### IVF-PQ graph build (hipVS)
 
