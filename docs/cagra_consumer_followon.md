@@ -8,7 +8,7 @@ proves **consumer RDNA3** (lab: RX 7900 XTX / `gfx1100`) can run graph ANN
 
 | Phase | Exit |
 |-------|------|
-| A | Catch2 CAGRA TopK + Serialize green (or escalated hipVS repro); lib JSON hipVS vs cuVS |
+| A | Catch2 CAGRA L2/TopK green + bitset triage (or escalated hipVS filter repro); lib JSON hipVS vs cuVS |
 | B | Sealed `GPU_CAGRA` smoke + Layer-4 SIFT (GIST if VRAM) vs RTX 4080 |
 
 IVF PoC remains valid; CAGRA was explicitly out of PoC scope (Catch2 recall **0.0**).
@@ -147,6 +147,7 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | Script | Role |
 |--------|------|
 | `reproduce_cagra_gfx1100.sh` | Phase A Catch2 + hipVS minimal |
+| `probe_knowhere_cagra_id_dump.sh` | Dump CAGRA IDs (bitset + serialize pre/post) |
 | `bench_cuvs_cagra.py` | Lib API bench |
 | `run_hipvs_cagra_bench.sh` / `run_cuvs_cagra_bench.sh` | Lab wrappers |
 | `run_milvus_hdf5.py --index-type GPU_CAGRA` | Product client |
@@ -168,8 +169,10 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | 2026-08-04 | hipVS + cuVS `nn_descent` 10k smoke (exact GT) | **recall@10 = 1.0** both; hip QPS ~0.33–0.41× cu |
 | 2026-08-04 | **OWNER (lib quality)** | **cleared for nn_descent** on gfx1100 |
 | 2026-08-04 | Fair lib compare (10k) | hip ~0.33–0.41× cu; R@10=1.0 both |
-| (lab) | Catch2: probe + force Knowhere `build_algo=NN_DESCENT` | *next* — `probe_knowhere_cagra_build_algo.sh` |
-| (lab) | Phase B smoke / L4 (`BUILD_ALGO=NN_DESCENT`) | *after Catch2 or parallel smoke* |
+| 2026-08-04 | Catch2 + `0052` NN_DESCENT | config OK; CAGRA still red on **Bitset** + **Simple Bitset** (0.0) |
+| 2026-08-05 | Re-map asserts vs source | `:206`/`:329` are bitset paths, not TopK/Serialize |
+| (lab) | ID dump probe | `bash scripts/probe_knowhere_cagra_id_dump.sh` |
+| (lab) | Phase B smoke / L4 (`BUILD_ALGO=NN_DESCENT`) | parallel OK; product may not hit bitset UT path |
 
 ### First commands on the lab (copy-paste)
 

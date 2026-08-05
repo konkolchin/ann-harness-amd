@@ -27,3 +27,12 @@ Default IVF_PQ graph build → recall 0.0 on gfx1100; `NN_DESCENT` matches lib s
 bash scripts/apply_knowhere_cagra_nn_descent_ut.sh
 RUN_CATCH2=1 bash scripts/apply_knowhere_cagra_nn_descent_ut.sh
 ```
+
+After 0052, remaining CAGRA Catch2 fails are **bitset filter** paths
+(`Search With Bitset`, `Search Simple Bitset`), not TopK/Serialize.
+Dump neighbor IDs:
+
+```bash
+bash scripts/probe_knowhere_cagra_id_dump.sh
+# logs: $WORKDIR/logs/cagra_id_dump_*_extract.txt
+```

@@ -23,9 +23,19 @@ Note AMD QPS cliff at itopk=512 (investigate later; recall still 1.0).
 
 `recall@10=0.0695` flat on **both** CUDA and AMD was invalid GT (HDF5 neighbors vs full 1M while indexing 10k). Fixed in `bench_cuvs_cagra.py` (`gt_source=exact_subset`).
 
-### Catch2 (still open)
+### Catch2 (updated 2026-08-05)
 
-Full `Test All GPU Index` (2026-08-03): CAGRA recall **0.0** at TopK / Serialize — likely default **ivf_pq** graph build inside Knowhere. Next: confirm Knowhere CAGRA build algo; prefer nn_descent or fix ivf_pq path.
+After `0052` (`build_algo=NN_DESCENT` in `cagra_gen`):
+
+| Assert | Section (stock line → +1) | Index | Result |
+|--------|---------------------------|-------|--------|
+| recall > 0.7 | **Search With Bitset** (:205→206) | `GPU_CUVS_CAGRA` | **0.0** |
+| recall ≥ 0.85 | Search TopK (:242→243) | `GPU_CUVS_IVF_PQ` | near-miss (out of scope) |
+| recall ≥ 0.8 | **Search Simple Bitset** (:328→329) | `GPU_CUVS_CAGRA` | **0.0** |
+| recall ≥ 0.75 | main Search (:63) | `GPU_IVF_PQ` | near-miss |
+
+Cosine / Hamming CAGRA green. Serialize has no hard recall assert (only soft `CHECK`).  
+Next: `bash scripts/probe_knowhere_cagra_id_dump.sh` (bitset + pre/post-serialize ID dumps).
 
 ### IVF-PQ graph build (hipVS)
 
