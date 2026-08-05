@@ -148,6 +148,7 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 |--------|------|
 | `reproduce_cagra_gfx1100.sh` | Phase A Catch2 + hipVS minimal |
 | `probe_knowhere_cagra_id_dump.sh` | Dump CAGRA IDs (bitset + serialize pre/post) |
+| `probe_cuvs_cagra_filter.py` / `run_*_cagra_filter_repro.sh` | hipVS vs Knowhere filter ownership |
 | `bench_cuvs_cagra.py` | Lib API bench |
 | `run_hipvs_cagra_bench.sh` / `run_cuvs_cagra_bench.sh` | Lab wrappers |
 | `run_milvus_hdf5.py --index-type GPU_CAGRA` | Product client |
@@ -171,7 +172,8 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | 2026-08-04 | Fair lib compare (10k) | hip ~0.33–0.41× cu; R@10=1.0 both |
 | 2026-08-04 | Catch2 + `0052` NN_DESCENT | config OK; CAGRA still red on **Bitset** + **Simple Bitset** (0.0) |
 | 2026-08-05 | Re-map asserts vs source | `:206`/`:329` are bitset paths, not TopK/Serialize |
-| (lab) | ID dump probe | `bash scripts/probe_knowhere_cagra_id_dump.sh` |
+| 2026-08-05 | ID dump | serialize OK; bitset wrong IDs; simple_bitset all `-1` |
+| (lab) | hipVS filter repro | `bash scripts/run_hipvs_cagra_filter_repro.sh` |
 | (lab) | Phase B smoke / L4 (`BUILD_ALGO=NN_DESCENT`) | parallel OK; product may not hit bitset UT path |
 
 ### First commands on the lab (copy-paste)

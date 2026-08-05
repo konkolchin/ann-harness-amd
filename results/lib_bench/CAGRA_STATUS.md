@@ -34,8 +34,16 @@ After `0052` (`build_algo=NN_DESCENT` in `cagra_gen`):
 | recall ≥ 0.8 | **Search Simple Bitset** (:328→329) | `GPU_CUVS_CAGRA` | **0.0** |
 | recall ≥ 0.75 | main Search (:63) | `GPU_IVF_PQ` | near-miss |
 
-Cosine / Hamming CAGRA green. Serialize has no hard recall assert (only soft `CHECK`).  
-Next: `bash scripts/probe_knowhere_cagra_id_dump.sh` (bitset + pre/post-serialize ID dumps).
+Cosine / Hamming CAGRA green. Serialize unfiltered self-search OK (`id=i`, dist 0).  
+ID dump (2026-08-05): bitset = wrong IDs; simple_bitset = all `-1`/`FLT_MAX`.
+
+**Next:** pure hipVS filter repro (bypass Knowhere):
+
+```bash
+source ~/hipvs-bench-venv/bin/activate
+bash scripts/run_hipvs_cagra_filter_repro.sh
+# CUDA peer: bash scripts/run_cuvs_cagra_filter_repro.sh
+```
 
 ### IVF-PQ graph build (hipVS)
 
