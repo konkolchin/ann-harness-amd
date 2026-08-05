@@ -173,8 +173,9 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | 2026-08-04 | Catch2 + `0052` NN_DESCENT | config OK; CAGRA still red on **Bitset** + **Simple Bitset** (0.0) |
 | 2026-08-05 | Re-map asserts vs source | `:206`/`:329` are bitset paths, not TopK/Serialize |
 | 2026-08-05 | ID dump | serialize OK; bitset wrong IDs; simple_bitset all `-1` |
-| 2026-08-05 | hipVS filter repro | unfiltered R@1=1.0; filter_40pct R@1=0.0 → **OWNER hipVS** |
-| (lab) | Phase B smoke / L4 (`BUILD_ALGO=NN_DESCENT`) | parallel OK; product may not hit bitset UT path |
+| 2026-08-05 | hipVS filter repro | unfiltered 1.0; filter_40pct 0.0; simple_bitset all -1 → **OWNER hipVS** |
+| (lab) | Escalate filter bug | ROCm-DS / hipVS + `lib_hipvs_cagra_filter_20260805_232922.json` |
+| (lab) | Phase B smoke / L4 (`BUILD_ALGO=NN_DESCENT`) | OK in parallel (unfiltered product path) |
 
 ### First commands on the lab (copy-paste)
 

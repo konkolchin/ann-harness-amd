@@ -37,20 +37,21 @@ After `0052` (`build_algo=NN_DESCENT` in `cagra_gen`):
 Cosine / Hamming CAGRA green. Serialize unfiltered self-search OK (`id=i`, dist 0).  
 ID dump (2026-08-05): bitset = wrong IDs; simple_bitset = all `-1`/`FLT_MAX`.
 
-**Filter ownership (2026-08-05 hipVS Python, no Knowhere):**
+**Filter ownership (2026-08-05 hipVS Python, no Knowhere)**  
+Log: `$WORKDIR/logs/lib_hipvs_cagra_filter_20260805_232922.{log,json}`
 
 | Case | recall@1 | Notes |
 |------|---------:|-------|
 | unfiltered | **1.00** | self-ids correct |
-| filter_40pct | **0.00** | wrong IDs, `neg1=0` (matches Catch2 bitset) |
-| simple_bitset_64 | *(re-run after uint32 `-1` fix)* | crashed on `0xFFFFFFFF` sentinel |
+| filter_40pct | **0.00** | wrong IDs, `neg1=0` (Catch2 bitset) |
+| simple_bitset_64 | **0.00** | all `-1` (`neg1=64/64`, Catch2 simple bitset) |
 
-**OWNER: hipVS CAGRA filtered search** (unfiltered OK). Knowhere wiring secondary.
+**OWNER: hipVS CAGRA filtered search** on gfx1100. Escalate to ROCm-DS / hipVS with that JSON.  
+Unfiltered path (build `nn_descent`, search, serialize) is OK → Phase B smoke can proceed.
 
 ```bash
-source ~/hipvs-bench-venv/bin/activate
-bash scripts/run_hipvs_cagra_filter_repro.sh   # re-run for simple_bitset
-# CUDA peer: bash scripts/run_cuvs_cagra_filter_repro.sh
+# CUDA peer contrast (expect filter green):
+bash scripts/run_cuvs_cagra_filter_repro.sh
 ```
 
 ### IVF-PQ graph build (hipVS)
