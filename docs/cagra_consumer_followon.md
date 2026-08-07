@@ -149,6 +149,9 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | `reproduce_cagra_gfx1100.sh` | Phase A Catch2 + hipVS minimal |
 | `probe_knowhere_cagra_id_dump.sh` | Dump CAGRA IDs (bitset + serialize pre/post) |
 | `probe_cuvs_cagra_filter.py` / `run_*_cagra_filter_repro.sh` | hipVS vs Knowhere filter ownership |
+| `escalation_hipvs_cagra_filter_gfx1100.md` | ROCm-DS/hipVS issue template |
+| `collect_hipvs_cagra_filter_escalation.sh` | Env bundle for the ticket |
+| `diy_hipvs_cagra_filter_gfx1100.md` | DIY fix on `konkolchin/hipVS` fork |
 | `bench_cuvs_cagra.py` | Lib API bench |
 | `run_hipvs_cagra_bench.sh` / `run_cuvs_cagra_bench.sh` | Lab wrappers |
 | `run_milvus_hdf5.py --index-type GPU_CAGRA` | Product client |
@@ -175,6 +178,7 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | 2026-08-05 | ID dump | serialize OK; bitset wrong IDs; simple_bitset all `-1` |
 | 2026-08-05 | hipVS filter repro | unfiltered 1.0; filter_40pct 0.0; simple_bitset all -1 → **OWNER hipVS** |
 | 2026-08-05 | Escalation pack | `docs/escalation_hipvs_cagra_filter_gfx1100.md` → file on ROCm-DS/hipVS |
+| 2026-08-07 | DIY path | fork `konkolchin/hipVS`; runbook `docs/diy_hipvs_cagra_filter_gfx1100.md` |
 | (lab) | Phase B smoke / L4 (`BUILD_ALGO=NN_DESCENT`) | OK in parallel (unfiltered product path) |
 
 ### First commands on the lab (copy-paste)

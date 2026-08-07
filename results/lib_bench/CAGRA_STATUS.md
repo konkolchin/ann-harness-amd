@@ -47,12 +47,13 @@ Log: `$WORKDIR/logs/lib_hipvs_cagra_filter_20260805_232922.{log,json}`
 | simple_bitset_64 | **0.00** | all `-1` (`neg1=64/64`, Catch2 simple bitset) |
 
 **OWNER: hipVS CAGRA filtered search** on gfx1100.  
-Escalation: [`docs/escalation_hipvs_cagra_filter_gfx1100.md`](../../docs/escalation_hipvs_cagra_filter_gfx1100.md) → https://github.com/ROCm-DS/hipVS/issues  
+Escalation: [`docs/escalation_hipvs_cagra_filter_gfx1100.md`](../../docs/escalation_hipvs_cagra_filter_gfx1100.md)  
+DIY: [`docs/diy_hipvs_cagra_filter_gfx1100.md`](../../docs/diy_hipvs_cagra_filter_gfx1100.md) — fork https://github.com/konkolchin/hipVS  
 
 ```bash
-bash scripts/collect_hipvs_cagra_filter_escalation.sh   # env bundle to attach
-# optional CUDA peer contrast:
-bash scripts/run_cuvs_cagra_filter_repro.sh
+bash scripts/collect_hipvs_cagra_filter_escalation.sh
+# DIY start: match lab SHA, branch fix/cagra-filter-gfx1100, rebuild USE_WARPSIZE_32
+# Gate: bash scripts/run_hipvs_cagra_filter_repro.sh
 ```
 
 Unfiltered path OK → Phase B smoke can proceed in parallel.
