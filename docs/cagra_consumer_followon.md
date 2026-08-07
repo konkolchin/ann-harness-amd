@@ -152,6 +152,7 @@ Do **not** mark dashboard `amd-gtests` PASS until Catch2 CAGRA rows are green
 | `escalation_hipvs_cagra_filter_gfx1100.md` | ROCm-DS/hipVS issue template |
 | `collect_hipvs_cagra_filter_escalation.sh` | Env bundle for the ticket |
 | `diy_hipvs_cagra_filter_gfx1100.md` | DIY fix on `konkolchin/hipVS` fork |
+| `cagra_filtering_101_slides.tex` | Greenhorn deck: ANN/CAGRA + what filtering is |
 | `bench_cuvs_cagra.py` | Lib API bench |
 | `run_hipvs_cagra_bench.sh` / `run_cuvs_cagra_bench.sh` | Lab wrappers |
 | `run_milvus_hdf5.py --index-type GPU_CAGRA` | Product client |
