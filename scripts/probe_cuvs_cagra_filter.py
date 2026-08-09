@@ -478,22 +478,35 @@ def main() -> int:
         summarize_case("allow_only_0", pred0, gt0, args.k, allowed_only0)
     )
 
-    # 6) Brute-force + same bitset — isolates test()/packing from CAGRA walk
+    # 6) Brute-force + bitmap (same bits) — isolates test()/packing from CAGRA.
+    # Note: brute_force.search wants from_bitmap [n_queries, n_samples], not bitset.
     try:
         from cuvs.neighbors import brute_force as bf_mod
 
-        bf_idx = bf_mod.build(xb64_g, metric="sqeuclidean", **build_kw)
-        if resources is not None and hasattr(resources, "sync"):
-            resources.sync()
-        bf_kw = dict(build_kw)
-        try:
-            bf_dist, bf_neigh = bf_mod.search(
-                bf_idx, xq64_g[:1], args.k, filter=filt0, **bf_kw
-            )
-        except TypeError:
-            bf_dist, bf_neigh = bf_mod.search(
-                bf_idx, xq64_g[:1], args.k, prefilter=filt0, **bf_kw
-            )
+        bf_idx = bf_mod.build(
+            xb64_g,
+            metric="sqeuclidean",
+            **({} if resources is None else {"resources": resources}),
+        )
+        words0 = allowed_to_cuvs_bitset_u32(
+            allowed_only0, invert=args.invert_bitset
+        )
+        # 1 query × n64 samples → same packed length as the bitset for n_queries=1
+        bm = cp.asarray(words0)
+        if hasattr(filters, "from_bitmap"):
+            filt_bm = filters.from_bitmap(bm)
+            how_bm = "filters.from_bitmap"
+        else:
+            filt_bm = filt0
+            how_bm = "filters.from_bitset(fallback)"
+        print(f"brute_force prefilter: {how_bm}")
+        bf_dist, bf_neigh = bf_mod.search(
+            bf_idx,
+            xq64_g[:1],
+            args.k,
+            prefilter=filt_bm,
+            **({} if resources is None else {"resources": resources}),
+        )
         if resources is not None and hasattr(resources, "sync"):
             resources.sync()
         bf_pred = device_ids_to_numpy(bf_neigh, cp)
@@ -504,7 +517,7 @@ def main() -> int:
             )
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"brute_force+allow_only_0 skipped: {exc}")
+        print(f"brute_force+allow_only_0 skipped: {type(exc).__name__}: {exc}")
 
     # Ownership hint
     by_tag = {c["tag"]: c for c in cases}
