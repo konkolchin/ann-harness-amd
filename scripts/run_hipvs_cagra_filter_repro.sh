@@ -21,6 +21,9 @@ RESULTS_JSON="${RESULTS_JSON:-${LOG_DIR}/lib_hipvs_cagra_filter_${TS}.json}"
 LOG="${LOG_DIR}/lib_hipvs_cagra_filter_${TS}.log"
 GRAPH_BUILD_ALGO="${GRAPH_BUILD_ALGO:-nn_descent}"
 ITOPK_SIZE="${ITOPK_SIZE:-128}"
+# Default single_cta: AUTO often picks multi_cta on this GPU, which does NOT
+# use move_invalid_to_end_of_list (the 26.03 wf32 ballot fix lives there).
+SEARCH_ALGO="${SEARCH_ALGO:-single_cta}"
 
 export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
 export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"

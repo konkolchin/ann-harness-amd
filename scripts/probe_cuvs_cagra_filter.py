@@ -256,6 +256,12 @@ def main() -> int:
     ap.add_argument("--graph-degree", type=int, default=32)
     ap.add_argument("--intermediate-graph-degree", type=int, default=64)
     ap.add_argument("--itopk-size", type=int, default=128)
+    ap.add_argument(
+        "--search-algo",
+        default="single_cta",
+        help="CAGRA search algo: auto|single_cta|multi_cta (default single_cta "
+        "so the move_invalid wf32 ballot fix is exercised)",
+    )
     ap.add_argument("--build-algo", default="nn_descent")
     ap.add_argument("--exclude-frac", type=float, default=0.4)
     ap.add_argument("--results-json", default="")
@@ -323,9 +329,16 @@ def main() -> int:
         cp.cuda.Device().synchronize()
 
     try:
-        search_params = cagra.SearchParams(itopk_size=args.itopk_size)
+        search_params = cagra.SearchParams(
+            itopk_size=args.itopk_size, algo=args.search_algo
+        )
     except TypeError:
-        search_params = cagra.SearchParams()
+        try:
+            search_params = cagra.SearchParams(itopk_size=args.itopk_size)
+        except TypeError:
+            search_params = cagra.SearchParams()
+    if hasattr(search_params, "algo"):
+        print(f"SearchParams.algo={search_params.algo!r} (requested={args.search_algo!r})")
 
     cases: list[dict] = []
 
@@ -378,7 +391,10 @@ def main() -> int:
     if resources is not None and hasattr(resources, "sync"):
         resources.sync()
     try:
-        sp64 = cagra.SearchParams(itopk_size=32)
+        try:
+            sp64 = cagra.SearchParams(itopk_size=32, algo=args.search_algo)
+        except TypeError:
+            sp64 = cagra.SearchParams(itopk_size=32)
     except TypeError:
         sp64 = search_params
     filt64, how64 = make_filter(cp, filters, allowed64)
