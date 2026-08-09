@@ -345,10 +345,15 @@ diff -u cpp/src/neighbors/detail/cagra/search_single_cta_kernel-inl.cuh \
   /tmp/cagra_single_2603.cuh | head -200
 ```
 
-Apply the same `mask_type = uint32_t when warp_size()==32` pattern anywhere a
-ballot mask is shifted by `warp_size() - lane` or ranked with
-`(1 << threadIdx.x)` under the assumption that mask width == warp size.
-Rebuild (`§2`) and re-gate after each hunk.
+**§4b.1 — `pickup_next_parents` (remaining `bitmask_type` + `1 << threadIdx.x`):**
+
+```bash
+bash ~/ann-harness-amd/scripts/apply_hipvs_cagra_pickup_parents_wf32.sh "$WORKDIR/hipVS"
+# then rebuild libcuvs + amd-libhipvs (§2 / §2b) and re-gate SEARCH_ALGO=single_cta
+```
+
+This (1) restores first-warp-only (upstream had `// if (threadIdx.x >= 32) return`
+commented out), (2) ranks with `lane_id`, (3) uses `uint32_t` ballot mask on wf32.
 
 Then:
 
