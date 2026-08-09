@@ -87,13 +87,20 @@ def knowhere_bytes_to_allowed(data: bytes, n: int) -> np.ndarray:
     return allowed
 
 
-def allowed_to_cuvs_bitset_u32(allowed: np.ndarray) -> np.ndarray:
-    """Pack allowed mask into cuVS uint32 words (bit1=allowed)."""
+def allowed_to_cuvs_bitset_u32(
+    allowed: np.ndarray, *, invert: bool = False
+) -> np.ndarray:
+    """Pack mask into cuVS uint32 words.
+
+    Docs / from_bitset: bit 1 = allowed. Set invert=True to A/B the opposite
+    (useful if a HIP path treats the buffer as removed_indices bits).
+    """
     n = int(allowed.shape[0])
     n_words = (n + 31) // 32
     out = np.zeros(n_words, dtype=np.uint32)
     for i in range(n):
-        if allowed[i]:
+        bit_on = (not allowed[i]) if invert else bool(allowed[i])
+        if bit_on:
             out[i // 32] |= np.uint32(1) << (i % 32)
     return out
 
@@ -122,9 +129,13 @@ def device_ids_to_numpy(neighbors, cp_mod) -> np.ndarray:
     return raw.astype(np.int64, copy=False)
 
 
-def make_filter(cp, filters_mod, allowed: np.ndarray):
-    words = allowed_to_cuvs_bitset_u32(allowed)
+def make_filter(cp, filters_mod, allowed: np.ndarray, *, invert: bool = False):
+    words = allowed_to_cuvs_bitset_u32(allowed, invert=invert)
     bitset_g = cp.asarray(words)
+    print(
+        f"  bitset words[0]=0x{int(words[0]):08x} "
+        f"bit0={int((words[0] >> 0) & 1)} invert={invert}"
+    )
     # Prefer from_bitset; try a few historical names.
     for name in ("from_bitset", "bitset", "BitsetFilter"):
         fn = getattr(filters_mod, name, None)
@@ -264,6 +275,11 @@ def main() -> int:
     )
     ap.add_argument("--build-algo", default="nn_descent")
     ap.add_argument("--exclude-frac", type=float, default=0.4)
+    ap.add_argument(
+        "--invert-bitset",
+        action="store_true",
+        help="Pack bitset with opposite polarity (A/B removed vs allowed)",
+    )
     ap.add_argument("--results-json", default="")
     args = ap.parse_args()
 
@@ -354,7 +370,9 @@ def main() -> int:
     cases.append(summarize_case("unfiltered", pred, gt, args.k, allowed_all))
 
     # 2) Filter API with ALL bits allowed — must match unfiltered if path is sane
-    filt_all, how_all = make_filter(cp, filters, allowed_all)
+    filt_all, how_all = make_filter(
+        cp, filters, allowed_all, invert=args.invert_bitset
+    )
     print(f"filter_all_ones ctor: {how_all}")
     dist, neigh = cagra_search(
         cagra, search_params, index, xq_g, args.k, filt=filt_all, resources=resources
@@ -368,7 +386,7 @@ def main() -> int:
 
     # 3) ~40% excluded (Catch2 bitset percentage 0.4)
     allowed40 = random_allowed(args.n_train, args.exclude_frac, seed=args.seed + 7)
-    filt40, how = make_filter(cp, filters, allowed40)
+    filt40, how = make_filter(cp, filters, allowed40, invert=args.invert_bitset)
     print(f"filter ctor: {how}")
     dist, neigh = cagra_search(
         cagra, search_params, index, xq_g, args.k, filt=filt40, resources=resources
@@ -410,7 +428,7 @@ def main() -> int:
             sp64 = cagra.SearchParams(itopk_size=32)
     except TypeError:
         sp64 = search_params
-    filt64, how64 = make_filter(cp, filters, allowed64)
+    filt64, how64 = make_filter(cp, filters, allowed64, invert=args.invert_bitset)
     print(f"simple_bitset filter ctor: {how64}")
     dist, neigh = cagra_search(
         cagra, sp64, index64, xq64_g, args.k, filt=filt64, resources=resources
@@ -425,22 +443,47 @@ def main() -> int:
     )
     cases.append(summarize_case("simple_bitset_64", pred, gt, args.k, allowed64))
 
+    # 5) Only index 0 allowed — self-query 0 must return 0 if test(0) works
+    allowed_only0 = np.zeros(n64, dtype=bool)
+    allowed_only0[0] = True
+    filt0, how0 = make_filter(
+        cp, filters, allowed_only0, invert=args.invert_bitset
+    )
+    print(f"allow_only_0 ctor: {how0}")
+    dist, neigh = cagra_search(
+        cagra, sp64, index64, xq64_g[:1], args.k, filt=filt0, resources=resources
+    )
+    if resources is not None and hasattr(resources, "sync"):
+        resources.sync()
+    pred0 = device_ids_to_numpy(neigh, cp)
+    gt0 = exact_neighbors_filtered(xb64, xq64[:1], args.k, allowed_only0)
+    print(f"allow_only_0 detail: pred0={pred0[0, 0]} gt0={gt0[0, 0]}")
+    cases.append(
+        summarize_case("allow_only_0", pred0, gt0, args.k, allowed_only0)
+    )
+
     # Ownership hint
     by_tag = {c["tag"]: c for c in cases}
     uf = by_tag["unfiltered"]["recall"]
     fall = by_tag["filter_all_ones"]["recall"]
     f40 = by_tag["filter_40pct"]["recall"]
     sb = by_tag["simple_bitset_64"]["recall"]
+    a0 = by_tag["allow_only_0"]["recall"]
     print("\n== OWNERSHIP ==")
     if uf >= 0.9 and fall < 0.5:
         print(
             "OWNER: hipVS CAGRA filtered-search PATH "
             "(even all-ones bitset breaks vs unfiltered)."
         )
-    elif uf >= 0.9 and fall >= 0.9 and (f40 < 0.3 or sb < 0.3):
+    elif uf >= 0.9 and fall >= 0.9 and a0 < 0.5:
         print(
-            "OWNER: hipVS CAGRA bitset CONTENTS / selective filter "
-            "(all-ones OK; partial bitset recall dead)."
+            "OWNER: hipVS bitset_view.test / packing "
+            "(all-ones OK; allow_only_0 cannot return id 0)."
+        )
+    elif uf >= 0.9 and fall >= 0.9 and a0 >= 0.9 and (f40 < 0.3 or sb < 0.3):
+        print(
+            "OWNER: hipVS CAGRA search-under-sparsity "
+            "(single-bit OK; denser partial filters break walk)."
         )
     elif uf >= 0.9 and f40 >= 0.7 and sb >= 0.8:
         print(
@@ -450,9 +493,11 @@ def main() -> int:
     else:
         print(
             f"OWNER: unclear (unfiltered={uf:.3f} all_ones={fall:.3f} "
-            f"filter40={f40:.3f} simple={sb:.3f})"
+            f"filter40={f40:.3f} simple={sb:.3f} allow_only_0={a0:.3f})"
         )
     print("Knowhere wiring unlikely if any filter_* case is red on this probe.")
+    if args.invert_bitset:
+        print("NOTE: ran with --invert-bitset (opposite packing).")
 
     out = {
         "protocol": "library_cuvs_cagra_filter_repro",
