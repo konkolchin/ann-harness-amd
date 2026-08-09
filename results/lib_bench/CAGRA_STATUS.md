@@ -52,25 +52,31 @@ DIY: [`docs/diy_hipvs_cagra_filter_gfx1100.md`](../../docs/diy_hipvs_cagra_filte
 
 ### DIY triage lock (2026-08-10) — `SEARCH_ALGO=single_cta`
 
-Log: `$WORKDIR/logs/lib_hipvs_cagra_filter_20260810_001233.{log,json}`  
-Patch applied: `move_invalid` uint32 mask (`intentionally not using bitmask_type`, 26.03 backport).
+Latest gate: `$WORKDIR/logs/lib_hipvs_cagra_filter_20260810_002759.{log,json}`  
+
+Patches tried on `fix/cagra-filter-gfx1100` tree:
+- `move_invalid` uint32 mask (26.03 backport) — simple_bitset no longer all `-1`
+- `pickup_next_parents` lane_id / first-warp guard — **no recall change**
+- `is_valid_index` compaction tweak — **caused search crash; reverted**
+- Do **not** force `thread_block_size=32` (illegal access)
 
 | Case | recall@1 | Notes |
 |------|---------:|-------|
 | unfiltered | **1.00** | |
-| filter_all_ones | **1.00** | filter path OK when nothing excluded |
-| filter_40pct | **0.00** | wrong allowed IDs, `leaks=0` |
-| simple_bitset_64 | **0.00** | wrong IDs (no longer all `-1`) |
-| allow_only_0 (CAGRA) | **0.00** | empty (`-1`) — seed/sparsity |
-| brute_force + allow_only_0 | **1.00** | **bitset `test`/packing OK** |
+| filter_all_ones | **1.00** | filter machinery OK when nothing excluded |
+| filter_40pct | **0.00** | wrong allowed IDs |
+| simple_bitset_64 (CAGRA) | **0.00** | wrong IDs (`pred0=48` vs `gt0=0`) |
+| allow_only_0 (CAGRA) | **0.00** | empty |
+| brute_force + allow_only_0 | **1.00** | packing OK |
+| brute_force + simple_bitset_64 | **1.00** | **same mask, perfect** |
 
-**Conclusion:** hipVS bitset contents work (brute_force). Bug is **CAGRA search under a selective filter** (graph walk / warp ballot / post-filter compaction beyond `move_invalid`).
+**Conclusion (locked):** bitset packing/`test` OK. **CAGRA filtered graph walk** on gfx1100 is wrong.  
+Knowhere not implicated. Escalate with this table + JSON; DIY next = careful diff of
+`search_single_cta_kernel-inl.cuh` filter sections vs `AMD-Ecosystem/hipVS` `release/rocmds-26.03`
+(and/or HIP `cub::WarpScan` / parent-filter loop), not more blind ballots.
 
 ```bash
-# Gate (force single_cta):
 SEARCH_ALGO=single_cta bash scripts/run_hipvs_cagra_filter_repro.sh
-# Next DIY: other bitmask_type ballot sites in search_single_cta_kernel-inl.cuh
-# (pickup_next_parents, filter post-process); diff vs AMD 26.03
 ```
 
 Unfiltered path OK → Phase B smoke can proceed in parallel.
