@@ -17,7 +17,7 @@
 \title{hipVS vs cuVS --- Library Speed}
 \subtitle{RDNA3 (\texttt{warp\_size}=32) on RX~7900~XTX vs RTX~4080}
 \author{Konstantin Kolchin}
-\date{23 July 2026}
+\date{10 August 2026}
 
 \begin{document}
 
@@ -44,7 +44,7 @@
   \textbf{What this deck shows}
   \begin{itemize}
     \item Same Python API: \texttt{import cuvs} (hipVS keeps the name)
-    \item Same workload on both GPUs
+    \item Two indexes: \textbf{IVF\_FLAT} and \textbf{IVF\_PQ} (not one blended verdict)
     \item \textbf{Answer quality} (recall@10) and \textbf{throughput} (QPS)
   \end{itemize}
 
@@ -63,8 +63,9 @@
     \midrule
     API & Python \texttt{cuvs.neighbors} (no Milvus / Knowhere) \\
     Dataset & SIFT-1M (\texttt{sift-128-euclidean.hdf5}) \\
-    Index & IVF\_PQ, $m{=}32$, $nbits{=}8$, $nlist{=}1024$ \\
-    Search & $k{=}10$; \texttt{nprobe} $\in \{1,4,8,16,32\}$ \\
+    Common & $nlist{=}1024$, $k{=}10$, metric \texttt{sqeuclidean} \\
+    IVF\_FLAT & \texttt{nprobe} $\in \{32,64,128,256\}$ (GPU-heavy) \\
+    IVF\_PQ & $m{=}32$, $nbits{=}8$; \texttt{nprobe} $\in \{1,4,8,16,32\}$ \\
     AMD & RX 7900 XTX --- hipVS (ROCm, warp~32) \\
     NVIDIA & RTX 4080 --- cuVS (CUDA) \\
     Metric & Batched QPS; recall@10 vs HDF5 ground truth \\
@@ -72,47 +73,79 @@
   \end{tabular}
   \end{center}
 
-  \vspace{0.5em}
+  \vspace{0.4em}
   \begin{block}{Fairness}
     Same code path / recipe. GPUs are \textbf{peer-class}, not the same chip.\\
-    Speed-up $=$ hipVS QPS $/$ cuVS QPS.
+    Speed-up $=$ hipVS QPS $/$ cuVS QPS.\\
+    {\footnotesize Do \textbf{not} average FLAT and PQ into one ``hipVS is $X\times$'' number.}
   \end{block}
 \end{frame}
 
 %----- headline -----
-\begin{frame}{Headline result}
+\begin{frame}{Headline --- ratio depends on the index}
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
-      \begin{block}{Quality}
+      \begin{block}{IVF\_FLAT (high nprobe)}
         \centering\large
-        Recall@10 \textbf{matches}\\[0.3em]
-        {\normalsize $0.35 \rightarrow 0.72$}\\[0.2em]
-        {\footnotesize (same on both GPUs)}
+        hipVS \textbf{ahead}\\[0.35em]
+        {\normalsize $\sim$1.3--1.4$\times$ cuVS}\\[0.25em]
+        {\footnotesize recall@10 $\approx$ 0.98--1.00\\
+         both GPUs match}
       \end{block}
     \end{column}
     \begin{column}{0.48\textwidth}
-      \begin{block}{Speed}
+      \begin{block}{IVF\_PQ ($m{=}32$)}
         \centering\large
-        hipVS $\approx$ \textbf{0.5$\times$} cuVS\\[0.3em]
-        {\normalsize QPS ratio $0.37$--$0.55\times$}\\[0.2em]
-        {\footnotesize across the nprobe grid}
+        hipVS \textbf{behind}\\[0.35em]
+        {\normalsize $\sim$0.37--0.55$\times$ cuVS}\\[0.25em]
+        {\footnotesize $\approx$2$\times$ slower\\
+         recall@10 matches}
       \end{block}
     \end{column}
   \end{columns}
 
-  \vspace{0.8em}
+  \vspace{0.7em}
   \begin{center}
     \Large
-    Same answers; \textbf{ratio depends on the index}.\\[0.25em]
-    {\normalsize IVF\_PQ $m{=}32$: cuVS $\sim$2$\times$ hipVS.\\
-     IVF\_FLAT high-\texttt{nprobe}: hipVS $\sim$1.3$\times$ cuVS.}
+    \textbf{FLAT is fine.} The library gap to chase is \textbf{PQ}.\\[0.35em]
+    {\normalsize Same answers on both GPUs --- this is throughput, not wrong neighbors.}
   \end{center}
 \end{frame}
 
-%----- table -----
-\begin{frame}{QPS and recall by nprobe}
+%----- FLAT first (manager clarity) -----
+\begin{frame}{IVF\_FLAT --- GPU-heavy library (AMD ahead)}
   \footnotesize
-  Direct \texttt{cuvs} API --- IVF\_PQ ($m{=}32$).\\[0.35em]
+  Same API / SIFT-1M / \texttt{nlist}=1024.
+  Higher \texttt{nprobe} $\Rightarrow$ more GPU work (QPS halves when \texttt{nprobe} doubles).\\[0.3em]
+
+  \begin{center}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    \textbf{nprobe}
+      & \textbf{hipVS QPS} & \textbf{cuVS QPS}
+      & \textbf{R@10} & \textbf{hip/cu} \\
+    \midrule
+    32  & 64142 & 49039 & 0.978 & \textbf{$1.31\times$} \\
+    64  & 33381 & 24759 & 0.996 & \textbf{$1.35\times$} \\
+    128 & 17200 & 12498 & 0.999 & \textbf{$1.38\times$} \\
+    256 & 8784  & 6332  & 0.999 & \textbf{$1.39\times$} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+
+  \vspace{0.45em}
+  \begin{block}{Read this as}
+    \footnotesize
+    Compute-bound float list scan. On this load, RX~7900 hipVS is
+    \textbf{competitive and ahead} of the 4080 --- not a FLAT acceleration crisis.\\
+    Sources: \texttt{results/lib\_bench/FILLED\_flat\_heavy.md}.
+  \end{block}
+\end{frame}
+
+%----- PQ table -----
+\begin{frame}{IVF\_PQ $m{=}32$ --- library gap ($\sim$2$\times$)}
+  \footnotesize
+  Direct \texttt{cuvs} API. Recall matches; QPS does not.\\[0.35em]
 
   \begin{center}
   \begin{tabular}{@{}lrrrrr@{}}
@@ -130,42 +163,53 @@
   \end{tabular}
   \end{center}
 
-  \vspace{0.45em}
-  {\footnotesize
-  Sources: \texttt{lib\_hipvs\_ivf\_pq\_m32\_20260723\_211759.json},
-  \texttt{lib\_cuvs\_ivf\_pq\_m32\_20260723\_201837.json}.}
-\end{frame}
-
-%----- heavy FLAT -----
-\begin{frame}{GPU-heavy library --- IVF\_FLAT (high nprobe)}
-  \footnotesize
-  Same API / SIFT-1M / \texttt{nlist}=1024.
-  Higher \texttt{nprobe} $\Rightarrow$ more GPU work (QPS halves when \texttt{nprobe} doubles).\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrrrr@{}}
-    \toprule
-    \textbf{nprobe}
-      & \textbf{hipVS QPS} & \textbf{cuVS QPS}
-      & \textbf{R@10} & \textbf{hip/cu} \\
-    \midrule
-    32  & 64142 & 49039 & 0.978 & $1.31\times$ \\
-    64  & 33381 & 24759 & 0.996 & $1.35\times$ \\
-    128 & 17200 & 12498 & 0.999 & $1.38\times$ \\
-    256 & 8784  & 6332  & 0.999 & $1.39\times$ \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
   \vspace{0.4em}
-  \textbf{Takeaway:} on this compute-bound FLAT load, AMD~7900 is
-  \textbf{$\sim$1.3--1.4$\times$} the 4080 (peer GPUs).\\
-  {\footnotesize Contrast PQ table ($\sim$0.5$\times$). Kernel mix matters.
-  Sources: \texttt{results/lib\_bench/FILLED\_flat\_heavy.md}.}
+  \begin{block}{Read this as}
+    \footnotesize
+    This is the ``hipVS $\sim$2$\times$ slower'' result.
+    Gap stays $\sim$0.5$\times$ across the nprobe grid $\Rightarrow$ PQ search kernels,
+    not a one-off launch overhead.\\
+    Sources: \texttt{results/lib\_bench/FILLED\_pq\_m32.md}.
+  \end{block}
 \end{frame}
 
-%----- QPS plot -----
-\begin{frame}{QPS --- hipVS vs cuVS (IVF\_PQ $m=32$)}
+%----- side-by-side mental model -----
+\begin{frame}{One picture --- do not blend the two}
+  \begin{center}
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.92\textwidth,
+      height=0.58\textheight,
+      ybar,
+      bar width=14pt,
+      ylabel={Speed-up (hip / cu)},
+      symbolic x coords={FLAT\,32,FLAT\,64,FLAT\,128,FLAT\,256,PQ\,1,PQ\,8,PQ\,32},
+      xtick=data,
+      xticklabel style={font=\scriptsize,rotate=25,anchor=east},
+      ymin=0, ymax=1.6,
+      ytick={0,0.5,1.0,1.5},
+      grid=major,
+      major grid style={gray!25},
+      nodes near coords,
+      nodes near coords align={vertical},
+      every node near coord/.append style={font=\tiny},
+    ]
+      \addplot[fill=green!50!black!70] coordinates {
+        (FLAT\,32,1.31) (FLAT\,64,1.35) (FLAT\,128,1.38) (FLAT\,256,1.39)
+        (PQ\,1,0.37) (PQ\,8,0.50) (PQ\,32,0.48)
+      };
+      \addplot[dashed,gray,thick,forget plot] coordinates
+        {(FLAT\,32,1) (PQ\,32,1)};
+    \end{axis}
+  \end{tikzpicture}
+  \end{center}
+  \vspace{-0.3em}
+  {\footnotesize Green bars $>$1 $=$ AMD ahead (FLAT). Bars $<$1 $=$ PQ gap.
+  Gray line $=$ parity.}
+\end{frame}
+
+%----- QPS plot PQ -----
+\begin{frame}{QPS --- IVF\_PQ $m{=}32$ (the gap)}
   \vspace{-0.2em}
   {\footnotesize Batched search. Higher is faster.
   {\color{red}AMD~7900} / {\color{green!60!black}NVIDIA~4080}.}\\[0.1em]
@@ -195,10 +239,10 @@
   \end{tikzpicture}
 \end{frame}
 
-%----- ratio plot -----
-\begin{frame}{Speed-up ratio (hipVS / cuVS)}
+%----- ratio plot PQ -----
+\begin{frame}{Speed-up ratio --- IVF\_PQ only}
   \vspace{-0.2em}
-  {\footnotesize $1.0$ $=$ parity. Measured band $\approx 0.37$--$0.55$.}\\[0.1em]
+  {\footnotesize $1.0$ $=$ parity. Measured band $\approx 0.37$--$0.55$ (not FLAT).}\\[0.1em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
@@ -225,7 +269,7 @@
 \end{frame}
 
 %----- recall -----
-\begin{frame}{Recall@10 --- same on both}
+\begin{frame}{Recall@10 --- same on both (PQ shown)}
   \vspace{-0.2em}
   {\footnotesize Curves overlap ($\Delta{<}0.002$). Markers: filled~{\color{red}AMD}, open~{\color{green!60!black}NVIDIA}.}\\[0.1em]
   \centering
@@ -242,7 +286,6 @@
       grid=major,
       major grid style={gray!30},
     ]
-      % Draw NVIDIA first (under), AMD on top --- values match within noise
       \addplot[
         thick,dashed,green!60!black,
         mark=square*,
@@ -262,6 +305,39 @@
       \addlegendentry{AMD hipVS}
     \end{axis}
   \end{tikzpicture}
+\end{frame}
+
+%----- what to optimize -----
+\begin{frame}{Where to invest acceleration effort}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Not the crisis}
+        \footnotesize
+        \begin{itemize}
+          \item IVF\_FLAT library path
+          \item Already $\sim$1.3$\times$ cuVS
+          \item Packer / wave32 correctness
+                (done --- answers match)
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{The real lever}
+        \footnotesize
+        \begin{itemize}
+          \item IVF\_PQ fine search
+          \item LUT / LDS / occupancy
+          \item Profile first, then tune
+                (\texttt{lut\_dtype}, smem, \ldots)
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+
+  \vspace{0.7em}
+  \begin{center}
+    {\large Kernel mix matters: float scan $\neq$ product-quantized scan.}
+  \end{center}
 \end{frame}
 
 %----- library vs milvus -----
@@ -289,7 +365,7 @@
   \vspace{0.35em}
   {\scriptsize
   ``Scale'' $=$ how much lower Milvus QPS is than library QPS (AMD column).
-  SIFT product path hides the library gap --- do \textbf{not} call this
+  SIFT product path hides the library PQ gap --- do \textbf{not} call this
   ``AMD competitive on ANN.''}\\[0.25em]
 
   \begin{columns}[T]
@@ -297,8 +373,8 @@
       \begin{block}{Library}
         \footnotesize
         Kernels dominate.\\
-        hipVS $\sim$0.5$\times$ cuVS (PQ).\\
-        QPS in the $10^5$--$10^6$ range.
+        FLAT fine; PQ $\sim$0.5$\times$.\\
+        QPS in the $10^4$--$10^6$ range.
       \end{block}
     \end{column}
     \begin{column}{0.48\textwidth}
@@ -360,22 +436,25 @@
 \begin{frame}{Takeaway for management}
   \begin{enumerate}
     \item \textbf{RDNA3 hipVS works} (\texttt{warp\_size}=32) --- answers match cuVS.
-    \item \textbf{Raw library:} ratio is kernel-dependent ---
-          IVF\_PQ $m{=}32$ $\sim$0.5$\times$; IVF\_FLAT high-\texttt{nprobe} $\sim$1.3$\times$.
+    \item \textbf{IVF\_FLAT is fine} at library level --- hipVS $\sim$1.3--1.4$\times$ cuVS
+          (GPU-heavy nprobe). Do \textbf{not} say ``hipVS is 2$\times$ slower'' for FLAT.
+    \item \textbf{IVF\_PQ is the gap} --- library $\sim$0.5$\times$; that is where
+          acceleration / profiling effort belongs.
     \item \textbf{Milvus:} SIFT is stack-limited ($\sim$1$\times$);
           \textbf{GIST PQ} shows NVIDIA ahead (AMD/CUDA $\sim$0.60--0.80$\times$).
   \end{enumerate}
 
-  \vspace{0.6em}
+  \vspace{0.45em}
   \begin{center}
     \large
-    Correct port. Library PQ gap is real.\\[0.15em]
-    Under GPU-heavy Milvus, AMD trails --- fair product signal.
+    Correct port. \textbf{FLAT OK; accelerate PQ.}\\[0.15em]
+    {\normalsize Product path still needs GPU-heavy recipes for fair speed claims.}
   \end{center}
 
-  \vspace{0.5em}
+  \vspace{0.35em}
   {\footnotesize
   Lab 2026-07-23/27 (lib) / 2026-07-28 (Milvus GIST).
+  \texttt{FILLED\_flat\_heavy.md}, \texttt{FILLED\_pq\_m32.md},
   \texttt{results/milvus\_gist\_pq/FILLED.md}.}
 \end{frame}
 
