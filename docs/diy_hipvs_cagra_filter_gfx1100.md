@@ -259,22 +259,20 @@ Hot spots (names vary by branch):
 
 ### 3c) Hypotheses (ordered)
 
-1. **✅ Likely root cause (wf32 + 64-bit ballot):** In
-   `cpp/src/neighbors/detail/cagra/search_single_cta_kernel-inl.cuh`,
-   `move_invalid_to_end_of_list` (filter path) does
-   `who_has_invalid << (warp_size() - lane_id)` on `bitmask_type` (= **uint64** on
-   HIP). On gfx1100, `raft::warp_size()==32`, so the shift does **not** drop
-   “higher lane” bits → compaction corrupts / empties results
-   (matches filter_40pct wrong IDs + simple_bitset all `-1`).
-   **Already fixed upstream** in `AMD-Ecosystem/hipVS` `release/rocmds-26.03`
-   (use `uint32_t` mask when `warp_size()==32`). Lab SHA `87877f15` still has
-   the buggy form. Backport that hunk (see §4a).
-2. **Wavefront pin:** `static_assert(raft::warp_size() == 32)` in nn_descent
-   means `USE_WARPSIZE_32` is live — good; the bug is mask **width**, not
-   `warp_size()` returning 64.
-3. **Bitset polarity:** `bitset_filter` → `bitset_view_.test(sample_ix)` only;
-   `leaks=0` on 40% case suggests polarity is OK.
-4. Other ballot sites in multi-CTA may still need audit after §4a.
+1. **✅ Applied (26.03 backport):** `move_invalid_to_end_of_list` uint32
+   `mask_type` when `warp_size()==32` (§4a). Changed simple_bitset from
+   all `-1` → wrong IDs; did **not** fix recall.
+2. **✅ Ruled out — bitset packing / `test()`:** `filter_all_ones` R@1=1.0 and
+   `brute_force+allow_only_0` R@1=1.0 (same bits). Polarity OK.
+3. **✅ OWNER — CAGRA filtered graph walk** (`SEARCH_ALGO=single_cta`):
+   selective bitset → wrong allowed IDs / empty. Next: remaining
+   `bitmask_type` + `__ballot_sync` sites in
+   `search_single_cta_kernel-inl.cuh` (e.g. `pickup_next_parents`
+   `(1 << threadIdx.x)` ranking), filter post-process `WarpScan` /
+   `shfl_xor`, and diff that file vs `AMD-Ecosystem/hipVS`
+   `release/rocmds-26.03`.
+4. multi-CTA still needs its own audit (`SEARCH_ALGO=multi_cta`) after
+   single_cta is green.
 
 ### 3d) Minimal C++ repro (optional)
 
@@ -326,10 +324,36 @@ Replace the ballot block with the 26.03 version:
 
 (Add `#include <type_traits>` / `<cstdint>` near the top of the `.cuh` if the TU does not already see them.)
 
+**Status 2026-08-10:** §4a applied on lab; gate still red on selective filters.
+Bitset OK (brute_force). Continue with §4b.
+
+### 4b) Next — other wf32 ballot sites in single-CTA CAGRA
+
+```bash
+cd "$WORKDIR/hipVS"
+# Force single_cta in the harness gate:
+SEARCH_ALGO=single_cta bash ~/ann-harness-amd/scripts/run_hipvs_cagra_filter_repro.sh
+
+rg -n 'bitmask_type|__ballot_sync|raft::ballot|1 << threadIdx' \
+  cpp/src/neighbors/detail/cagra/search_single_cta_kernel-inl.cuh
+
+# Diff filter-related hunks vs upstream fix branch:
+curl -sL \
+  https://raw.githubusercontent.com/AMD-Ecosystem/hipVS/release/rocmds-26.03/cpp/src/neighbors/detail/cagra/search_single_cta_kernel-inl.cuh \
+  > /tmp/cagra_single_2603.cuh
+diff -u cpp/src/neighbors/detail/cagra/search_single_cta_kernel-inl.cuh \
+  /tmp/cagra_single_2603.cuh | head -200
+```
+
+Apply the same `mask_type = uint32_t when warp_size()==32` pattern anywhere a
+ballot mask is shifted by `warp_size() - lane` or ranked with
+`(1 << threadIdx.x)` under the assumption that mask width == warp size.
+Rebuild (`§2`) and re-gate after each hunk.
+
 Then:
 
-1. Rebuild `libcuvs` (+ Python if needed) — `§2` / `§2b`.  
-2. Re-run `run_hipvs_cagra_filter_repro.sh`.  
+1. Rebuild `libcuvs` (+ `python/libcuvs` wheel) — `§2` / `§2b`.  
+2. `SEARCH_ALGO=single_cta bash scripts/run_hipvs_cagra_filter_repro.sh`  
 3. Commit on `fix/cagra-filter-gfx1100` with before/after JSON.  
 4. When green: Knowhere Catch2 bitset sections (optional confirmation).
 

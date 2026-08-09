@@ -46,14 +46,31 @@ Log: `$WORKDIR/logs/lib_hipvs_cagra_filter_20260805_232922.{log,json}`
 | filter_40pct | **0.00** | wrong IDs, `neg1=0` (Catch2 bitset) |
 | simple_bitset_64 | **0.00** | all `-1` (`neg1=64/64`, Catch2 simple bitset) |
 
-**OWNER: hipVS CAGRA filtered search** on gfx1100.  
+**OWNER: hipVS CAGRA filtered graph walk** on gfx1100 (not packing / not Knowhere).  
 Escalation: [`docs/escalation_hipvs_cagra_filter_gfx1100.md`](../../docs/escalation_hipvs_cagra_filter_gfx1100.md)  
 DIY: [`docs/diy_hipvs_cagra_filter_gfx1100.md`](../../docs/diy_hipvs_cagra_filter_gfx1100.md) — fork https://github.com/konkolchin/hipVS  
 
+### DIY triage lock (2026-08-10) — `SEARCH_ALGO=single_cta`
+
+Log: `$WORKDIR/logs/lib_hipvs_cagra_filter_20260810_001233.{log,json}`  
+Patch applied: `move_invalid` uint32 mask (`intentionally not using bitmask_type`, 26.03 backport).
+
+| Case | recall@1 | Notes |
+|------|---------:|-------|
+| unfiltered | **1.00** | |
+| filter_all_ones | **1.00** | filter path OK when nothing excluded |
+| filter_40pct | **0.00** | wrong allowed IDs, `leaks=0` |
+| simple_bitset_64 | **0.00** | wrong IDs (no longer all `-1`) |
+| allow_only_0 (CAGRA) | **0.00** | empty (`-1`) — seed/sparsity |
+| brute_force + allow_only_0 | **1.00** | **bitset `test`/packing OK** |
+
+**Conclusion:** hipVS bitset contents work (brute_force). Bug is **CAGRA search under a selective filter** (graph walk / warp ballot / post-filter compaction beyond `move_invalid`).
+
 ```bash
-bash scripts/collect_hipvs_cagra_filter_escalation.sh
-# DIY start: match lab SHA, branch fix/cagra-filter-gfx1100, rebuild USE_WARPSIZE_32
-# Gate: bash scripts/run_hipvs_cagra_filter_repro.sh
+# Gate (force single_cta):
+SEARCH_ALGO=single_cta bash scripts/run_hipvs_cagra_filter_repro.sh
+# Next DIY: other bitmask_type ballot sites in search_single_cta_kernel-inl.cuh
+# (pickup_next_parents, filter post-process); diff vs AMD 26.03
 ```
 
 Unfiltered path OK → Phase B smoke can proceed in parallel.
