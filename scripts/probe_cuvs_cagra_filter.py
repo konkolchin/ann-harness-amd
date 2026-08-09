@@ -121,12 +121,15 @@ def device_ids_to_numpy(neighbors, cp_mod) -> np.ndarray:
         raw = np.asarray(neighbors.copy_to_host())
     else:
         raw = np.asarray(neighbors)
-    # hipVS/cuVS often use uint32 with 0xFFFFFFFF as "no neighbor"
+    # hipVS/cuVS: 0xFFFFFFFF = invalid; after MSB clear often 0x7FFFFFFF
     if raw.dtype == np.uint32 or raw.dtype == np.uint64:
         out = raw.astype(np.int64, copy=True)
         out[raw == np.iinfo(raw.dtype).max] = -1
+        out[raw == (np.iinfo(raw.dtype).max >> 1)] = -1  # 0x7FFFFFFF
         return out
-    return raw.astype(np.int64, copy=False)
+    out = raw.astype(np.int64, copy=True)
+    out[out == 2147483647] = -1
+    return out
 
 
 def make_filter(cp, filters_mod, allowed: np.ndarray, *, invert: bool = False):
@@ -443,24 +446,65 @@ def main() -> int:
     )
     cases.append(summarize_case("simple_bitset_64", pred, gt, args.k, allowed64))
 
-    # 5) Only index 0 allowed — self-query 0 must return 0 if test(0) works
+    # 5) Only index 0 allowed — empty result often means random seeds never
+    # hit 0 (extreme sparsity), not necessarily test(0) broken. Retry with
+    # many random samplings; also cross-check brute_force if available.
     allowed_only0 = np.zeros(n64, dtype=bool)
     allowed_only0[0] = True
     filt0, how0 = make_filter(
         cp, filters, allowed_only0, invert=args.invert_bitset
     )
     print(f"allow_only_0 ctor: {how0}")
+    try:
+        sp_only0 = cagra.SearchParams(
+            itopk_size=32,
+            algo=args.search_algo,
+            num_random_samplings=64,
+        )
+    except TypeError:
+        sp_only0 = sp64
     dist, neigh = cagra_search(
-        cagra, sp64, index64, xq64_g[:1], args.k, filt=filt0, resources=resources
+        cagra, sp_only0, index64, xq64_g[:1], args.k, filt=filt0, resources=resources
     )
     if resources is not None and hasattr(resources, "sync"):
         resources.sync()
     pred0 = device_ids_to_numpy(neigh, cp)
     gt0 = exact_neighbors_filtered(xb64, xq64[:1], args.k, allowed_only0)
-    print(f"allow_only_0 detail: pred0={pred0[0, 0]} gt0={gt0[0, 0]}")
+    print(
+        f"allow_only_0 detail: pred0={pred0[0, 0]} gt0={gt0[0, 0]} "
+        f"(0x7FFFFFFF/-1 => empty; not a real id)"
+    )
     cases.append(
         summarize_case("allow_only_0", pred0, gt0, args.k, allowed_only0)
     )
+
+    # 6) Brute-force + same bitset — isolates test()/packing from CAGRA walk
+    try:
+        from cuvs.neighbors import brute_force as bf_mod
+
+        bf_idx = bf_mod.build(xb64_g, metric="sqeuclidean", **build_kw)
+        if resources is not None and hasattr(resources, "sync"):
+            resources.sync()
+        bf_kw = dict(build_kw)
+        try:
+            bf_dist, bf_neigh = bf_mod.search(
+                bf_idx, xq64_g[:1], args.k, filter=filt0, **bf_kw
+            )
+        except TypeError:
+            bf_dist, bf_neigh = bf_mod.search(
+                bf_idx, xq64_g[:1], args.k, prefilter=filt0, **bf_kw
+            )
+        if resources is not None and hasattr(resources, "sync"):
+            resources.sync()
+        bf_pred = device_ids_to_numpy(bf_neigh, cp)
+        print(f"brute_force+allow_only_0: pred0={bf_pred[0, 0]} gt0=0")
+        cases.append(
+            summarize_case(
+                "brute_force_allow_only_0", bf_pred, gt0, args.k, allowed_only0
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"brute_force+allow_only_0 skipped: {exc}")
 
     # Ownership hint
     by_tag = {c["tag"]: c for c in cases}
@@ -469,21 +513,27 @@ def main() -> int:
     f40 = by_tag["filter_40pct"]["recall"]
     sb = by_tag["simple_bitset_64"]["recall"]
     a0 = by_tag["allow_only_0"]["recall"]
+    bf0 = by_tag.get("brute_force_allow_only_0", {}).get("recall", float("nan"))
     print("\n== OWNERSHIP ==")
     if uf >= 0.9 and fall < 0.5:
         print(
             "OWNER: hipVS CAGRA filtered-search PATH "
             "(even all-ones bitset breaks vs unfiltered)."
         )
-    elif uf >= 0.9 and fall >= 0.9 and a0 < 0.5:
+    elif uf >= 0.9 and fall >= 0.9 and bf0 == 0.0:
         print(
             "OWNER: hipVS bitset_view.test / packing "
-            "(all-ones OK; allow_only_0 cannot return id 0)."
+            "(brute_force+allow_only_0 also misses id 0)."
         )
-    elif uf >= 0.9 and fall >= 0.9 and a0 >= 0.9 and (f40 < 0.3 or sb < 0.3):
+    elif uf >= 0.9 and fall >= 0.9 and bf0 >= 0.9 and (f40 < 0.3 or sb < 0.3):
         print(
-            "OWNER: hipVS CAGRA search-under-sparsity "
-            "(single-bit OK; denser partial filters break walk)."
+            "OWNER: hipVS CAGRA filtered graph walk "
+            "(bitset test OK via brute_force; CAGRA under filter is wrong)."
+        )
+    elif uf >= 0.9 and fall >= 0.9 and a0 < 0.5 and (f40 < 0.3 or sb < 0.3):
+        print(
+            "OWNER: hipVS CAGRA filtered search (partial bitset) — "
+            "allow_only_0 empty may be seed/sparsity; see brute_force line."
         )
     elif uf >= 0.9 and f40 >= 0.7 and sb >= 0.8:
         print(
@@ -493,7 +543,8 @@ def main() -> int:
     else:
         print(
             f"OWNER: unclear (unfiltered={uf:.3f} all_ones={fall:.3f} "
-            f"filter40={f40:.3f} simple={sb:.3f} allow_only_0={a0:.3f})"
+            f"filter40={f40:.3f} simple={sb:.3f} allow_only_0={a0:.3f} "
+            f"bf_only0={bf0})"
         )
     print("Knowhere wiring unlikely if any filter_* case is red on this probe.")
     if args.invert_bitset:
