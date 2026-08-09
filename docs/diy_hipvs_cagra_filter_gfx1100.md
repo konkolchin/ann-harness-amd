@@ -84,8 +84,18 @@ fi
 cd hipVS
 
 git remote -v
-# expect origin -> konkolchin/hipVS
+# origin MUST be https://github.com/konkolchin/hipVS.git (your fork).
+# Lab trees often have origin -> ROCm-DS/hipVS (read-only for you) — fix:
+
+if git remote get-url origin 2>/dev/null | grep -qE 'ROCm-DS/hipVS|AMD-Ecosystem/hipVS'; then
+  git remote rename origin upstream_rocmds 2>/dev/null \
+    || git remote remove origin
+  git remote add origin https://github.com/konkolchin/hipVS.git
+fi
 git remote add upstream https://github.com/AMD-Ecosystem/hipVS.git 2>/dev/null || true
+# optional: keep ROCm-DS as a named remote
+# git remote add rocmds https://github.com/ROCm-DS/hipVS.git 2>/dev/null || true
+
 git fetch origin
 git fetch upstream
 
@@ -95,14 +105,19 @@ git checkout -B fix/cagra-filter-gfx1100 origin/release/rocmds-25.10
 # Option B — if lab already on 26.03 / you want latest
 # git checkout -B fix/cagra-filter-gfx1100 upstream/release/rocmds-26.03
 
-# If §0 found a precise SHA:
-# git checkout -B fix/cagra-filter-gfx1100 <LAB_SHA>
+# If §0 found a precise SHA (preferred when rebuilding against known-good install):
+# git checkout -B fix/cagra-filter-gfx1100 87877f15fe6fdd6525730385e9474117ade6ecb3
 ```
 
-Push the branch to your fork when ready:
+Push the branch to **your fork** (`origin` = `konkolchin/hipVS`).  
+GitHub **rejects account passwords** for `git push`; use a [PAT](https://github.com/settings/tokens) (HTTPS, paste as password) or SSH.
 
 ```bash
+git rev-parse HEAD   # expect 87877f15… if you pinned that SHA
+git remote -v        # origin -> konkolchin/hipVS
 git push -u origin fix/cagra-filter-gfx1100
+# Username: konkolchin
+# Password: <classic PAT with repo scope, not your GitHub login password>
 ```
 
 ---
@@ -137,17 +152,72 @@ rm -rf cpp/build python/libcuvs/build python/cuvs/build 2>/dev/null || true
 cmake --install cpp/build --prefix "$INSTALL_PREFIX" 2>/dev/null \
   || ninja -C cpp/build install
 
-# Python into the venv that runs the filter repro
+# Python into the venv that runs the filter repro.
+# Note: CMAKE_ARGS / SKBUILD with HIP arch often poisons host g++ on
+# python/cuvs (amd-hipvs) with `--offload-arch=gfx1100` → see §2b.
 source ~/hipvs-bench-venv/bin/activate
 ./build.sh libcuvs python --gpu-arch="gfx1100" \
   --cmake-args='-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF' \
-  || {
-    cd python/libcuvs && pip install -v --no-build-isolation --no-cache-dir .
-    cd ../cuvs && pip install -v --no-build-isolation --no-cache-dir .
-  }
+  || true
 
+# Prefer finishing wheels explicitly (§2b) if build.sh python fails.
+```
+
+### 2b) Fix `amd-hipvs`: `g++: unrecognized … --offload-arch=gfx1100`
+
+`python/cuvs` compiles Cython **host** `.cxx` with `g++`. HIP arch flags from
+`CMAKE_ARGS` / `SKBUILD_CMAKE_ARGS` must not reach that compiler.
+
+Filter kernels live in **C++ `libcuvs`**. If `cmake --install` / `amd-libhipvs`
+already picked up the new `.so`, you can skip rebuilding `amd-hipvs` for
+kernel experiments and just re-run the repro. Rebuild `amd-hipvs` when the
+Python API/bindings must match a header change.
+
+```bash
+source ~/hipvs-bench-venv/bin/activate
+export WORKDIR=~/rocmds_check_gfx1100
+export ROCM_HOME=/opt/rocm
+export INSTALL_PREFIX="${INSTALL_PREFIX:-$WORKDIR/install}"
+export PATH="$ROCM_HOME/llvm/bin:$ROCM_HOME/bin:$PATH"
+export CMAKE_PREFIX_PATH="${INSTALL_PREFIX}:${ROCM_HOME}:${CMAKE_PREFIX_PATH:-}"
+export LD_LIBRARY_PATH="${INSTALL_PREFIX}/lib:${ROCM_HOME}/lib:${LD_LIBRARY_PATH:-}"
+export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
+
+# Keep device pin; drop skbuild HIP args that leak onto host CXX
+unset CMAKE_ARGS SKBUILD_CMAKE_ARGS
+
+# Belt-and-suspenders: strip HIP flags if CMake still injects them
+cat > /tmp/gxx-strip-offload <<'EOF'
+#!/bin/bash
+args=()
+for a in "$@"; do
+  case "$a" in
+    --offload-arch=*|-offload-arch=*|--cuda-gpu-arch=*|-xhip|hip) continue ;;
+  esac
+  args+=("$a")
+done
+exec /usr/bin/x86_64-linux-gnu-g++ "${args[@]}"
+EOF
+chmod +x /tmp/gxx-strip-offload
+export CXX=/tmp/gxx-strip-offload
+export CMAKE_CXX_COMPILER=/tmp/gxx-strip-offload
+
+# Low-level wheel (bundles/links libcuvs) — keep USE_WARPSIZE_32 for C++ rebuilds
+cd "$WORKDIR/hipVS/python/libcuvs"
+pip install -v --no-build-isolation --no-cache-dir . \
+  || echo "amd-libhipvs already OK — continue"
+
+# High-level package (host Cython only)
+cd "$WORKDIR/hipVS/python/cuvs"
+rm -rf build
+pip install -i https://test.pypi.org/simple --extra-index-url https://pypi.org/simple \
+  "hip-python-as-cuda" 2>/dev/null || true
+pip install -v --no-build-isolation --no-cache-dir .
+
+# Must not be inside hipVS/python/cuvs (source tree shadows the wheel).
 cd ~
 python3 -c "import cuvs; from cuvs.neighbors import cagra, filters; print(cuvs.__file__)"
+# expect: …/site-packages/cuvs/__init__.py
 ```
 
 **Smoke after rebuild (must not regress):**
@@ -189,10 +259,22 @@ Hot spots (names vary by branch):
 
 ### 3c) Hypotheses (ordered)
 
-1. **Wavefront 32:** filter mask / ballot assumes 64 (Instinct). Check `USE_WARPSIZE_32` actually applied in the search TU (`ninja -t query` / compile DB).
-2. **Bitset endian / word packing:** Python packs uint32 little-endian bit‑i → sample i; device may read differently.
-3. **Filter ignored:** wrong IDs with `neg1=0` on 40% case looks like “search OK, mask not applied” or “wrong allowed set”.
-4. **Over-filter:** simple_bitset all `-1` looks like “everything excluded” or empty candidate set.
+1. **✅ Likely root cause (wf32 + 64-bit ballot):** In
+   `cpp/src/neighbors/detail/cagra/search_single_cta_kernel-inl.cuh`,
+   `move_invalid_to_end_of_list` (filter path) does
+   `who_has_invalid << (warp_size() - lane_id)` on `bitmask_type` (= **uint64** on
+   HIP). On gfx1100, `raft::warp_size()==32`, so the shift does **not** drop
+   “higher lane” bits → compaction corrupts / empties results
+   (matches filter_40pct wrong IDs + simple_bitset all `-1`).
+   **Already fixed upstream** in `AMD-Ecosystem/hipVS` `release/rocmds-26.03`
+   (use `uint32_t` mask when `warp_size()==32`). Lab SHA `87877f15` still has
+   the buggy form. Backport that hunk (see §4a).
+2. **Wavefront pin:** `static_assert(raft::warp_size() == 32)` in nn_descent
+   means `USE_WARPSIZE_32` is live — good; the bug is mask **width**, not
+   `warp_size()` returning 64.
+3. **Bitset polarity:** `bitset_filter` → `bitset_view_.test(sample_ix)` only;
+   `leaks=0` on 40% case suggests polarity is OK.
+4. Other ballot sites in multi-CTA may still need audit after §4a.
 
 ### 3d) Minimal C++ repro (optional)
 
@@ -214,11 +296,42 @@ rg -n 'bitset|filter' cpp/tests -g '*cagra*' | head -40
 
 ## 4) Fix loop
 
-1. Patch hipVS (prefer smallest change in filter + CAGRA search).  
-2. Rebuild `libcuvs` + Python (`§2`).  
-3. Re-run `run_hipvs_cagra_filter_repro.sh`.  
-4. Commit on `fix/cagra-filter-gfx1100` with repro JSON before/after.  
-5. When green: Knowhere Catch2 bitset sections (optional confirmation).
+### 4a) First patch — backport 26.03 `move_invalid` mask width
+
+File: `cpp/src/neighbors/detail/cagra/search_single_cta_kernel-inl.cuh`  
+Function: `move_invalid_to_end_of_list` (only used from the **filtered** search path).
+
+Replace the ballot block with the 26.03 version:
+
+```cpp
+        // Check if the index is invalid
+        const auto I_found_invalid = (index == invalid_index);
+        using mask_type = std::conditional_t<raft::warp_size() == 32, uint32_t, uint64_t>;
+        // We're intentionally not using bitmask_type(uint64_t) here.
+        // Note the expression `(who_has_invalid << (raft::warp_size() - lane_id)` which is trying
+        // to compute the following: It is trying to check if there is any smaller lane that has
+        // found invalid index. By left shifting the bitmask by (warp_size - lane_id), All the lanes
+        // that found an invalid index will have it's bit shifted out except for the lanes with
+        // smaller lane_id than the current lane. For this to work correctly, the mask_type should
+        // not be wider than the actual warp size.
+        const mask_type who_has_invalid = raft::ballot(I_found_invalid, __activemask());
+        // if a value that is loaded by a smaller lane id thread, shift the array
+        if ((who_has_invalid << (raft::warp_size() - lane_id)) and i > 0) {
+          index_array[i - 1]    = index;
+          distance_array[i - 1] = distance;
+        }
+
+        found_invalid = who_has_invalid;
+```
+
+(Add `#include <type_traits>` / `<cstdint>` near the top of the `.cuh` if the TU does not already see them.)
+
+Then:
+
+1. Rebuild `libcuvs` (+ Python if needed) — `§2` / `§2b`.  
+2. Re-run `run_hipvs_cagra_filter_repro.sh`.  
+3. Commit on `fix/cagra-filter-gfx1100` with before/after JSON.  
+4. When green: Knowhere Catch2 bitset sections (optional confirmation).
 
 ```bash
 cd ~/ann-harness-amd
