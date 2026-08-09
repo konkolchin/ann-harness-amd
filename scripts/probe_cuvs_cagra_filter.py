@@ -283,6 +283,13 @@ def main() -> int:
         action="store_true",
         help="Pack bitset with opposite polarity (A/B removed vs allowed)",
     )
+    ap.add_argument(
+        "--thread-block-size",
+        type=int,
+        default=0,
+        help="CAGRA SearchParams.thread_block_size (0=auto). "
+        "Do not force 32 unless debugging — can illegal-access on some builds.",
+    )
     ap.add_argument("--results-json", default="")
     args = ap.parse_args()
 
@@ -347,14 +354,18 @@ def main() -> int:
     else:
         cp.cuda.Device().synchronize()
 
+    sp_kwargs = {
+        "itopk_size": args.itopk_size,
+        "algo": args.search_algo,
+        "hashmap_mode": "hash",
+    }
+    if args.thread_block_size > 0:
+        sp_kwargs["thread_block_size"] = args.thread_block_size
     try:
-        search_params = cagra.SearchParams(
-            itopk_size=args.itopk_size,
-            algo=args.search_algo,
-            thread_block_size=32,  # keep pickup_next_parents single-warp
-            hashmap_mode="hash",
-        )
+        search_params = cagra.SearchParams(**sp_kwargs)
     except TypeError:
+        sp_kwargs.pop("hashmap_mode", None)
+        sp_kwargs.pop("thread_block_size", None)
         try:
             search_params = cagra.SearchParams(
                 itopk_size=args.itopk_size, algo=args.search_algo
