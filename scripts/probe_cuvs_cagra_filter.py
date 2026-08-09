@@ -349,15 +349,26 @@ def main() -> int:
 
     try:
         search_params = cagra.SearchParams(
-            itopk_size=args.itopk_size, algo=args.search_algo
+            itopk_size=args.itopk_size,
+            algo=args.search_algo,
+            thread_block_size=32,  # keep pickup_next_parents single-warp
+            hashmap_mode="hash",
         )
     except TypeError:
         try:
-            search_params = cagra.SearchParams(itopk_size=args.itopk_size)
+            search_params = cagra.SearchParams(
+                itopk_size=args.itopk_size, algo=args.search_algo
+            )
         except TypeError:
-            search_params = cagra.SearchParams()
+            try:
+                search_params = cagra.SearchParams(itopk_size=args.itopk_size)
+            except TypeError:
+                search_params = cagra.SearchParams()
     if hasattr(search_params, "algo"):
         print(f"SearchParams.algo={search_params.algo!r} (requested={args.search_algo!r})")
+    for attr in ("thread_block_size", "hashmap_mode", "itopk_size"):
+        if hasattr(search_params, attr):
+            print(f"SearchParams.{attr}={getattr(search_params, attr)!r}")
 
     cases: list[dict] = []
 
@@ -478,46 +489,43 @@ def main() -> int:
         summarize_case("allow_only_0", pred0, gt0, args.k, allowed_only0)
     )
 
-    # 6) Brute-force + bitmap (same bits) — isolates test()/packing from CAGRA.
-    # Note: brute_force.search wants from_bitmap [n_queries, n_samples], not bitset.
-    try:
-        from cuvs.neighbors import brute_force as bf_mod
-
-        bf_idx = bf_mod.build(
-            xb64_g,
-            metric="sqeuclidean",
-            **({} if resources is None else {"resources": resources}),
-        )
-        words0 = allowed_to_cuvs_bitset_u32(
-            allowed_only0, invert=args.invert_bitset
-        )
-        # 1 query × n64 samples → same packed length as the bitset for n_queries=1
-        bm = cp.asarray(words0)
-        if hasattr(filters, "from_bitmap"):
-            filt_bm = filters.from_bitmap(bm)
-            how_bm = "filters.from_bitmap"
-        else:
-            filt_bm = filt0
-            how_bm = "filters.from_bitset(fallback)"
-        print(f"brute_force prefilter: {how_bm}")
-        bf_dist, bf_neigh = bf_mod.search(
-            bf_idx,
-            xq64_g[:1],
-            args.k,
-            prefilter=filt_bm,
-            **({} if resources is None else {"resources": resources}),
-        )
-        if resources is not None and hasattr(resources, "sync"):
-            resources.sync()
-        bf_pred = device_ids_to_numpy(bf_neigh, cp)
-        print(f"brute_force+allow_only_0: pred0={bf_pred[0, 0]} gt0=0")
-        cases.append(
-            summarize_case(
-                "brute_force_allow_only_0", bf_pred, gt0, args.k, allowed_only0
+    # 6) Brute-force + bitmap — isolates packing from CAGRA walk.
+    # brute_force.search wants from_bitmap [n_queries, n_samples], not bitset.
+    def _bf_search(allowed_mask: np.ndarray, xq_use, tag: str):
+        try:
+            from cuvs.neighbors import brute_force as bf_mod
+        except Exception as exc:  # noqa: BLE001
+            print(f"{tag} skipped: no brute_force ({exc})")
+            return
+        try:
+            res_kw = {} if resources is None else {"resources": resources}
+            bf_idx = bf_mod.build(xb64_g, metric="sqeuclidean", **res_kw)
+            nq = int(xq_use.shape[0])
+            # Tile the bitset words once per query row for a bitmap.
+            row = allowed_to_cuvs_bitset_u32(allowed_mask, invert=args.invert_bitset)
+            words_bm = np.tile(row, nq)
+            if not hasattr(filters, "from_bitmap"):
+                print(f"{tag} skipped: no from_bitmap")
+                return
+            filt_bm = filters.from_bitmap(cp.asarray(words_bm))
+            bf_dist, bf_neigh = bf_mod.search(
+                bf_idx, xq_use, args.k, prefilter=filt_bm, **res_kw
             )
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"brute_force+allow_only_0 skipped: {type(exc).__name__}: {exc}")
+            if resources is not None and hasattr(resources, "sync"):
+                resources.sync()
+            bf_pred = device_ids_to_numpy(bf_neigh, cp)
+            bf_gt = exact_neighbors_filtered(
+                xb64, np.asarray(cp.asnumpy(xq_use)), args.k, allowed_mask
+            )
+            print(f"{tag}: pred0={bf_pred[0, 0]} gt0={bf_gt[0, 0]}")
+            cases.append(
+                summarize_case(tag, bf_pred, bf_gt, args.k, allowed_mask)
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"{tag} skipped: {type(exc).__name__}: {exc}")
+
+    _bf_search(allowed_only0, xq64_g[:1], "brute_force_allow_only_0")
+    _bf_search(allowed64, xq64_g, "brute_force_simple_bitset_64")
 
     # Ownership hint
     by_tag = {c["tag"]: c for c in cases}
@@ -527,6 +535,7 @@ def main() -> int:
     sb = by_tag["simple_bitset_64"]["recall"]
     a0 = by_tag["allow_only_0"]["recall"]
     bf0 = by_tag.get("brute_force_allow_only_0", {}).get("recall", float("nan"))
+    bfsb = by_tag.get("brute_force_simple_bitset_64", {}).get("recall", float("nan"))
     print("\n== OWNERSHIP ==")
     if uf >= 0.9 and fall < 0.5:
         print(
@@ -537,6 +546,13 @@ def main() -> int:
         print(
             "OWNER: hipVS bitset_view.test / packing "
             "(brute_force+allow_only_0 also misses id 0)."
+        )
+    elif uf >= 0.9 and fall >= 0.9 and bf0 >= 0.9 and bfsb >= 0.9 and (
+        f40 < 0.3 or sb < 0.3
+    ):
+        print(
+            "OWNER: hipVS CAGRA filtered graph walk "
+            "(brute_force OK on same masks; CAGRA under filter is wrong)."
         )
     elif uf >= 0.9 and fall >= 0.9 and bf0 >= 0.9 and (f40 < 0.3 or sb < 0.3):
         print(
