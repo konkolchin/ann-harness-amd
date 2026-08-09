@@ -353,7 +353,20 @@ def main() -> int:
     gt = exact_neighbors_filtered(xb, xq, args.k, allowed_all)
     cases.append(summarize_case("unfiltered", pred, gt, args.k, allowed_all))
 
-    # 2) ~40% excluded (Catch2 bitset percentage 0.4)
+    # 2) Filter API with ALL bits allowed — must match unfiltered if path is sane
+    filt_all, how_all = make_filter(cp, filters, allowed_all)
+    print(f"filter_all_ones ctor: {how_all}")
+    dist, neigh = cagra_search(
+        cagra, search_params, index, xq_g, args.k, filt=filt_all, resources=resources
+    )
+    if resources is not None and hasattr(resources, "sync"):
+        resources.sync()
+    pred = device_ids_to_numpy(neigh, cp)
+    cases.append(
+        summarize_case("filter_all_ones", pred, gt, args.k, allowed_all)
+    )
+
+    # 3) ~40% excluded (Catch2 bitset percentage 0.4)
     allowed40 = random_allowed(args.n_train, args.exclude_frac, seed=args.seed + 7)
     filt40, how = make_filter(cp, filters, allowed40)
     print(f"filter ctor: {how}")
@@ -366,7 +379,7 @@ def main() -> int:
     gt = exact_neighbors_filtered(xb, xq, args.k, allowed40)
     cases.append(summarize_case("filter_40pct", pred, gt, args.k, allowed40))
 
-    # 3) Simple bitset on 64-row index (Catch2 pattern)
+    # 4) Simple bitset on 64-row index (Catch2 pattern)
     n64 = 64
     xb64 = xb[:n64].copy()
     xq64 = xb64  # self-search like Catch2
@@ -406,19 +419,29 @@ def main() -> int:
         resources.sync()
     pred = device_ids_to_numpy(neigh, cp)
     gt = exact_neighbors_filtered(xb64, xq64, args.k, allowed64)
+    print(
+        f"simple_bitset detail: allowed[0]={bool(allowed64[0])} "
+        f"gt0={gt[0, 0]} pred0={pred[0, 0]}"
+    )
     cases.append(summarize_case("simple_bitset_64", pred, gt, args.k, allowed64))
 
     # Ownership hint
-    uf = cases[0]["recall"]
-    f40 = cases[1]["recall"]
-    sb = cases[2]["recall"]
+    by_tag = {c["tag"]: c for c in cases}
+    uf = by_tag["unfiltered"]["recall"]
+    fall = by_tag["filter_all_ones"]["recall"]
+    f40 = by_tag["filter_40pct"]["recall"]
+    sb = by_tag["simple_bitset_64"]["recall"]
     print("\n== OWNERSHIP ==")
-    if uf >= 0.9 and (f40 < 0.3 or sb < 0.3 or cases[2]["neg1"] == cases[2]["nq"] * args.k):
+    if uf >= 0.9 and fall < 0.5:
         print(
-            "OWNER: hipVS/cuVS CAGRA filtered search "
-            "(unfiltered OK, filter recall dead / all -1)."
+            "OWNER: hipVS CAGRA filtered-search PATH "
+            "(even all-ones bitset breaks vs unfiltered)."
         )
-        print("Knowhere wiring unlikely — Catch2 bitset maps onto this API.")
+    elif uf >= 0.9 and fall >= 0.9 and (f40 < 0.3 or sb < 0.3):
+        print(
+            "OWNER: hipVS CAGRA bitset CONTENTS / selective filter "
+            "(all-ones OK; partial bitset recall dead)."
+        )
     elif uf >= 0.9 and f40 >= 0.7 and sb >= 0.8:
         print(
             "OWNER: Knowhere bitset wiring/polarity "
@@ -426,9 +449,10 @@ def main() -> int:
         )
     else:
         print(
-            f"OWNER: unclear (unfiltered={uf:.3f} filter40={f40:.3f} "
-            f"simple={sb:.3f}) — inspect samples / filter ctor."
+            f"OWNER: unclear (unfiltered={uf:.3f} all_ones={fall:.3f} "
+            f"filter40={f40:.3f} simple={sb:.3f})"
         )
+    print("Knowhere wiring unlikely if any filter_* case is red on this probe.")
 
     out = {
         "protocol": "library_cuvs_cagra_filter_repro",
