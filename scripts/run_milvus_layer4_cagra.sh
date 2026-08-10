@@ -6,6 +6,7 @@
 # Usage:
 #   SKIP_START=1 bash scripts/run_milvus_layer4_cagra.sh
 #   DATA_PATH=data/gist-960-euclidean.hdf5 L4_COLLECTION=gist_cagra bash scripts/run_milvus_layer4_cagra.sh
+#   SEARCH_WARMUP=5 SEARCH_RUNS=10 SKIP_START=1 bash scripts/run_milvus_layer4_cagra.sh
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,9 +25,14 @@ COLLECTION="${L4_COLLECTION:-sift_gpu_cagra_l4_${TS}}"
 RESULTS_JSON="${RESULTS_JSON:-${LOG_DIR}/layer4_gpu_cagra_${TS}.json}"
 GRAPH_DEGREE="${GRAPH_DEGREE:-32}"
 INTERMEDIATE_GRAPH_DEGREE="${INTERMEDIATE_GRAPH_DEGREE:-64}"
+# gfx1100: hipVS IVF_PQ CAGRA graph build fails; use NN_DESCENT (unfiltered only).
+BUILD_ALGO="${BUILD_ALGO:-NN_DESCENT}"
 ITOPK_SIZES="${ITOPK_SIZES:-32,64,128,256}"
 SEARCH_WIDTH="${SEARCH_WIDTH:-1}"
 INDEX_WAIT_S="${INDEX_WAIT_S:-7200}"
+# Full-batch search: discard warm-up, report median of timed runs (default = 1-shot).
+SEARCH_WARMUP="${SEARCH_WARMUP:-0}"
+SEARCH_RUNS="${SEARCH_RUNS:-1}"
 
 export MILVUS_HIP_INSTALL_PREFIX="${MILVUS_HIP_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
 export ROCM_PATH
@@ -129,7 +135,11 @@ else
   fi
 fi
 
-echo "==> Layer-4 GPU_CAGRA (graph_degree=${GRAPH_DEGREE}, itopk=${ITOPK_SIZES})"
+echo "==> Layer-4 GPU_CAGRA (unfiltered)"
+echo "    graph_degree=${GRAPH_DEGREE} intermediate=${INTERMEDIATE_GRAPH_DEGREE}"
+echo "    build_algo=${BUILD_ALGO} itopk=${ITOPK_SIZES} search_width=${SEARCH_WIDTH}"
+echo "    search_warmup=${SEARCH_WARMUP} search_runs=${SEARCH_RUNS} (median QPS)"
+echo "    data=${DATA_PATH}"
 cd "${REPO_ROOT}"
 python3 scripts/run_milvus_hdf5.py \
   --uri "${URI}" \
@@ -138,8 +148,11 @@ python3 scripts/run_milvus_hdf5.py \
   --index-wait-s "${INDEX_WAIT_S}" \
   --graph-degree "${GRAPH_DEGREE}" \
   --intermediate-graph-degree "${INTERMEDIATE_GRAPH_DEGREE}" \
+  --build-algo "${BUILD_ALGO}" \
   --itopk-sizes "${ITOPK_SIZES}" \
   --search-width "${SEARCH_WIDTH}" \
+  --search-warmup "${SEARCH_WARMUP}" \
+  --search-runs "${SEARCH_RUNS}" \
   --data "${DATA_PATH}" \
   --collection "${COLLECTION}" \
   --results-json "${RESULTS_JSON}"
