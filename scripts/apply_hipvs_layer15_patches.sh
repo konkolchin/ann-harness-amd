@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Apply Layer 1.5 hipVS patches (debug instrumentation + kIndexGroupSize warp-32 fix).
 # Usage: bash scripts/apply_hipvs_layer15_patches.sh [path/to/hipVS]
+#
+# 0002 = IVF_FLAT kIndexGroupSize=32 under CUCO_USE_WARPSIZE_32
+# 0003 = IVF_PQ   kIndexGroupSize=32 under CUCO_USE_WARPSIZE_32 (same hypothesis)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,8 +30,10 @@ fi
 cd "${HIPVS_DIR}"
 apply_patch "${PATCH_DIR}/0001-ivf-packer-debug-instrumentation.patch"
 apply_patch "${PATCH_DIR}/0002-ivf-kIndexGroupSize-warp32-gfx1100.patch"
+apply_patch "${PATCH_DIR}/0003-ivf-pq-kIndexGroupSize-warp32-gfx1100.patch"
 
 echo ""
 echo "Layer 1.5 patches applied under ${HIPVS_DIR}"
 echo "Next: clean-rebuild (see docs/porting_milvus_gpu_to_amd.tex Step 4), then:"
 echo "  bash scripts/check_ivf_packer_mismatch.sh --run"
+echo "  # PQ: INDEX_TYPE=IVF_PQ M=32 P99_SAMPLE=0 bash scripts/run_hipvs_ivf_bench.sh"

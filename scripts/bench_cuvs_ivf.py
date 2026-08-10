@@ -99,6 +99,18 @@ def main() -> None:
         help="PQ subspaces (Milvus m). Mapped to cuVS ivf_pq IndexParams.pq_dim",
     )
     parser.add_argument("--nbits", type=int, default=8, help="PQ bits (cuVS pq_bits)")
+    parser.add_argument(
+        "--lut-dtype",
+        default="float32",
+        choices=["float32", "float16", "uint8"],
+        help="IVF_PQ SearchParams.lut_dtype (smaller → less LDS; may trade recall)",
+    )
+    parser.add_argument(
+        "--internal-distance-dtype",
+        default="float32",
+        choices=["float32", "float16"],
+        help="IVF_PQ SearchParams.internal_distance_dtype",
+    )
     parser.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     parser.add_argument("--p99-sample", type=int, default=DEFAULT_P99_SAMPLE)
     parser.add_argument("--max-train-rows", type=int, default=0)
@@ -113,6 +125,17 @@ def main() -> None:
     args = parser.parse_args()
 
     nprobes = [int(x.strip()) for x in args.nprobes.split(",") if x.strip()]
+    lut_dtype_map = {
+        "float32": np.float32,
+        "float16": np.float16,
+        "uint8": np.uint8,
+    }
+    dist_dtype_map = {
+        "float32": np.float32,
+        "float16": np.float16,
+    }
+    lut_dtype = lut_dtype_map[args.lut_dtype]
+    internal_distance_dtype = dist_dtype_map[args.internal_distance_dtype]
 
     try:
         import cupy as cp
@@ -154,7 +177,10 @@ def main() -> None:
     print(f"backend={backend} gpu={gpu_name!r}")
     print(f"index_type={args.index_type} nlist={args.nlist} nprobes={nprobes} k={args.k}")
     if args.index_type == "IVF_PQ":
-        print(f"pq_params: m/pq_dim={args.m} nbits/pq_bits={args.nbits}")
+        print(
+            f"pq_params: m/pq_dim={args.m} nbits/pq_bits={args.nbits} "
+            f"lut_dtype={args.lut_dtype} internal_distance_dtype={args.internal_distance_dtype}"
+        )
     print(f"xb={xb.shape} xq={xq.shape} gt={gt.shape} dim={dim}")
 
     xb_g = cp.asarray(xb)
@@ -198,6 +224,10 @@ def main() -> None:
         "nlist": args.nlist,
         "m": args.m if args.index_type == "IVF_PQ" else None,
         "nbits": args.nbits if args.index_type == "IVF_PQ" else None,
+        "lut_dtype": args.lut_dtype if args.index_type == "IVF_PQ" else None,
+        "internal_distance_dtype": (
+            args.internal_distance_dtype if args.index_type == "IVF_PQ" else None
+        ),
         "k": args.k,
         "nprobes": nprobes,
         "xb_shape": list(xb.shape),
@@ -210,7 +240,21 @@ def main() -> None:
 
     print(f"\n{backend} {args.index_type} results:")
     for nprobe in nprobes:
-        search_params = search_mod.SearchParams(n_probes=nprobe)
+        if args.index_type == "IVF_PQ":
+            try:
+                search_params = search_mod.SearchParams(
+                    n_probes=nprobe,
+                    lut_dtype=lut_dtype,
+                    internal_distance_dtype=internal_distance_dtype,
+                )
+            except TypeError as exc:
+                raise SystemExit(
+                    "This cuvs/hipVS build's SearchParams does not accept "
+                    f"lut_dtype/internal_distance_dtype ({exc}). "
+                    "Upgrade Python bindings or omit --lut-dtype."
+                ) from exc
+        else:
+            search_params = search_mod.SearchParams(n_probes=nprobe)
 
         for _ in range(max(0, args.warmup)):
             distances, neighbors = search_mod.search(

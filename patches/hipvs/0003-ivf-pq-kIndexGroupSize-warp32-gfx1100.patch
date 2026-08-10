@@ -1,0 +1,14 @@
+diff --git a/cpp/include/cuvs/neighbors/ivf_pq.hpp b/cpp/include/cuvs/neighbors/ivf_pq.hpp
+--- a/cpp/include/cuvs/neighbors/ivf_pq.hpp
++++ b/cpp/include/cuvs/neighbors/ivf_pq.hpp
+@@ -213,7 +213,11 @@ static_assert(std::is_aggregate_v<index_params>);
+ static_assert(std::is_aggregate_v<search_params>);
+ 
+ /** Size of the interleaved group. */
++#if defined(CUCO_USE_WARPSIZE_32) && CUCO_USE_WARPSIZE_32
++constexpr static uint32_t kIndexGroupSize = 32;
++#else
+ constexpr static uint32_t kIndexGroupSize = raft::warp_size();
++#endif
+ /** Stride of the interleaved group for vectorized loads. */
+ constexpr static uint32_t kIndexGroupVecLen = 16;

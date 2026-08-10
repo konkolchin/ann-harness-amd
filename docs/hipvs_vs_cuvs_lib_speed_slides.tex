@@ -142,6 +142,37 @@
   \end{block}
 \end{frame}
 
+%----- QPS plot FLAT -----
+\begin{frame}{QPS --- IVF\_FLAT (AMD ahead)}
+  \vspace{-0.2em}
+  {\footnotesize Batched search. Higher is faster.
+  {\color{red}AMD~7900} / {\color{green!60!black}NVIDIA~4080}.}\\[0.1em]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.95\textwidth,
+      height=0.62\textheight,
+      xlabel={nprobe},
+      ylabel={QPS},
+      xmin=0, xmax=280,
+      ymin=0, ymax=70000,
+      xtick={32,64,128,256},
+      legend style={at={(0.98,0.98)},anchor=north east,font=\small},
+      grid=major,
+      major grid style={gray!30},
+    ]
+      \addplot[thick,red,mark=*,mark size=2.5pt] coordinates {
+        (32,64142) (64,33381) (128,17200) (256,8784)
+      };
+      \addlegendentry{AMD hipVS (7900 XTX)}
+      \addplot[thick,green!60!black,mark=square*,mark size=2.5pt] coordinates {
+        (32,49039) (64,24759) (128,12498) (256,6332)
+      };
+      \addlegendentry{NVIDIA cuVS (RTX 4080)}
+    \end{axis}
+  \end{tikzpicture}
+\end{frame}
+
 %----- PQ table -----
 \begin{frame}{IVF\_PQ $m{=}32$ --- library gap ($\sim$2$\times$)}
   \footnotesize
@@ -194,18 +225,18 @@
       nodes near coords align={vertical},
       every node near coord/.append style={font=\tiny},
     ]
-      \addplot[fill=green!50!black!70] coordinates {
+      \addplot[fill=red!80!black,draw=red!80!black] coordinates {
         (FLAT\,32,1.31) (FLAT\,64,1.35) (FLAT\,128,1.38) (FLAT\,256,1.39)
         (PQ\,1,0.37) (PQ\,8,0.50) (PQ\,32,0.48)
       };
-      \addplot[dashed,gray,thick,forget plot] coordinates
+      \addplot[solid,green!60!black,thick,forget plot] coordinates
         {(FLAT\,32,1) (PQ\,32,1)};
     \end{axis}
   \end{tikzpicture}
   \end{center}
   \vspace{-0.3em}
-  {\footnotesize Green bars $>$1 $=$ AMD ahead (FLAT). Bars $<$1 $=$ PQ gap.
-  Gray line $=$ parity.}
+  {\footnotesize Red bars $>$1 $=$ AMD ahead (FLAT). Bars $<$1 $=$ PQ gap.
+  Green line $=$ parity.}
 \end{frame}
 
 %----- QPS plot PQ -----

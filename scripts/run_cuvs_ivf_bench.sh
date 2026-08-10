@@ -7,6 +7,7 @@
 # Usage:
 #   bash scripts/run_cuvs_ivf_bench.sh
 #   INDEX_TYPE=IVF_PQ M=32 WORKDIR=~/milvus_cuda_4080 bash scripts/run_cuvs_ivf_bench.sh
+#   INDEX_TYPE=IVF_PQ M=32 LUT_DTYPE=float16 bash scripts/run_cuvs_ivf_bench.sh
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,6 +15,8 @@ WORKDIR="${WORKDIR:-${HOME}/milvus_cuda_4080}"
 INDEX_TYPE="${INDEX_TYPE:-IVF_FLAT}"
 M="${M:-32}"
 NBITS="${NBITS:-8}"
+LUT_DTYPE="${LUT_DTYPE:-float32}"
+INTERNAL_DISTANCE_DTYPE="${INTERNAL_DISTANCE_DTYPE:-float32}"
 NLIST="${NLIST:-1024}"
 NPROBES="${NPROBES:-1,4,8,16,32}"
 DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/sift-128-euclidean.hdf5}"
@@ -22,6 +25,8 @@ TS="$(date +%Y%m%d_%H%M%S)"
 TAG="cuvs_${INDEX_TYPE,,}_m${M}"
 if [ "${INDEX_TYPE}" = "IVF_FLAT" ]; then
   TAG="cuvs_ivf_flat"
+elif [ "${INDEX_TYPE}" = "IVF_PQ" ] && [ "${LUT_DTYPE}" != "float32" ]; then
+  TAG="cuvs_ivf_pq_m${M}_${LUT_DTYPE}"
 fi
 RESULTS_JSON="${RESULTS_JSON:-${LOG_DIR}/lib_${TAG}_${TS}.json}"
 
@@ -39,6 +44,9 @@ fi
 mkdir -p "${LOG_DIR}"
 echo "==> cuVS library bench"
 echo "    index=${INDEX_TYPE} nlist=${NLIST} m=${M} nbits=${NBITS}"
+if [ "${INDEX_TYPE}" = "IVF_PQ" ]; then
+  echo "    lut_dtype=${LUT_DTYPE} internal_distance_dtype=${INTERNAL_DISTANCE_DTYPE}"
+fi
 echo "    results=${RESULTS_JSON}"
 
 cd "${REPO_ROOT}"
@@ -46,7 +54,9 @@ python3 -c "from cuvs.neighbors import ivf_flat; import cupy; print('cuvs neighb
 
 EXTRA=()
 if [ "${INDEX_TYPE}" = "IVF_PQ" ]; then
-  EXTRA+=(--m "${M}" --nbits "${NBITS}")
+  EXTRA+=(--m "${M}" --nbits "${NBITS}"
+          --lut-dtype "${LUT_DTYPE}"
+          --internal-distance-dtype "${INTERNAL_DISTANCE_DTYPE}")
 fi
 
 python3 scripts/bench_cuvs_ivf.py \
