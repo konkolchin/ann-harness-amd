@@ -11,6 +11,7 @@
 # Usage (Milvus on :19530):
 #   bash scripts/run_milvus_layer4_gist_flat.sh
 #   WORKDIR=~/milvus_cuda_4080 bash scripts/run_milvus_layer4_gist_flat.sh
+#   SEARCH_WARMUP=5 SEARCH_RUNS=10 bash scripts/run_milvus_layer4_gist_flat.sh
 #   SMOKE=1 bash scripts/run_milvus_layer4_gist_flat.sh
 set -euo pipefail
 
@@ -19,6 +20,8 @@ INDEX_WAIT_S="${INDEX_WAIT_S:-7200}"
 NLIST="${NLIST:-1024}"
 NPROBES="${NPROBES:-8,16,32,64,128}"
 SMOKE="${SMOKE:-0}"
+SEARCH_WARMUP="${SEARCH_WARMUP:-0}"
+SEARCH_RUNS="${SEARCH_RUNS:-1}"
 INSERT_BATCH="${INSERT_BATCH:-8000}"
 
 if [ -z "${WORKDIR:-}" ]; then
@@ -73,6 +76,7 @@ fi
 
 echo "    data=${DATA_PATH}"
 echo "    nlist=${NLIST} nprobes=${NPROBES} insert_batch=${INSERT_BATCH}"
+echo "    search_warmup=${SEARCH_WARMUP} search_runs=${SEARCH_RUNS} (median QPS)"
 echo "    collection=${COLLECTION}"
 echo "    results=${RESULTS_JSON}"
 
@@ -85,6 +89,8 @@ python3 scripts/run_milvus_hdf5.py \
   --nlist "${NLIST}" \
   --nprobes "${NPROBES}" \
   --insert-batch "${INSERT_BATCH}" \
+  --search-warmup "${SEARCH_WARMUP}" \
+  --search-runs "${SEARCH_RUNS}" \
   --data "${DATA_PATH}" \
   --collection "${COLLECTION}" \
   --results-json "${RESULTS_JSON}" \

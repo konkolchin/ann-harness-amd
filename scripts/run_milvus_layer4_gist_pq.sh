@@ -15,6 +15,9 @@
 #   # CUDA 4080
 #   WORKDIR=~/milvus_cuda_4080 bash scripts/run_milvus_layer4_gist_pq.sh
 #
+# Median protocol (closer to nightly dashboard; still not 1000-run CI):
+#   SEARCH_WARMUP=5 SEARCH_RUNS=10 bash scripts/run_milvus_layer4_gist_pq.sh
+#
 # Smoke first (optional):
 #   SMOKE=1 bash scripts/run_milvus_layer4_gist_pq.sh
 set -euo pipefail
@@ -26,6 +29,9 @@ INDEX_WAIT_S="${INDEX_WAIT_S:-7200}"
 NLIST="${NLIST:-1024}"
 NPROBES="${NPROBES:-8,16,32,64,128}"
 SMOKE="${SMOKE:-0}"
+# Full-batch search: discard warm-up, report median of timed runs (default = old 1-shot).
+SEARCH_WARMUP="${SEARCH_WARMUP:-0}"
+SEARCH_RUNS="${SEARCH_RUNS:-1}"
 # GIST-960: 50k * 960 * 4B ≈ 192MB > gRPC 64MB default → RESOURCE_EXHAUSTED
 INSERT_BATCH="${INSERT_BATCH:-8000}"
 
@@ -83,6 +89,7 @@ fi
 
 echo "    data=${DATA_PATH}"
 echo "    nlist=${NLIST} m=${M} nbits=${NBITS} nprobes=${NPROBES}"
+echo "    search_warmup=${SEARCH_WARMUP} search_runs=${SEARCH_RUNS} (median QPS)"
 echo "    insert_batch=${INSERT_BATCH}"
 echo "    collection=${COLLECTION}"
 echo "    results=${RESULTS_JSON}"
@@ -98,6 +105,8 @@ python3 scripts/run_milvus_hdf5.py \
   --nbits "${NBITS}" \
   --nprobes "${NPROBES}" \
   --insert-batch "${INSERT_BATCH}" \
+  --search-warmup "${SEARCH_WARMUP}" \
+  --search-runs "${SEARCH_RUNS}" \
   --data "${DATA_PATH}" \
   --collection "${COLLECTION}" \
   --results-json "${RESULTS_JSON}" \

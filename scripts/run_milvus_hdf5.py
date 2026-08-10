@@ -162,7 +162,23 @@ parser.add_argument(
     default="",
     help="If set, write timings + per-nprobe metrics to this JSON path",
 )
+parser.add_argument(
+    "--search-warmup",
+    type=int,
+    default=0,
+    help="Full-batch search warm-up runs per sweep point (discarded; default 0)",
+)
+parser.add_argument(
+    "--search-runs",
+    type=int,
+    default=1,
+    help="Timed full-batch search runs per sweep point; report median QPS (default 1)",
+)
 args = parser.parse_args()
+if args.search_warmup < 0:
+    raise SystemExit("--search-warmup must be >= 0")
+if args.search_runs < 1:
+    raise SystemExit("--search-runs must be >= 1")
 
 is_cagra = args.index_type == "GPU_CAGRA"
 nprobes = [int(x.strip()) for x in args.nprobes.split(",") if x.strip()]
@@ -225,6 +241,8 @@ results = {
     "xb_shape": list(xb.shape),
     "xq_shape": list(xq.shape),
     "data_path": args.data,
+    "search_warmup": args.search_warmup,
+    "search_runs": args.search_runs,
     "timings_s": {},
     "load": None,
     "nprobe_results": [],
@@ -303,6 +321,12 @@ else:
     results["load"] = {"load_state": "Loaded"}
 
 print(f"\nMilvus {args.index_type} results:")
+if args.search_warmup or args.search_runs != 1:
+    print(
+        f"search_protocol: warmup={args.search_warmup} "
+        f"timed_runs={args.search_runs} (report median QPS)"
+    )
+xq_list = xq.tolist()
 for sweep_val in sweep:
     if is_cagra:
         search_params = {
@@ -317,17 +341,31 @@ for sweep_val in sweep:
         search_params = {"metric_type": "L2", "params": {"nprobe": sweep_val}}
         label = f"nprobe={sweep_val:2d}"
 
-    t0 = time.time()
-    res = client.search(
-        collection_name=args.collection,
-        data=xq.tolist(),
-        anns_field="vec",
-        search_params=search_params,
-        limit=args.k,
-        output_fields=[],
-    )
-    t1 = time.time()
-    qps = xq.shape[0] / (t1 - t0)
+    for _ in range(args.search_warmup):
+        _ = client.search(
+            collection_name=args.collection,
+            data=xq_list,
+            anns_field="vec",
+            search_params=search_params,
+            limit=args.k,
+            output_fields=[],
+        )
+
+    qps_runs = []
+    res = None
+    for _ in range(args.search_runs):
+        t0 = time.time()
+        res = client.search(
+            collection_name=args.collection,
+            data=xq_list,
+            anns_field="vec",
+            search_params=search_params,
+            limit=args.k,
+            output_fields=[],
+        )
+        t1 = time.time()
+        qps_runs.append(xq.shape[0] / (t1 - t0))
+    qps = float(np.median(qps_runs))
 
     pred = to_pred_ids(res)
     r = recall_at_k(pred, gt, args.k)
@@ -349,9 +387,20 @@ for sweep_val in sweep:
         lat_ms.append((s1 - s0) * 1000.0)
     p99 = float(np.percentile(lat_ms, 99)) if lat_ms else float("nan")
 
-    print(f"{label} qps={qps:8.1f} p99_ms={p99:7.2f} recall@{args.k}={r:.4f}")
+    if args.search_runs > 1:
+        print(
+            f"{label} qps_median={qps:8.1f} "
+            f"qps_runs={[round(x, 1) for x in qps_runs]} "
+            f"p99_ms={p99:7.2f} recall@{args.k}={r:.4f}"
+        )
+    else:
+        print(f"{label} qps={qps:8.1f} p99_ms={p99:7.2f} recall@{args.k}={r:.4f}")
     row = {
         "qps": qps,
+        "qps_runs": qps_runs,
+        "qps_median": qps,
+        "search_warmup": args.search_warmup,
+        "search_runs": args.search_runs,
         f"recall@{args.k}": r,
         "p99_ms": p99,
     }
