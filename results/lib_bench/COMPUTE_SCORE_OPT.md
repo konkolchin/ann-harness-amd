@@ -43,7 +43,8 @@ Recall@10 unchanged (~0.35 → ~0.73 across the grid).
 
 **Verdict:** no meaningful QPS win. Spot‑1 (`ivfpq_compute_score` pipeline / pq8
 byte path) is **not** the lever for the ~2× gap vs cuVS. Prefer next deck items:
-launch/carveout heuristics (spots 6–7) or LUT-build specialization (spot 5).
+launch/carveout heuristics (spots 6–7 — see `LAUNCH_KNOBS.md`) or LUT-build
+specialization (spot 5).
 
 ## Re-bench commands
 
