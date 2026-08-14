@@ -3,14 +3,13 @@
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{booktabs}
 \usepackage{xcolor}
-\usepackage{tabularx}
 \usepackage{graphicx}
 \usepackage{float}
-\usepackage{array}
 \usepackage{hyperref}
 \usepackage{enumitem}
-\usepackage{longtable}
 \usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
 \usetikzlibrary{arrows.meta,positioning}
 
 \hypersetup{
@@ -20,7 +19,7 @@
 }
 
 \title{Porting Milvus GPU Vector Search to AMD\\[0.3em]
-\large hipVS / hipRAFT Layer Plan (ROCm)}
+\large HIP / hipVS / Knowhere on consumer RDNA3 (RX~7900~XTX)}
 \author{Konstantin Kolchin}
 \date{\today}
 
@@ -28,1982 +27,294 @@
 \maketitle
 
 \begin{abstract}
-This document describes a layered experiment plan for replacing NVIDIA cuVS/cuRAFT with
-AMD hipVS/hipRAFT in the Milvus/Knowhere GPU path. It complements the CPU benchmarking
-runbook (\texttt{ann\_framework\_runbook.tex}): Milvus Standalone CPU results on
-\texttt{amd-rx7900xtx} are the control; GPU port work proceeds in five layers from ROCm sanity
-through standalone libraries, Knowhere, Milvus source builds, and harness benchmarks.
+We describe a layered port of the Milvus GPU ANN path from NVIDIA cuVS/RAFT to
+AMD hipVS/hipRAFT on ROCm, validated on a consumer RDNA3 GPU
+(Radeon RX~7900~XTX, \texttt{gfx1100}).
+The public HIP line is Milvus~\texttt{v2.5.4} + Knowhere~\texttt{2.5}
+(\url{https://github.com/konkolchin/milvus-hip},
+\url{https://github.com/konkolchin/knowhere-hip}),
+with build/bench scripts in
+\url{https://github.com/konkolchin/ann-harness-amd}.
 
-\textbf{Status (2026-07-24):} Layers~\textbf{0--4 done} on the 7900 XTX lab host
-(ROCm~7.0.2; hipVS IVF packer fixed; Knowhere HIP L2 search 108 assertions; DXC Knowhere
-\texttt{2.5} merged; Milvus \texttt{v2.5.4} HIP Standalone sealed \texttt{GPU\_IVF\_FLAT}
-and \texttt{GPU\_IVF\_PQ}; full SIFT-1M FLAT recall@10 $0.38\rightarrow0.98$; fair CPU vs GPU:
-batched $\sim$5--7$\times$, VDBBench concurrent $\sim$2--4$\times$ at high \texttt{nprobe}).
-Fair HIP vs CUDA on RTX~4080 (\texttt{milvusdb/milvus:v2.5.4-gpu}): FLAT and PQ
-\texttt{m}=32 recall ladders \textbf{match} AMD. Library hipVS vs cuVS
-(\texttt{IVF\_PQ} $m{=}32$): recall match; hipVS $\sim$0.5$\times$ cuVS QPS; Milvus SIFT
-is stack-limited ($\sim$1$\times$, not an ANN-speed verdict). Fair Milvus
-GIST PQ (2026-07-28): AMD/CUDA $\sim$0.60--0.80$\times$ at matched recall ---
-Section~\ref{sec:milvus-gist-pq}.
-See Sections~\ref{sec:layer-progress}, \ref{sec:layer4-pq}, \ref{sec:hip-vs-cuda},
-\ref{sec:hipvs-vs-cuvs-lib}.
+\textbf{Correctness:} on peer-class GPUs (7900~XTX vs RTX~4080), sealed
+\texttt{GPU\_IVF\_FLAT} and \texttt{GPU\_IVF\_PQ} recall@10 ladders match CUDA
+on SIFT-1M and GIST-1M recipes used here.
+
+\textbf{Speed (product path, batched Milvus QPS):}
+\begin{itemize}[nosep,leftmargin=*]
+  \item \textbf{SIFT-1M} is often stack-limited ($\sim$1$\times$ AMD/CUDA);
+  \item \textbf{GIST-1M + IVF\_PQ} is GPU-heavier: AMD trails at roughly
+        $0.60$--$0.80\times$ CUDA at matched recall.
+\end{itemize}
+Library microbenches (no Milvus) show a larger PQ gap ($\sim$0.5$\times$) and a
+FLAT-heavy AMD lead ($\sim$1.3$\times$) --- useful context, not a product-QPS claim.
 \end{abstract}
 
 \tableofcontents
 \clearpage
 
 \section{Background}
+\label{sec:background}
 
-Milvus does not call cuVS directly from Python. The stack is:
+Milvus does not call cuVS from the Python client directly. The GPU stack is:
 
 \begin{verbatim}
 pymilvus / VectorDBBench
         |
    Milvus server
         |
-   Knowhere  (vector engine: CPU + GPU indexes)
+   Knowhere  (CPU + GPU indexes)
         |
-   GPU path: GPU_IVF_FLAT, GPU_IVF_PQ, GPU_CAGRA, GPU_BRUTE_FORCE
+   GPU_IVF_FLAT / GPU_IVF_PQ / GPU_CAGRA / ...
         |
    NVIDIA: RAFT / cuVS
-   AMD goal: hipRAFT + hipVS (ROCm-DS ports)
+   AMD:    hipRAFT / hipVS   (ROCm-DS ports)
 \end{verbatim}
 
-\textbf{hipVS} is an AMD port of cuVS
-(\url{https://github.com/ROCm-DS/hipVS},
-\url{https://rocm.docs.amd.com/projects/hipVS/en/latest/}) with API compatibility as an
-explicit goal. \textbf{hipRAFT} is the matching primitives layer (RAFT/cuRAFT analogue on
-ROCm).
+\textbf{hipVS} aims at API compatibility with cuVS
+(\url{https://github.com/ROCm-DS/hipVS}).
+Stock Milvus CPU Docker images do not exercise the HIP path; GPU on AMD requires
+a source build (or a custom image). NVIDIA GPU images do not run on AMD.
 
-The stock \textbf{Milvus v2.5.4 CPU Docker image} used for CPU baselines does \emph{not}
-exercise the GPU/HIP path. GPU experiments require \textbf{source builds} (or a custom GPU
-image you build yourself). NVIDIA Milvus GPU images will not run on AMD.
+\section{Layered approach}
+\label{sec:layers}
 
-\section{Prerequisites (CPU control)}
+We did not replace cuVS inside Milvus in one step. Work proceeded in layers with
+explicit pass gates:
 
-Before starting GPU layers, the following should be in place on the target AMD host
-(see the main runbook for commands and measured tables):
-
-\begin{itemize}[leftmargin=*]
-  \item SIFT-1M HDF5 dataset (\texttt{data/sift-128-euclidean.hdf5}).
-  \item Milvus Standalone Docker CPU (\texttt{milvus-docker/}, \texttt{user.yaml}
-        \texttt{knowhere.simdType: sse4\_2}).
-  \item Optional but recommended: VectorDBBench \texttt{milvusivfflat} IVF \texttt{nprobe}
-        sweep as the same-host CPU Milvus control.
-\end{itemize}
-
-On \texttt{amd-rx7900xtx} (7900 XTX / \texttt{gfx1100}), CPU baselines and the IVF sweep
-were captured 2026-06-30. GPU work does not replace those numbers; it adds a new backend
-to compare against them.
-
-\section{Layered strategy}
-
-Do not attempt to ``replace cuVS in Milvus'' in one step. Use \textbf{five layers}
-(Layer~0 through Layer~4), each with explicit pass/fail criteria. Only advance when the
-current layer passes.
-
-\subsection{Progress at a glance (lab host \texttt{amd-rx7900xtx})}
-\label{sec:layer-progress}
-
-\textbf{Completed (gate passed):} Layers~\textbf{0}, \textbf{1}, \textbf{1.5}, \textbf{2}, \textbf{3}, and \textbf{4}.
-
-\begin{table}[h]
+\begin{table}[H]
 \centering
-\caption{Layer status and pass criteria (as of 2026-07-17)}
-\begin{tabular}{@{}cllp{0.38\textwidth}@{}}
+\caption{Layer gates (lab host \texttt{amd-rx7900xtx}, ROCm~7.0.2)}
+\label{tab:layers}
+\begin{tabular}{@{}clp{0.52\textwidth}@{}}
 \toprule
-\textbf{Layer} & \textbf{Name} & \textbf{Status} & \textbf{Pass criterion / evidence} \\
+\textbf{\#} & \textbf{Focus} & \textbf{Pass evidence (summary)} \\
 \midrule
-0 & ROCm + host sanity & \textbf{Done} & \texttt{rocminfo} gfx1100; Milvus CPU healthy \\
-1 & hipRAFT / hipVS alone & \textbf{Done} & Build + \texttt{BRUTEFORCE\_C\_TEST}; IVF packer issues deferred to 1.5 \\
-1.5 & IVF packer fix (gfx1100) & \textbf{Done} & Float IVF gtests 98/98 (2026-07-05) \\
-2 & Knowhere + HIP & \textbf{Done} & Catch2 \texttt{Test Gpu Index Search}: 108 assertions (2026-07-09); DXC \texttt{2.5} merged \\
-3 & Milvus source + GPU & \textbf{Done} & Sealed \texttt{GPU\_IVF\_FLAT}: IndexNode \texttt{GPU\_CUVS\_IVF\_FLAT}; QueryNode load OK (2026-07-17) \\
-4 & Harness benchmarks & \textbf{Done} & Full SIFT-1M FLAT + PQ; HIP vs CUDA recall match (2026-07-22) \\
+0 & ROCm + CPU Milvus & \texttt{gfx1100} visible; CPU Standalone healthy \\
+1 & hipRAFT / hipVS & Build; focused neighbors tests \\
+1.5 & IVF packer on RDNA3 & Float IVF gtests 98/98 after
+      \texttt{kIndexGroupSize}${=}32$ (warp32) \\
+2 & Knowhere + HIP & Catch2 GPU L2 search gate green \\
+3 & Milvus source & Sealed \texttt{GPU\_IVF\_*} build/load on HIP \\
+4 & Fair benches & SIFT/GIST recall match vs CUDA; QPS plots below \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent\textit{Note:} Layer~2 ``Done'' means the Knowhere HIP L2-search gate passed. The full
-Catch2 GPU suite still has known gaps (CAGRA bitset, IVF\_PQ TopK); those are not Layer~2
-blockers. Layer~3 ``Done'' means Milvus HIP Standalone can \textbf{build and load} a sealed
-\texttt{GPU\_IVF\_FLAT} index on gfx1100 (not a full-SIFT recall/QPS claim---that is Layer~4).
+\noindent Detailed lab commands live in the harness README and the optional long
+runbook \texttt{docs/porting\_milvus\_gpu\_to\_amd\_lab\_runbook.tex}.
 
-\section{Layer 0 --- Machine, ROCm, and CPU Milvus sanity}
+\section{Hardware and fair compare}
+\label{sec:fair}
 
-\noindent\textit{Status: \textbf{Done} (see Section~\ref{sec:layer-progress}).}
-
-\subsection{Goal}
-
-Confirm that the AMD GPU stack and the existing CPU Milvus environment work \emph{before}
-touching hipVS, Knowhere forks, or Milvus source builds.
-
-\subsection{Target host (lab)}
-
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.28\textwidth}X@{}}
-\toprule
-\textbf{Field} & \textbf{Value (7900 XTX lab)} \\
-\midrule
-Hostname & \texttt{amd-rx7900xtx} \\
-CPU & AMD Ryzen 7 7700X \\
-GPU & Radeon RX 7900 XTX (\texttt{gfx1100}) \\
-iGPU & \texttt{gfx1036} (ignore for GPU benchmarks) \\
-OS & Ubuntu 22.04 (Jammy) \\
-ROCm & \texttt{7.0.2} (\url{https://repo.radeon.com/amdgpu-install/7.0.2/}); upgraded from \texttt{6.4.4} for Layer~1 \\
-AMDGPU DKMS & \texttt{amdgpu/6.14.14} via \texttt{amdgpu-install --usecase=graphics,rocm} \\
-Milvus & Standalone \texttt{v2.5.4} via \texttt{docker-compose} in \texttt{milvus-docker/} \\
-\bottomrule
-\end{tabularx}
-
-\subsection{Install and verify ROCm}
-
-Use the \textbf{official} AMDGPU + ROCm packages, not unrelated tools (e.g.\ \texttt{snap
-install rocminfo}).
-
-\begin{verbatim}
-# Repos (example for ROCm 6.4.4 on Jammy)
-# https://repo.radeon.com/amdgpu/6.4.4/ubuntu jammy
-# https://repo.radeon.com/rocm/apt/6.4.4 jammy
-
-sudo apt update
-sudo apt install rocm amdgpu-dkms amdgpu-lib
-
-# Reboot after first DKMS install if the driver was not loaded before
-sudo reboot
-\end{verbatim}
-
-\textbf{Sanity commands} (record output in the teammate run template):
-
-\begin{verbatim}
-/opt/rocm/bin/rocminfo | grep -E 'Name:|Marketing|gfx'
-/opt/rocm/bin/hipcc --version
-/opt/rocm/bin/rocm-smi
-groups | grep -E 'render|video'
-uname -r
-lspci | grep -i vga
-lsmod | grep amdgpu
-\end{verbatim}
-
-\textbf{Pass:}
 \begin{itemize}[leftmargin=*]
-  \item \texttt{rocminfo} lists \texttt{Marketing Name: Radeon RX 7900 XTX} and agent
-        \texttt{gfx1100}.
-  \item No HIP runtime errors from \texttt{hipcc --version}.
-  \item User is in \texttt{render} and/or \texttt{video} groups (or runs GPU jobs with
-        appropriate device permissions).
+  \item \textbf{AMD:} RX~7900~XTX (\texttt{gfx1100}), HIP Milvus Standalone,
+        hide iGPU (\texttt{ROCR\_VISIBLE\_DEVICES=0}).
+  \item \textbf{NVIDIA:} RTX~4080, \texttt{milvusdb/milvus:v2.5.4-gpu} Docker,
+        same client scripts.
+  \item \textbf{Client:} \texttt{scripts/run\_milvus\_hdf5.py} --- sealed index
+        (\texttt{--flush}), batched search, report recall@10 and QPS.
+  \item Peer-class boards ($\sim$320--355\,W TDP class), \emph{not} identical silicon.
+        Use recall for port correctness; QPS for hardware/stack speed only.
 \end{itemize}
 
-\textbf{Measured on lab host (Layer~0 pass, later upgraded for Layer~1):}
-\begin{verbatim}
-rocminfo: gfx1100 / Radeon RX 7900 XTX visible
-CPU agent: AMD Ryzen 7 7700X
-Layer 0: ROCm 6.4.4; Layer 1 build: upgraded to ROCm 7.0.2 (see ROCm 7 upgrade subsection)
-\end{verbatim}
+Speed-up in figures $=$ AMD QPS / CUDA QPS.
 
-Match hipVS/hipRAFT branch \texttt{release/rocmds-25.10} to \textbf{ROCm~$\geq$7.0.2} on this
-host. ROCm~6.4.4 was insufficient for hipVS (missing hipCUB \texttt{DeviceFor}; see
-Section~\ref{sec:layer1-rocm7-upgrade}).
+\section{Results: QPS vs \texttt{nprobe}}
+\label{sec:results}
 
-\subsection{Upgrade to ROCm 7.0.2 (required for Layer~1 on gfx1100)}
-\label{sec:layer1-rocm7-upgrade}
+Four product-path cases (HIP vs CUDA). Older appendix-style QPS/recall tables are
+folded into these plots. Recall@10 matched between GPUs on every filled case
+(see captions).
 
-AMD does \textbf{not} support in-place ROCm upgrades. On Ubuntu~22.04 for Radeon + ROCm:
+\subsection{SIFT-1M --- \texttt{GPU\_IVF\_FLAT}}
+\label{sec:sift-flat}
 
-\begin{enumerate}[leftmargin=*]
-  \item Install \texttt{dkms} and kernel headers if missing:
-        \texttt{sudo apt install dkms linux-headers-\$(uname -r)}.
-  \item Uninstall old stack: \texttt{sudo amdgpu-uninstall} (or \texttt{apt autoremove rocm*}).
-  \item Remove stale repo files under \texttt{/etc/apt/sources.list.d/}; \texttt{apt clean}.
-  \item Install \texttt{amdgpu-install} 7.0.2 \texttt{.deb} from AMD; run
-        \texttt{sudo amdgpu-install -y --usecase=graphics,rocm}.
-  \item Reboot; add user to \texttt{render,video}; verify \texttt{rocminfo}, \texttt{hipcc},
-        and \texttt{/opt/rocm/include/hipcub/device/device\_for.hpp} exists.
-\end{enumerate}
-
-Full command transcript: AMD Radeon install guide for ROCm~7.0.2 on Jammy
-(\url{https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.0.2/docs/install/installrad/native_linux/install-radeon.html}).
-
-\subsection{Verify CPU Milvus (control stack)}
-
-This host uses classic \texttt{docker-compose} (hyphen), not the Compose V2 plugin
-\texttt{docker compose}.
-
-\begin{verbatim}
-cd ~/ann-harness-amd/milvus-docker
-docker-compose up -d
-sleep 15
-docker-compose ps
-curl -sf http://127.0.0.1:9091/healthz && echo OK
-\end{verbatim}
-
-\textbf{Pass:} \texttt{milvus-standalone} reports \texttt{Up (healthy)}; health endpoint
-returns OK.
-
-\subsection{Long runs over SSH}
-
-Use \texttt{tmux} for any Layer~1+ build or benchmark. Detach with \textbf{Ctrl+B, D} before
-closing SSH. An empty \texttt{tmux ls} after reboot is normal---start a new session
-(\texttt{tmux new -s rocm-check}).
-
-\subsection{Layer~0 checklist (host readiness)}
-
-\begin{table}[h]
+\begin{figure}[H]
 \centering
-\caption{Host readiness checklist (\texttt{amd-rx7900xtx}); see also Section~\ref{sec:layer-progress}}
-\begin{tabular}{@{}lr@{}}
-\toprule
-\textbf{Item} & \textbf{Status} \\
-\midrule
-ROCm installed (\texttt{7.0.2}) & Done \\
-\texttt{rocminfo} shows \texttt{gfx1100} / 7900 XTX & Done \\
-Milvus Standalone Docker healthy & Done \\
-CPU Milvus VDBBench IVF baselines (runbook Tables~6--7) & Done \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Later layers (hipVS, packer, Knowhere, Milvus GPU) are tracked in
-Section~\ref{sec:layer-progress}, not in this Layer~0-only checklist.
-
-\section{Layer 1 --- hipRAFT and hipVS in isolation}
-\label{sec:layer1-hipvs-hipraft}
-
-\noindent\textit{Status: \textbf{Done} (build + brute-force; IVF packer completed in Layer~1.5).}
-
-\subsection{Goal}
-
-Prove AMD libraries work on the GPU \textbf{before} Knowhere or Milvus. Layer~1 success means:
-\texttt{libcuvs.so} builds for \texttt{gfx1100}, hipVS tests run on GPU, and IVF/brute-force search
-returns sensible neighbors.
-
-\subsection{Reality check (7900 XTX / RDNA3)}
-
-\begin{itemize}[leftmargin=*]
-  \item \textbf{ROCm~$\geq$7.0.2 is required} for \texttt{release/rocmds-25.10} on this branch.
-        ROCm~6.4.4 hipCUB lacks \texttt{cub::DeviceFor} (\texttt{device\_for.hpp}); hipVS
-        configure/compile fails with \texttt{no member named 'DeviceFor' in namespace 'hipcub'}.
-  \item \textbf{RDNA3 / \texttt{gfx1100} requires warp size 32.} hipCollections (cuco) defaults to
-        CDNA-style warp size 64; without \texttt{USE\_WARPSIZE\_32=ON} configure fails with
-        \texttt{not supported with warp size 64 (gfx1100)}. This path is \textbf{experimental}
-        in upstream cuco.
-  \item Official hipVS docs list \textbf{Instinct GPUs only} (\texttt{gfx90a}/\texttt{gfx942});
-        \texttt{gfx1100} is community/experimental. Stock \texttt{release/rocmds-25.10} fails IVF
-        packer gtests until \texttt{kIndexGroupSize=32} patch (Layer~1.5, Section~\ref{sec:layer15-measured}).
-  \item First build downloads dependencies via ROCmDS-cmake and can take \textbf{1--3+ hours} and
-        \textbf{10--30\,GB} disk under \texttt{\textasciitilde{}rocmds\_check\_gfx1100/}.
-\end{itemize}
-
-\subsection{Step 1 --- Host packages (once)}
-
-On \texttt{amd-rx7900xtx}, inside \texttt{tmux}:
-
-\begin{verbatim}
-sudo apt update
-sudo apt install -y git ninja-build ccache \
-  build-essential pkg-config \
-  libopenblas-dev libblas-dev liblapack-dev libsuitesparse-dev
-
-# Ubuntu 22.04 ships cmake 3.22; hipVS wants >= 3.31
-python3 -m pip install --user 'cmake>=3.31'
-export PATH="$HOME/.local/bin:$PATH"
-cmake --version   # must show >= 3.31
-
-# ROCm tools on PATH
-export PATH=/opt/rocm/bin:$PATH
-export ROCM_PATH=/opt/rocm
-hipcc --version
-/opt/rocm/bin/rocminfo | grep -E 'gfx1100|7900'
-\end{verbatim}
-
-Optional: add user to GPU groups if builds/tests fail with permission errors:
-
-\begin{verbatim}
-sudo usermod -aG render,video "$USER"
-# log out and back in
-\end{verbatim}
-
-\subsection{Step 2 --- Clone pinned sources}
-
-Use branch \texttt{release/rocmds-25.10} for both repos (matched pair):
-
-\begin{verbatim}
-export WORKDIR=~/rocmds_check_gfx1100
-export INSTALL_PREFIX=$WORKDIR/install
-mkdir -p "$WORKDIR" "$INSTALL_PREFIX"
-
-cd "$WORKDIR"
-git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipRaft.git hipRaft
-git clone -b release/rocmds-25.10 --depth 1 https://github.com/ROCm-DS/hipVS.git hipVS
-# If directories already exist, skip clone; use: git checkout release/rocmds-25.10
-\end{verbatim}
-
-\subsection{Step 2b --- Patch rocThrust version for ROCm 6.4.x only}
-
-\textbf{Skip this step on ROCm~7.x} (system rocThrust is \textbf{4.0.0}; leave
-\texttt{versions.json} unchanged).
-
-On ROCm~6.4.4 only: hipRaft pins rocThrust \textbf{4.0.0} but apt ships \textbf{3.3.x}.
-Without the patch, \texttt{find\_package} fails and CPM tries the sentinel git tag
-\texttt{We-always-use-find\_package-for-rocthrust.} (which is not a real branch).
-
-\begin{verbatim}
-python3 <<'PY'
-import json
-from pathlib import Path
-p = Path.home() / "rocmds_check_gfx1100/hipRaft/versions.json"
-data = json.loads(p.read_text())
-data.setdefault("packages", {}).setdefault("rocthrust", {})["version"] = "3.3.0"
-p.write_text(json.dumps(data, indent=2) + "\n")
-print("patched", p)
-PY
-\end{verbatim}
-
-\subsection{Step 3 --- Environment for builds}
-
-\begin{verbatim}
-export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
-export ROCM_PATH=/opt/rocm-7.0.2
-export WORKDIR=~/rocmds_check_gfx1100
-export INSTALL_PREFIX=$WORKDIR/install
-export PARALLEL_LEVEL=$(nproc)
-
-export CMAKE_PREFIX_PATH=$ROCM_PATH:$ROCM_PATH/lib/cmake:$INSTALL_PREFIX/lib/cmake
-export HIP_DIR=$ROCM_PATH/lib/cmake/hip
-export rocthrust_DIR=$ROCM_PATH/lib/cmake/rocthrust
-export rocprim_DIR=$ROCM_PATH/lib/cmake/rocprim
-export hipcub_DIR=$ROCM_PATH/lib/cmake/hipcub
-export RAPIDS_CMAKE_ROCTHRUST_USE_LOCAL=ON
-export RAPIDS_CMAKE_ROCM_ORG=ROCm
-export RAPIDS_CMAKE_ROCM_DS_ORG=ROCm-DS
-\end{verbatim}
-
-Do \textbf{not} pass \texttt{--cmake-args=-D...} (bash strips the inner quotes; \texttt{build.sh}
-then fails \texttt{Invalid option}). For \texttt{gfx1100}, wrap the \textbf{entire} flag in single
-quotes so literal \texttt{"..."} reach \texttt{build.sh} (Step~4).
-
-\subsection{Step 4 --- Build hipRAFT first}
-
-hipVS depends on hipRAFT. Install both into \texttt{\$INSTALL\_PREFIX}:
-
-\begin{verbatim}
-cd $WORKDIR/hipRaft
-./build.sh clean && rm -rf cpp/build _deps
-# --gpu-arch MUST be last. Single-quote the whole --cmake-args flag (bash quote trap).
-INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libraft tests --compile-lib \
-  --cache-tool=ccache \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
-  --gpu-arch="gfx1100"
-\end{verbatim}
-
-\textbf{Pass:} exit code~0; libraries under \texttt{\$INSTALL\_PREFIX/lib} (e.g.\ \texttt{libraft.so}).
-
-If configure complains about missing \texttt{hipblas}/\texttt{hipsparse}/\texttt{rocthrust}, install ROCm dev packages and export the \texttt{*\_DIR} variables from Step~3 (do not pass them via \texttt{--cmake-args}):
-
-\begin{verbatim}
-sudo apt install -y rocm-dev rocm-hip-sdk rocthrust-dev rocprim-dev hipcub-dev
-
-# verify system rocThrust (must exist before hipRAFT configure)
-ls /opt/rocm/lib/cmake/rocthrust/rocthrust-config.cmake \
-   /opt/rocm-7.0.2/lib/cmake/rocthrust/rocthrust-config.cmake 2>/dev/null
-
-export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
-export ROCM_PATH=/opt/rocm-7.0.2
-export CMAKE_PREFIX_PATH=$ROCM_PATH:$ROCM_PATH/lib/cmake:$INSTALL_PREFIX/lib/cmake
-export rocthrust_DIR=$ROCM_PATH/lib/cmake/rocthrust
-export rocprim_DIR=$ROCM_PATH/lib/cmake/rocprim
-export hipcub_DIR=$ROCM_PATH/lib/cmake/hipcub
-export RAPIDS_CMAKE_ROCTHRUST_USE_LOCAL=ON
-export RAPIDS_CMAKE_ROCM_ORG=ROCm
-
-cd $WORKDIR/hipRaft
-./build.sh clean && rm -rf cpp/build _deps
-INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libraft tests --compile-lib \
-  --cache-tool=ccache \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
-  --gpu-arch="gfx1100"
-\end{verbatim}
-
-If you still see \texttt{Build step for rocthrust failed} or \texttt{github.com//rocThrust/},
-patch \texttt{versions.json} (Step~2b), confirm \texttt{ls \$rocthrust\_DIR} succeeds, then wipe \texttt{cpp/build \_deps} and retry.
-
-\subsection{Step 5 --- Build hipVS (libcuvs + focused tests)}
-
-Start with a \textbf{small test subset} before compiling all gtests:
-
-\begin{verbatim}
-cd $WORKDIR/hipVS
-./build.sh clean
-INSTALL_PREFIX=$INSTALL_PREFIX CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH \
-  ./build.sh libcuvs tests --cache-tool=ccache \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
-  --gpu-arch="gfx1100" \
-  --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST;BRUTEFORCE_C_TEST"
-\end{verbatim}
-
-Full test suite (much longer):
-
-\begin{verbatim}
-INSTALL_PREFIX=$INSTALL_PREFIX CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH \
-  ./build.sh libcuvs tests \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON"' \
-  --gpu-arch="gfx1100"
-cd $WORKDIR/hipVS/cpp/build
-ctest --test-dir ./tests --output-on-failure
-\end{verbatim}
-
-\textbf{Pass:} \texttt{libcuvs.so} installed under \texttt{\$INSTALL\_PREFIX/lib}; at least
-\texttt{BRUTEFORCE\_C\_TEST} exits~0 on \texttt{gfx1100}. Full
-\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} may fail on RDNA3 despite good recall (see
-Section~\ref{sec:ivf-gtest-decode}).
-
-\subsection{Step 6 --- Run tests manually}
-
-\begin{verbatim}
-export HIP_VISIBLE_DEVICES=0
-export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
-GTEST=$WORKDIR/hipVS/cpp/build/gtests
-
-# Layer 1 backstop (passed on lab host 2026-07-03)
-$GTEST/BRUTEFORCE_C_TEST
-echo "BRUTEFORCE exit: $?"
-
-# IVF gtest — expect many FAIL on gfx1100; read log carefully (Section below)
-$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
-  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.*' \
-  2>&1 | tee $WORKDIR/ivf_flat_float_gtest.log
-
-# Optional: float-only diagnostic; closer to Milvus GPU_IVF_FLAT (float vectors)
-# Rebuild with --limit-tests="IVF_FLAT_C_TEST" first if not built
-# $GTEST/IVF_FLAT_C_TEST
-
-# watch GPU during tests (second terminal)
-watch -n1 rocm-smi
-\end{verbatim}
-
-Logs from the repo helper script: \texttt{scripts/check\_rocmds\_gfx1100.sh} writes
-\texttt{\$WORKDIR/logs/} and \texttt{SUMMARY.txt}.
-
-\subsection{Step 7 --- One-shot script (recommended)}
-
-From a fresh clone of \texttt{ann-harness-amd} on the lab host:
-
-\begin{verbatim}
-tmux new -s layer1
-cd ~/ann-harness-amd
-chmod +x scripts/check_rocmds_gfx1100.sh
-# ensure cmake >= 3.31 and rocm on PATH (Step 1)
-bash scripts/check_rocmds_gfx1100.sh 2>&1 | tee ~/rocmds_check_gfx1100/layer1_run.log
-# Ctrl+B, D
-\end{verbatim}
-
-\subsection{Step 8 --- Optional Python API smoke test}
-
-Only after C++ Layer~1 passes. Upstream recommends a \textbf{micromamba/conda} env; this is
-optional for Milvus/Knowhere integration (C++ path is enough for Layer~2):
-
-\begin{verbatim}
-# See hipVS docs: conda/environments/all_rocm_arch-x86_64.yaml
-# Build hipRAFT into env, then:
-#   cd hipVS && ./build.sh libcuvs python
-#   python -c "import cuvs; print('ok')"
-\end{verbatim}
-
-\subsection{Step 9 --- Recall sanity (float, small data)}
-
-After Layer~1 builds pass, validate \textbf{float} IVF (what SIFT and \texttt{GPU\_IVF\_FLAT}
-use---not \texttt{uint8} gtest dtypes) on a \textbf{10k-vector} slice from SIFT HDF5.
-Use hipVS/gtest recall lines: values near $1.0$ mean neighbor search is sane; gross
-divergence means wrong metric/arch. Full SIFT-1M GPU benchmarks belong in Layer~4.
-
-Stock Milvus Docker cannot run \texttt{GPU\_IVF\_FLAT}; this step uses hipVS directly until
-Layer~2--3. A harness script is not yet in-repo---use gtest recall lines as interim evidence,
-then add a small hipVS or \texttt{cuvs} Python script when pursuing Knowhere integration.
-
-\subsection{How to read \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} output}
-\label{sec:ivf-gtest-decode}
-
-Each gtest case (\texttt{AnnIVFFlat/NN}) runs three sub-tests in one \texttt{TEST\_P}:
-\texttt{testIVFFlat()} (search/recall), \texttt{testPacker()} (GPU list packing math),
-\texttt{testFilter()}. A single \texttt{[ FAILED ]} line does \textbf{not} mean IVF search is
-broken.
-
-\paragraph{Recall line (usually good news).}
-\begin{verbatim}
-[RAFT] [info] Recall = 1.000000 (10000/10000), ... below the threshold (eps = 0.001000).
-\end{verbatim}
-This checks \textbf{neighbor correctness}. Values near \textbf{1.0} mean GPU IVF search found
-the right neighbors. This is what matters for SIFT / \texttt{GPU\_IVF\_FLAT}. \textbf{Do not}
-try to fix failures by changing \texttt{eps}---recall often already passes.
-
-\paragraph{Packer failure at \texttt{ann\_ivf\_flat.cuh:376} (fixable layout bug).}
-\begin{verbatim}
-Failure
-Value of: thrust::reduce(..., mask, ...) == list_size * ps.dim
-  Actual: false
-  Expected: true
-\end{verbatim}
-This is \textbf{not} a recall threshold. It counts \texttt{true} bits in an internal packing
-\texttt{mask} and expects \textbf{exactly} \texttt{list\_size $\times$ dim}. On \texttt{gfx1100}
-with \texttt{USE\_WARPSIZE\_32=ON}, this assert fails for \textbf{both float and uint8} suites
-even when recall is \textbf{1.0} (97/98 cases on the lab host, 2026-07-03).
-
-\textbf{Interpretation:} search can pass while extend/pack layout invariants fail on some cluster
-sizes. That is a real bug in the hipVS IVF interleaved layout path (or its test mask formula),
-not a reason to ignore gtests. Upstream CI targets Instinct (\texttt{gfx90a}/\texttt{gfx942});
-on RDNA3, \texttt{kIndexGroupSize = raft::warp\_size()} is \textbf{32}, not the fixed-32
-assumption in much cuVS documentation tested mainly on warp-64 hardware. Fixing this in a
-\textbf{project fork} is Layer~1.5 work (Section~\ref{sec:layer15-packer-fix}).
-
-\paragraph{\texttt{GetParam()} decode.}
-Example: \texttt{\{ 1000, 10000, 16, 10, 512, 1024, 0, 0,0,0 \}} means
-\texttt{num\_queries=1000}, \texttt{num\_db\_vecs=10000}, \texttt{dim=16}, \texttt{k=10},
-\texttt{nprobe=512}, \texttt{nlist=1024}, \texttt{metric=L2}, plus three booleans. The index
-\texttt{/93} is just parameter set \#93, not an error code.
-
-\paragraph{Do not weaken gtests to pass.} Lowering recall \texttt{eps} or commenting out the
-packer \texttt{ASSERT\_TRUE} hides the layout bug. \textbf{Do} fix the library (or align the
-mask formula with \texttt{codepacker::pack}) in a fork, then re-run gtests until
-\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} is green. Application-level float recall on SIFT remains
-the Milvus sign-off check in Layer~2--4.
-
-\subsection{Layer~1 measured results (\texttt{amd-rx7900xtx}, 2026-07-03)}
-\label{sec:layer1-measured}
-
-\begin{table}[h]
-\centering
-\caption{Layer~1 outcomes on RX 7900 XTX after ROCm 7.0.2 upgrade}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Item} & \textbf{Result} \\
-\midrule
-ROCm & 7.0.2; \texttt{hipcc} 7.0.51831; \texttt{device\_for.hpp} present \\
-Branch & \texttt{release/rocmds-25.10} (hipRaft + hipVS) \\
-Prefix & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/install} \\
-Build flags & \texttt{USE\_WARPSIZE\_32=ON}, \texttt{--gpu-arch=gfx1100} \\
-\texttt{libraft.so} & Built and installed \\
-\texttt{libcuvs.so} & $\sim$254\,MB; links to ROCm~7 libs \\
-\texttt{BRUTEFORCE\_C\_TEST} & \textbf{PASS} (2/2; recall 1.0) \\
-\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} (float filter) & 97/98 \textbf{FAIL} on packer; recall often 1.0 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{Layer~1 baseline (2026-07-03):} hipRAFT + hipVS build; \texttt{BRUTEFORCE\_C\_TEST}
-green. Stock hipVS float IVF gtest: 97/98 packer fail (recall often 1.0). \textbf{Layer~1.5
-(2026-07-05):} patches \texttt{0001} (debug) + \texttt{0002} (\texttt{kIndexGroupSize=32});
-98/98 pass---see Section~\ref{sec:layer15-measured}. Proceed to Layer~2.
-
-\subsection{Troubleshooting}
-
-\begin{table}[h]
-\centering
-\caption{Common Layer~1 failures}
-\begin{tabular}{@{}p{0.32\textwidth}p{0.58\textwidth}@{}}
-\toprule
-\textbf{Symptom} & \textbf{What to try} \\
-\midrule
-cmake $<$ 3.31 & \texttt{pip install 'cmake>=3.31'}; verify \texttt{\textasciitilde{}/.local/bin/cmake} \\
-Missing hipBLAS/hipSPARSE & \texttt{sudo apt install rocm-dev rocm-hip-sdk} \\
-\texttt{no member named 'DeviceFor' in hipcub} & Upgrade to ROCm~$\geq$7.0.2; verify \texttt{device\_for.hpp} \\
-\texttt{amdgpu dkms failed} / \texttt{dkms: command not found} & \texttt{apt install dkms linux-headers-\$(uname -r)}; re-run \texttt{amdgpu-install} \\
-IVF gtest FAIL but Recall = 1.0 & Packer layout bug on gfx1100---apply patch \texttt{0002}; Section~\ref{sec:layer15-measured} \\
-\texttt{github.com//rocThrust/} clone fail (ROCm 6.4) & Patch \texttt{versions.json} rocThrust to \texttt{3.3.0}; export \texttt{RAPIDS\_CMAKE\_ROCM\_ORG=ROCm} \\
-\texttt{We-always-use-find\_package-for-rocthrust} & On ROCm~7: revert patch to \texttt{4.0.0}; install \texttt{rocthrust-dev}; set \texttt{rocthrust\_DIR}; wipe \texttt{\_deps} \\
-\texttt{not supported with warp size 64 (gfx1100)} & Pass \texttt{'--cmake-args=\"-DUSE\_WARPSIZE\_32=ON\"'} before \texttt{--gpu-arch}; experimental RDNA3 path \\
-\texttt{Invalid option: --cmake-args=...} & Bash ate inner quotes; use \texttt{'--cmake-args=\"-DFOO=bar\"'} not \texttt{--cmake-args=\"-DFOO=bar\"} \\
-\texttt{Invalid option: --gpu-arch=...} & Put \texttt{--gpu-arch=\"gfx1100\"} \textbf{last}; do not omit it \\
-HIP arch error / no kernel for GPU & Explicit \texttt{--gpu-arch="gfx1100"}; avoid \texttt{--allgpuarch} first \\
-Segfault on RDNA3 & Reboot GPU (\texttt{sudo reboot}); retry; consider ROCm version pin per hipVS branch \\
-OOM during build & Lower \texttt{PARALLEL\_LEVEL=8}; free disk; close Milvus if VRAM tight \\
-\texttt{hnsw.cpp} / \texttt{AVX512Capable} & Stale Instinct cache or HNSW enabled; \texttt{./build.sh clean}; \texttt{rm -rf cpp/build}; add \texttt{-DBUILD\_CAGRA\_HNSWLIB=OFF}; \texttt{--gpu-arch=gfx1100} \\
-\texttt{--offload-arch=gfx908} in compile line & Wipe \texttt{cpp/build}; reconfigure with \texttt{--gpu-arch=\"gfx1100\"} last \\
-ROCm 6.4 vs docs 7.0.2 & Upgrade ROCm to match hipVS branch notes, or pass issue with build log \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Layer~1 pass criteria}
-
-On \textbf{Instinct} (\texttt{gfx90a}/\texttt{gfx942}), upstream expects both gtests green. On
-\textbf{RDNA3} (\texttt{gfx1100}):
-
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Layer~1 (minimum):} hipRAFT \texttt{libraft.so} and hipVS \texttt{libcuvs.so} build
-        with ROCm~$\geq$7.0.2; \texttt{BRUTEFORCE\_C\_TEST} exits~0.
-  \item \textbf{Layer~1.5 (achieved 2026-07-05):} \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float
-        98/98 pass after \texttt{0002} patch (Section~\ref{sec:layer15-measured}).
-  \item \texttt{rocm-smi} shows VRAM activity during tests.
-  \item Record branch, fork commit, ROCm version, build flags, log paths (Table in
-        Section~\ref{sec:layer1-measured}).
-\end{itemize}
-
-Repositories:
-\begin{itemize}[leftmargin=*]
-  \item \url{https://github.com/ROCm-DS/hipRaft} (branch \texttt{release/rocmds-25.10})
-  \item \url{https://github.com/ROCm-DS/hipVS} (branch \texttt{release/rocmds-25.10})
-  \item Build docs: \url{https://rocm.docs.amd.com/projects/hipVS/en/latest/install/build.html}
-\end{itemize}
-
-\textbf{Fail fast if:} hipVS lacks \texttt{GPU\_IVF\_FLAT}/brute-force coverage needed for your
-first Knowhere target---check upstream before Layer~2 fork work.
-
-\section{Layer 1.5 --- Fix IVF packer on \texttt{gfx1100} (fork work)}
-
-\noindent\textit{Status: \textbf{Done} (2026-07-05; float IVF gtests 98/98).}
-\label{sec:layer15-packer-fix}
-
-\subsection{Goal}
-
-Demonstrate that this project can \textbf{customize AMD ANN libraries}, not only consume them.
-Layer~1.5 turns the observed \texttt{testPacker()} failures into a fork patch with green gtests
-before Knowhere/Milvus integration.
-
-\textbf{Pass:} \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} exits~0 on \texttt{gfx1100} (float suite
-required; uint8 suite desirable). Record fork URL, commit hash, and log path in the runbook.
-
-\subsection{Root-cause hypothesis (confirmed 2026-07-05)}
-
-In hipVS \texttt{ivf\_flat.hpp}, interleaved cluster groups use
-\texttt{kIndexGroupSize = raft::warp\_size()}. With \texttt{USE\_WARPSIZE\_32=ON} and
-\texttt{--gpu-arch=gfx1100}, CUCO compiles for warp~32 but \texttt{raft::warp\_size()} still
-resolved to \textbf{64} in headers---so \texttt{kIndexGroupSize=64} at runtime while packer
-layout expected warp-32 grouping. Symptom: \texttt{mask\_true = 2 $\times$ expected} on case
-\texttt{/0} (\texttt{list\_size=13}, \texttt{dim=1}); recall remained \textbf{1.0}.
-
-\textbf{Fix (in-repo):} \texttt{patches/hipvs/0002-ivf-kIndexGroupSize-warp32-gfx1100.patch}
-sets \texttt{kIndexGroupSize=32} when \texttt{CUCO\_USE\_WARPSIZE\_32} is defined. Apply via
-\texttt{scripts/apply\_hipvs\_layer15\_patches.sh}.
-
-\subsection{Step 1 --- Fork hipVS on GitHub and clone on the lab host}
-
-\begin{enumerate}[leftmargin=*]
-  \item On GitHub, fork \url{https://github.com/ROCm-DS/hipVS} to your account (e.g.\
-        \url{https://github.com/konkolchin/hipVS}).
-  \item On \texttt{amd-rx7900xtx}, clone the fork (or repoint an existing tree):
-\end{enumerate}
-
-\begin{verbatim}
-export WORKDIR=~/rocmds_check_gfx1100
-mkdir -p "$WORKDIR"
-cd "$WORKDIR"
-
-# fresh fork clone (recommended)
-git clone -b release/rocmds-25.10 https://github.com/konkolchin/hipVS.git hipVS
-cd hipVS
-git remote add upstream https://github.com/ROCm-DS/hipVS.git
-
-# create the Layer 1.5 working branch
-git checkout -b gfx1100-ivf-packer-fix
-\end{verbatim}
-
-If you already built from \texttt{ROCm-DS/hipVS} under \texttt{hipVS/}, add your fork as
-\texttt{origin} and push the branch there instead of re-cloning.
-
-\subsection{Step 2 --- Apply Layer~1.5 patches from \texttt{ann-harness-amd}}
-
-Patches live in this repo (no manual hipVS fork editing on the lab host unless you prefer it).
-After \texttt{git pull} on \texttt{ann-harness-amd}, apply both patches to your hipVS tree:
-
-\begin{verbatim}
-cd ~/ann-harness-amd && git pull
-bash scripts/apply_hipvs_layer15_patches.sh ~/rocmds_check_gfx1100/hipVS
-# 0001: testPacker debug prints (mask_true vs expected)
-# 0002: kIndexGroupSize=32 when CUCO_USE_WARPSIZE_32 (gfx1100 fix)
-\end{verbatim}
-
-Optional: commit on hipVS branch \texttt{gfx1100-ivf-packer-fix}:
-
-\begin{verbatim}
-cd ~/rocmds_check_gfx1100/hipVS
-git checkout -b gfx1100-ivf-packer-fix 2>/dev/null || git checkout gfx1100-ivf-packer-fix
-git add cpp/include/cuvs/neighbors/ivf_flat.hpp cpp/tests/neighbors/ann_ivf_flat.cuh
-git commit -m "fix(ivf_flat): warp-32 kIndexGroupSize on gfx1100; packer debug"
-\end{verbatim}
-
-\subsection{Step 4 --- Rebuild, run gtest, and capture the first mismatch}
-\label{sec:layer15-step4-run}
-
-After applying the debug patch you \textbf{must rebuild}---edits to \texttt{ann\_ivf\_flat.cuh}
-are not picked up until \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} is recompiled.
-
-\textbf{Important:} wipe \texttt{cpp/build} before reconfigure. An old cache may still compile for
-Instinct (\texttt{gfx908}/\texttt{gfx90a}/\texttt{gfx942}) and hit \texttt{hnsw.cpp} errors
-(\texttt{AVX512Capable} with \texttt{-Werror}). IVF work does not need HNSW---disable it with
-\texttt{-DBUILD\_CAGRA\_HNSWLIB=OFF}. Do \textbf{not} rely on \texttt{ninja NEIGHBORS\_ANN\_IVF\_FLAT\_TEST}
-alone unless \texttt{CMakeCache.txt} already shows \texttt{gfx1100} only.
-
-\begin{verbatim}
-export PATH=$HOME/.local/bin:/opt/rocm/bin:$PATH
-export ROCM_PATH=/opt/rocm-7.0.2
-export WORKDIR=~/rocmds_check_gfx1100
-export INSTALL_PREFIX=$WORKDIR/install
-export CMAKE_PREFIX_PATH=$ROCM_PATH:$ROCM_PATH/lib/cmake:$INSTALL_PREFIX/lib/cmake
-export rocthrust_DIR=$ROCM_PATH/lib/cmake/rocthrust
-export rocprim_DIR=$ROCM_PATH/lib/cmake/rocprim
-export hipcub_DIR=$ROCM_PATH/lib/cmake/hipcub
-export RAPIDS_CMAKE_ROCTHRUST_USE_LOCAL=ON
-export RAPIDS_CMAKE_ROCM_ORG=ROCm
-export HIP_VISIBLE_DEVICES=0
-
-# --- 4a. Clean + rebuild libcuvs + IVF gtest (required after patch) ---
-# --compile-lib is hipRAFT-only; hipVS build.sh rejects it.
-cd $WORKDIR/hipVS
-./build.sh clean
-rm -rf cpp/build
-
-INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
-  --cache-tool=ccache \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF"' \
-  --gpu-arch="gfx1100" \
-  --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST"
-
-grep CMAKE_HIP_ARCHITECTURES cpp/build/CMakeCache.txt
-# expect: gfx1100 (not gfx908/gfx90a/gfx942)
-
-ls -la $WORKDIR/hipVS/cpp/build/gtests/NEIGHBORS_ANN_IVF_FLAT_TEST
-# Pass: build.sh exit 0 and binary exists
-
-# --- 4b. Run float suite (matches SIFT / GPU_IVF_FLAT) ---
-export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
-GTEST=$WORKDIR/hipVS/cpp/build/gtests
-
-$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
-  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.*' \
-  2>&1 | tee $WORKDIR/packer_debug_float.log
-
-echo "exit code: $?"
-\end{verbatim}
-
-\textbf{Pass for Step~4:} rebuild succeeds; log contains at least one
-\texttt{testPacker mask mismatch} line (expected on stock \texttt{gfx1100} before the Step~5
-fix). You do \textbf{not} need 98/98 green yet.
-
-Extract the \textbf{first} debug line:
-
-\begin{verbatim}
-grep -m1 'testPacker mask mismatch' $WORKDIR/packer_debug_float.log
-\end{verbatim}
-
-Example line (yours will differ in \texttt{label} / sizes):
-
-\begin{verbatim}
-testPacker mask mismatch: label=17 list_size=142 dim=16 veclen=4
-  kIndexGroupSize=32 padded_list_size=160 n_elems=2560
-  mask_true=2288 expected=2272
-\end{verbatim}
-
-\paragraph{How to read the fields.}
-\begin{table}[h]
-\centering
-\caption{Debug line field meanings (\texttt{testPacker})}
-\begin{tabular}{@{}lp{0.62\textwidth}@{}}
-\toprule
-\textbf{Field} & \textbf{Meaning} \\
-\midrule
-\texttt{label} & IVF cluster (inverted list) index inside the built index \\
-\texttt{list\_size} & Vectors in that cluster \\
-\texttt{dim} & Vector dimension for this gtest case \\
-\texttt{veclen} & Interleaved chunk size (\texttt{dim \% veclen == 0}) \\
-\texttt{kIndexGroupSize} & Should be \textbf{32} on gfx1100 (\texttt{raft::warp\_size()}) \\
-\texttt{padded\_list\_size} & \texttt{roundUp(list\_size)} to group boundary \\
-\texttt{n\_elems} & \texttt{padded\_list\_size $\times$ dim} (buffer length) \\
-\texttt{mask\_true} & Count of \texttt{true} bits in the test's validity mask \\
-\texttt{expected} & \texttt{list\_size $\times$ dim} (must match for gtest pass) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Direction of the bug.}
-\begin{itemize}[leftmargin=*]
-  \item \texttt{mask\_true > expected} --- mask marks too many buffer slots as valid (tail-group
-        arithmetic in \texttt{ann\_ivf\_flat.cuh} is the prime suspect).
-  \item \texttt{mask\_true < expected} --- mask too strict; compare against
-        \texttt{pack\_1} indexing in \texttt{ivf\_flat\_helpers.cuh}.
-  \item \texttt{kIndexGroupSize $\neq$ 32} --- rebuild flags wrong; fix Layer~1 env before
-        editing source.
-\end{itemize}
-
-\paragraph{Map log line to a single gtest case.} Find the \texttt{[ FAILED ]} block nearest the
-first mismatch; the suffix \texttt{/NN} is the parameter index:
-
-\begin{verbatim}
-grep -B5 -m1 'testPacker mask mismatch' $WORKDIR/packer_debug_float.log
-# look for: [ FAILED ] AnnIVFFlatTest/AnnIVFFlatTestF_float.AnnIVFFlat/93
-#            where GetParam() = { 1000, 10000, 16, 10, ... }
-\end{verbatim}
-
-Re-run \textbf{one} failing case for fast iteration (replace \texttt{/93} with your index):
-
-\begin{verbatim}
-$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
-  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.AnnIVFFlat/93' \
-  2>&1 | tee $WORKDIR/packer_case_93.log
-\end{verbatim}
-
-Watch GPU activity in a second terminal: \texttt{watch -n1 rocm-smi}.
-
-\subsection{Step 5 --- Fix in the fork, verify, push, record}
-\label{sec:layer15-step5-fix}
-
-Work on branch \texttt{gfx1100-ivf-packer-fix}. \textbf{Do not} disable the assert or lower recall
-\texttt{eps}.
-
-\paragraph{5a. Fix (in \texttt{ann-harness-amd} patches).} Step~4 showed \texttt{kIndexGroupSize=64}
-despite \texttt{USE\_WARPSIZE\_32=ON}. Patch \texttt{0002-ivf-kIndexGroupSize-warp32-gfx1100.patch}
-sets \texttt{kIndexGroupSize=32} when \texttt{CUCO\_USE\_WARPSIZE\_32} is defined (applied via
-\texttt{scripts/apply\_hipvs\_layer15\_patches.sh}). If case \texttt{/0} still fails after
-clean-rebuild, compare mask vs \texttt{pack\_1} as below.
-
-\paragraph{5b. Compare test mask vs production packer (if still failing).} Open these side by side
-for the failing \texttt{(list\_size, dim, veclen)} from Step~4:
-
-\begin{itemize}[leftmargin=*]
-  \item \texttt{cpp/tests/neighbors/ann\_ivf\_flat.cuh} --- \texttt{testPacker()} mask lambda
-        (counts valid slots in the padded interleaved buffer).
-  \item \texttt{cpp/src/neighbors/ivf\_flat/ivf\_flat\_helpers.cuh} ---
-        \texttt{helpers::codepacker::pack\_1} / \texttt{unpack\_1} (production layout).
-\end{itemize}
-
-The test mask uses \texttt{surplus / chunk\_size} and \texttt{interleaved\_group::mod(...)};\
-\texttt{pack\_1} uses \texttt{interleaved\_group::mod(offset) * veclen}. On tail groups
-(\texttt{list\_size} not a multiple of \texttt{kIndexGroupSize}), those formulas must agree on
-which of the \texttt{n\_elems} slots hold real data.
-
-\paragraph{5c. Rebuild and verify loop.} After \texttt{apply\_hipvs\_layer15\_patches.sh}, clean-rebuild
-and re-run case \texttt{/0}, then the full float filter:
-
-\begin{verbatim}
-cd $WORKDIR/hipVS
-INSTALL_PREFIX=$INSTALL_PREFIX ./build.sh libcuvs tests \
-  --cache-tool=ccache \
-  '--cmake-args="-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF"' \
-  --gpu-arch="gfx1100" \
-  --limit-tests="NEIGHBORS_ANN_IVF_FLAT_TEST"
-
-export LD_LIBRARY_PATH=$INSTALL_PREFIX/lib:$ROCM_PATH/lib:$LD_LIBRARY_PATH
-$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
-  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.AnnIVFFlat/93'
-\end{verbatim}
-
-\textbf{Case pass:} no \texttt{testPacker mask mismatch} line; no failure at
-\texttt{ann\_ivf\_flat.cuh:376}; optional second assert (\texttt{devArrMatch} packed vs extend)
-also passes.
-
-\paragraph{5d. Full float suite, then uint8.}
-
-\begin{verbatim}
-$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
-  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_float.*' \
-  2>&1 | tee $WORKDIR/packer_float_fixed.log
-grep -c '\[  FAILED  \]' $WORKDIR/packer_float_fixed.log || true
-# target: 0 failures, exit code 0
-
-# optional (Milvus uint8 paths)
-$GTEST/NEIGHBORS_ANN_IVF_FLAT_TEST \
-  --gtest_filter='AnnIVFFlatTest/AnnIVFFlatTestF_uint8.*' \
-  2>&1 | tee $WORKDIR/packer_uint8_fixed.log
-\end{verbatim}
-
-Confirm Layer~1 backstop still passes:
-
-\begin{verbatim}
-$GTEST/BRUTEFORCE_C_TEST
-echo "BRUTEFORCE exit: $?"
-\end{verbatim}
-
-\paragraph{5e. Commit and push the fork.}
-
-\begin{verbatim}
-cd ~/rocmds_check_gfx1100/hipVS
-git status
-git add cpp/tests/neighbors/ann_ivf_flat.cuh \
-        cpp/src/neighbors/ivf_flat/ivf_flat_helpers.cuh   # only files you changed
-git commit -m "fix(ivf_flat): correct interleaved pack/mask on gfx1100 warp-32 tail groups"
-git push -u origin gfx1100-ivf-packer-fix
-git rev-parse HEAD   # copy this hash into the runbook
-\end{verbatim}
-
-Optional upstream PR: open from \texttt{konkolchin/hipVS:gfx1100-ivf-packer-fix} $\rightarrow$
-\texttt{ROCm-DS/hipVS:release/rocmds-25.10} with the debug log, failing \texttt{GetParam()},
-and the diff. Keep building from your fork until AMD merges.
-
-\paragraph{5f. Record in \texttt{ann-harness-amd}.} Append to the lab log and update
-Section~\ref{sec:layer1-measured} when done:
-
-\begin{verbatim}
-Layer 1.5 — amd-rx7900xtx — 2026-07-05
-Patches: ann-harness-amd patches/hipvs/0001 + 0002 (apply_hipvs_layer15_patches.sh)
-Fix: kIndexGroupSize=32 when CUCO_USE_WARPSIZE_32 (ivf_flat.hpp)
-Before: kIndexGroupSize=64; case /0 mask_true=26 expected=13
-NEIGHBORS_ANN_IVF_FLAT_TEST float: 98/98 PASS (~85s)
-BRUTEFORCE_C_TEST: PASS
-Logs: ~/rocmds_check_gfx1100/packer_float_fixed.log
-       ~/rocmds_check_gfx1100/packer_case_0_fixed.log
-\end{verbatim}
-
-Reinstall into \texttt{\$INSTALL\_PREFIX} if you changed \texttt{libcuvs.so} after the last
-\texttt{build.sh install} step, then pin this commit for Layer~2 Knowhere builds.
-
-\subsection{Step 6 --- Layer~1.5 pass criteria}
-
-\begin{itemize}[leftmargin=*]
-  \item Fork pushed; commit hash recorded.
-  \item \texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} float: \textbf{98/98 PASS}, exit code~0.
-  \item \texttt{BRUTEFORCE\_C\_TEST}: still PASS.
-  \item \texttt{libcuvs.so} in \texttt{\$INSTALL\_PREFIX/lib} built from the fork commit.
-\end{itemize}
-
-Pin \texttt{INSTALL\_PREFIX/lib/libcuvs.so} to the patched build before Layer~2 Knowhere links against
-hipVS.
-
-\subsection{Layer~1.5 measured results (\texttt{amd-rx7900xtx}, 2026-07-05)}
-\label{sec:layer15-measured}
-
-\begin{table}[h]
-\centering
-\caption{Layer~1.5 outcomes after \texttt{kIndexGroupSize} patch on RX 7900 XTX}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Item} & \textbf{Result} \\
-\midrule
-Patches & \texttt{ann-harness-amd} \texttt{patches/hipvs/0001} + \texttt{0002} \\
-Apply script & \texttt{scripts/apply\_hipvs\_layer15\_patches.sh} \\
-Fix & \texttt{kIndexGroupSize=32} when \texttt{CUCO\_USE\_WARPSIZE\_32} (\texttt{ivf\_flat.hpp}) \\
-Build & \texttt{USE\_WARPSIZE\_32=ON}, \texttt{BUILD\_CAGRA\_HNSWLIB=OFF}, \texttt{--gpu-arch=gfx1100} \\
-Before fix & \texttt{kIndexGroupSize=64}; case \texttt{/0}: \texttt{mask\_true=26}, \texttt{expected=13} \\
-\texttt{NEIGHBORS\_ANN\_IVF\_FLAT\_TEST} (float) & \textbf{98/98 PASS}; exit 0; $\sim$85\,s \\
-Case \texttt{/0} & \textbf{PASS}; recall 1.0 \\
-\texttt{BRUTEFORCE\_C\_TEST} & \textbf{PASS} (unchanged) \\
-Logs & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/packer\_float\_fixed.log} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\section{Layer 2 --- Knowhere with HIP backend}
-\label{sec:layer2-knowhere-hip}
-
-\noindent\textit{Status: \textbf{Done} (2026-07-09; L2 search gate 108 assertions; DXC \texttt{2.5} merged).
-Full GPU Catch2 suite still has known gaps---not Layer~2 blockers.}
-
-\subsection{Goal}
-
-Substitute the library link at the Knowhere layer, still without full Milvus: build
-\texttt{libknowhere.so} with \texttt{WITH\_HIP=ON} against prebuilt hipVS/hipRAFT under
-\texttt{\$INSTALL\_PREFIX}, and pass GPU unit tests for L2 search.
-
-\subsection{Interaction diagram: Knowhere, hipVS, hipRAFT}
-
-\begin{figure}[h]
-\centering
-\begin{tikzpicture}[
-  node distance=1.2cm,
-  box/.style={draw, rounded corners, align=center, minimum width=4.0cm, minimum height=0.95cm},
-  smallbox/.style={draw, rounded corners, align=center, minimum width=3.7cm, minimum height=0.85cm},
-  arr/.style={-{Latex[length=2.5mm]}, thick}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.88\textwidth,
+  height=0.48\textwidth,
+  xlabel={nprobe},
+  ylabel={QPS},
+  xmin=0, xmax=34,
+  ymin=0, ymax=30000,
+  xtick={1,4,8,16,32},
+  grid=both,
+  major grid style={gray!35},
+  legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+  thick,
 ]
-  \node[box] (milvus) {Milvus (QueryNode / IndexNode)\\create\_index(), search()};
-  \node[box, below=of milvus] (knowhere) {Knowhere GPU wrappers\\GPU\_IVF\_FLAT / GPU\_BRUTE\_FORCE};
-  \node[box, below=of knowhere] (hipvs) {hipVS ANN layer\\IVF build/search, top-k};
-  \node[smallbox, below=of hipvs] (hipraft) {hipRAFT primitives\\distance, selection, kNN helpers};
-  \node[smallbox, below=of hipraft] (rocm) {ROCm runtime + HIP kernels\\(gfx1100 device execution)};
-
-  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
-    (milvus) -- node[right, xshift=6pt, align=left] {\scriptsize index/search requests\\\scriptsize + result IDs/scores} (knowhere);
-  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
-    (knowhere) -- node[right, xshift=6pt, align=left] {\scriptsize API calls\\\scriptsize + results} (hipvs);
-  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
-    (hipvs) -- node[right, xshift=6pt, align=left] {\scriptsize primitive calls\\\scriptsize + outputs} (hipraft);
-  \draw[{Latex[length=2.5mm]}-{Latex[length=2.5mm]}, thick]
-    (hipraft) -- node[right, xshift=6pt, align=left] {\scriptsize kernel launches\\\scriptsize + distances/neighbors} (rocm);
+\addplot[red, mark=*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (1,16982) (4,21882) (8,21838) (16,26181) (32,19578)
+};
+\addlegendentry{AMD 7900 XTX (HIP)}
+\addplot[green!70!black, mark=square*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (1,11597) (4,19695) (8,19800) (16,18490) (32,13868)
+};
+\addlegendentry{NVIDIA 4080 (CUDA)}
+\end{axis}
 \end{tikzpicture}
-\caption{Layer~2 interaction model on AMD: Knowhere routes GPU index work to hipVS, hipVS uses hipRAFT primitives, and ROCm executes HIP kernels on the target GPU.}
+\caption{SIFT-1M, sealed \texttt{GPU\_IVF\_FLAT}, $nlist{=}1024$, $k{=}10$.
+Recall@10 identical ($0.38\rightarrow0.98$).
+AMD/CUDA QPS $\approx 1.1$--$1.5\times$ (stack-friendly recipe).}
+\label{fig:sift-flat}
 \end{figure}
 
-\subsection{Repos and branch}
+\subsection{SIFT-1M --- \texttt{GPU\_IVF\_PQ} ($m{=}32$)}
+\label{sec:sift-pq}
 
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.28\textwidth}X@{}}
-\toprule
-\textbf{Field} & \textbf{Value} \\
-\midrule
-DXC Knowhere & \url{https://github.dxc.com/llmkb-internal/knowhere} (branch \texttt{2.5}; PR~\#2 merged 2026-07-09) \\
-Public mirror & \url{https://github.com/konkolchin/knowhere} branch \texttt{amd-hip-gfx1100-layer2} \\
-Harness patches & \texttt{ann-harness-amd/patches/knowhere/0001}--\texttt{0047} \\
-Build / test scripts & \texttt{scripts/build\_knowhere\_layer2.sh}, \texttt{scripts/run\_knowhere\_gpu\_tests.sh} \\
-Lab tree & \texttt{\textasciitilde{}/rocmds\_check\_gfx1100/knowhere} \\
-\bottomrule
-\end{tabularx}
-
-\subsection{Steps (reproducible)}
-
-\begin{enumerate}[leftmargin=*]
-  \item Ensure Layer~1.5 \texttt{libcuvs.so} / hipRAFT are installed under
-        \texttt{\$INSTALL\_PREFIX} (patched packer).
-  \item Clone Knowhere \texttt{2.5} (DXC tree preferred) or apply harness patches to
-        upstream \texttt{zilliztech/knowhere} \texttt{2.5}:
-\begin{verbatim}
-bash scripts/apply_knowhere_layer2_patches.sh ~/rocmds_check_gfx1100/knowhere
-\end{verbatim}
-  \item Configure and build with Conan + HIP (not bare cmake into \texttt{build-hip}):
-\begin{verbatim}
-export WORKDIR=~/rocmds_check_gfx1100
-export INSTALL_PREFIX=$WORKDIR/install
-export ROCM_PATH=/opt/rocm
-SKIP_GIT_PULL=1 bash scripts/build_knowhere_layer2.sh
-\end{verbatim}
-  \item Run the Layer~2 gate (Catch2 \textbf{section} under \texttt{Test All GPU Index};
-        there is no section named ``\ldots{} L2 Metric''):
-\begin{verbatim}
-bash scripts/run_knowhere_gpu_tests.sh
-# equivalent:
-# knowhere_tests 'Test All GPU Index' --section 'Test Gpu Index Search'
-\end{verbatim}
-\end{enumerate}
-
-\textbf{Pass (Layer~2):} section \texttt{Test Gpu Index Search} reports assertions $>0$ and
-all green (L2 search over GPU/CUVS indexes including IVF\_FLAT / IVF\_PQ / CAGRA). Full
-\texttt{Test All GPU Index} is \emph{not} the gate---see known gaps below.
-
-This is where ``replace cuVS/cuRAFT'' actually happens---in Knowhere's build and GPU index
-wrappers, not in \texttt{run\_milvus\_hdf5.py}.
-
-\subsection{Measured on lab host (Layer~2 pass)}
-\label{sec:layer2-measured}
-
-\begin{table}[h]
+\begin{figure}[H]
 \centering
-\caption{Layer~2 results (\texttt{amd-rx7900xtx}; gate first green 2026-07-09,
-reconfirmed 2026-07-26)}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Item} & \textbf{Result} \\
-\midrule
-ROCm / arch & 7.0.2 / \texttt{gfx1100} \\
-Knowhere base & \texttt{2.5} + HIP CMake / shims (patches 0001--0047) \\
-Build & \texttt{libknowhere.so} + \texttt{knowhere\_tests} via Conan + \texttt{WITH\_HIP} \\
-Gate test & \texttt{Test Gpu Index Search} --- \textbf{108 assertions passed} \\
-Runtime helpers & gflags shim (\texttt{libgflags\_gflagsns.so}); spdlog via \texttt{SPDLOG\_HEADER\_ONLY} \\
-DXC merge & squash \texttt{bd82ff28} on \texttt{2.5} (PR~\#2) \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.88\textwidth,
+  height=0.48\textwidth,
+  xlabel={nprobe},
+  ylabel={QPS},
+  xmin=0, xmax=34,
+  ymin=0, ymax=28000,
+  xtick={1,4,8,16,32},
+  grid=both,
+  major grid style={gray!35},
+  legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+  thick,
+]
+\addplot[red, mark=*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (1,24273) (4,20967) (8,19500) (16,22954) (32,14784)
+};
+\addlegendentry{AMD 7900 XTX (HIP)}
+\addplot[green!70!black, mark=square*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (1,11282) (4,19714) (8,19786) (16,18475) (32,14144)
+};
+\addlegendentry{NVIDIA 4080 (CUDA)}
+\end{axis}
+\end{tikzpicture}
+\caption{SIFT-1M, sealed \texttt{GPU\_IVF\_PQ} ($m{=}32$, $nbits{=}8$), $nlist{=}1024$, $k{=}10$.
+Recall@10 identical ($0.36\rightarrow0.73$).
+Mid/high \texttt{nprobe} $\approx 1\times$ AMD/CUDA --- still stack-limited vs library PQ.}
+\label{fig:sift-pq}
+\end{figure}
 
-\subsection{Known gaps on gfx1100 (not Layer~2 blockers)}
-\label{sec:layer2-catch2-gaps}
+\subsection{GIST-1M --- \texttt{GPU\_IVF\_FLAT}}
+\label{sec:gist-flat}
 
-\paragraph{PoC scope vs full Catch2.}
-For this PoC we treat \textbf{\texttt{GPU\_IVF\_FLAT}} and \textbf{\texttt{GPU\_IVF\_PQ}}
-as in-scope (Layer~2 gate + Layer~4 product path; recall matched vs CUDA).
-\textbf{CAGRA} and the strict \textbf{IVF\_PQ TopK} Catch2 threshold still fail on
-\texttt{gfx1100}; closing them needs \textbf{extra work} and is not a PoC exit criterion.
-\textbf{Follow-on:} consumer-\texttt{gfx1100} CAGRA plan (Phase~A library then Phase~B
-Milvus product) is documented in the harness as
-\texttt{docs/cagra\_consumer\_followon.md} with reproduce/bench/smoke scripts;
-Instinct remains documentation reference only---the challenge is RDNA3.
+\begin{figure}[H]
+\centering
+\fbox{\parbox{0.85\textwidth}{\centering\vspace{1.2em}
+\textit{QPS vs \texttt{nprobe} --- pending both-GPU fill}\\[0.6em]
+{\small Run \texttt{scripts/run\_milvus\_layer4\_gist\_flat.sh}
+on AMD and CUDA (\texttt{nprobe}$\in\{8,16,32,64,128\}$),
+then replace this box with the same plot style as Figure~\ref{fig:gist-pq}.}\\[0.4em]
+{\small Expect higher recall and lower QPS than GIST PQ; VRAM $\sim$3.8\,GB raw floats.}
+\vspace{1.2em}}}
+\caption{GIST-1M, sealed \texttt{GPU\_IVF\_FLAT}, $nlist{=}1024$, $k{=}10$.
+\textbf{Pending lab numbers} (script ready in the harness).}
+\label{fig:gist-flat}
+\end{figure}
 
-\paragraph{Gate vs full suite (re-run 2026-07-26).}
+\subsection{GIST-1M --- \texttt{GPU\_IVF\_PQ} ($m{=}32$)}
+\label{sec:gist-pq}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.88\textwidth,
+  height=0.48\textwidth,
+  xlabel={nprobe},
+  ylabel={QPS},
+  xmin=0, xmax=140,
+  ymin=0, ymax=8000,
+  xtick={8,16,32,64,128},
+  grid=both,
+  major grid style={gray!35},
+  legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+  thick,
+]
+\addplot[red, mark=*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (8,4867) (16,2945) (32,2228) (64,1145) (128,700)
+};
+\addlegendentry{AMD 7900 XTX (HIP)}
+\addplot[green!70!black, mark=square*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (8,7167) (16,4102) (32,2774) (64,1908) (128,959)
+};
+\addlegendentry{NVIDIA 4080 (CUDA)}
+\end{axis}
+\end{tikzpicture}
+\caption{GIST-1M (960-d), sealed \texttt{GPU\_IVF\_PQ} ($m{=}32$, $nbits{=}8$),
+$nlist{=}1024$, $k{=}10$ (2026-07-28).
+Recall@10 matches ($\approx0.25\rightarrow0.27$; PQ tax on 960-d, not a wrong port).
+AMD/CUDA QPS $\approx 0.60$--$0.80\times$ --- fair GPU-heavy product-path speed signal.
+Sources: \texttt{results/milvus\_gist\_pq/FILLED.md}.}
+\label{fig:gist-pq}
+\end{figure}
+
+\section{How to read the four plots}
+\label{sec:read}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Recall match} on FLAT and PQ $\Rightarrow$ the HIP port returns the
+        same answer quality as CUDA on these recipes.
+  \item \textbf{SIFT} (Figures~\ref{fig:sift-flat},~\ref{fig:sift-pq}): absolute
+        Milvus QPS is far below direct hipVS/cuVS library rates; AMD$\approx$CUDA is a
+        \emph{stack-overhead} verdict, not an ANN-kernel parity claim.
+  \item \textbf{GIST PQ} (Figure~\ref{fig:gist-pq}): GPU work dominates; NVIDIA ahead
+        at matched recall --- the honest product-path speed gap for this PoC.
+  \item \textbf{Library context} (optional microbench, no Milvus):
+        hipVS \texttt{IVF\_PQ} $m{=}32$ $\sim$0.37--0.55$\times$ cuVS;
+        GPU-heavy \texttt{IVF\_FLAT} $\sim$1.3$\times$ hipVS/cuVS on the same peer GPUs
+        (\texttt{results/lib\_bench/}).
+\end{itemize}
+
+\section{Public repositories}
+\label{sec:repos}
+
 \begin{table}[H]
 \centering
-\caption{Knowhere Catch2 GPU --- gate vs full case on \texttt{amd-rx7900xtx}
-(2026-07-26)}
-\label{tab:layer2-catch2-gate-vs-full}
+\caption{Public HIP line (not upstream \texttt{master})}
+\label{tab:repos}
 \begin{tabular}{@{}llp{0.42\textwidth}@{}}
 \toprule
-\textbf{What ran} & \textbf{Result} & \textbf{Notes} \\
+\textbf{Piece} & \textbf{Repo} & \textbf{Pin} \\
 \midrule
-Section \texttt{Test Gpu Index Search}
-  & \textbf{PASS} (108 assertions)
-  & Layer~2 gate; L2 search over GPU/CUVS indexes \\
-Full case \texttt{Test All GPU Index}
-  & \textbf{FAIL} (579/582 assertions)
-  & Three fails below; expected backlog, not gate fail \\
+Milvus & \url{https://github.com/konkolchin/milvus-hip} & \texttt{v2.5.4} \\
+Knowhere & \url{https://github.com/konkolchin/knowhere-hip} & \texttt{2.5} \\
+Harness & \url{https://github.com/konkolchin/ann-harness-amd} & \texttt{master} \\
+hipVS / hipRAFT & ROCm-DS upstream + harness gfx1100 patches & e.g.\ \texttt{release/rocmds-25.10} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{table}[H]
-\centering
-\caption{The three failed assertions in full \texttt{Test All GPU Index}
-(2026-07-26)}
-\label{tab:layer2-catch2-three-fails}
-\begin{tabular}{@{}lllr@{}}
-\toprule
-\textbf{Section} & \textbf{Index} & \textbf{Assert} & \textbf{Got} \\
-\midrule
-Search TopK & \texttt{GPU\_CUVS\_CAGRA} & recall $> 0.7$ & $0.0$ \\
-Search TopK & \texttt{GPU\_CUVS\_IVF\_PQ} & recall $\ge 0.85$ & $0.837$ \\
-Serialize/Deserialize & \texttt{GPU\_CUVS\_CAGRA} & recall $\ge 0.8$ & $0.0$ \\
-\bottomrule
-\end{tabular}
-\end{table}
+\noindent Start from the Milvus README in that fork and the harness Layer~4 scripts
+(\texttt{run\_milvus\_layer4*.sh}, \texttt{run\_milvus\_layer4\_gist\_*.sh}).
 
-\paragraph{How to read a red ``GPU gtests'' dashboard.}
-Milvus \texttt{all\_tests} has almost no GPU ANN coverage (only
-\texttt{Init.KnowhereGPUMemoryPoolInit} matched a \texttt{*GPU*} filter --- and it
-\textbf{PASS}es). Real GPU unit coverage is Knowhere Catch2
-(\texttt{knowhere\_tests}).
-If a dashboard runs only section \texttt{Test Gpu Index Search}, expect \textbf{PASS}.
-If it runs the full \texttt{Test All GPU Index} case, expect \textbf{FAIL} from the
-three rows in Table~\ref{tab:layer2-catch2-three-fails} until CAGRA / TopK are fixed.
-That red status does \textbf{not} invalidate the FLAT/PQ PoC or Layer~4 product results.
-
-\paragraph{Historical note.}
-Earlier triage also listed CAGRA + bitset (recall $0.0$) and occasional IVF\_PQ TopK
-threshold misses ($\sim$0.84 vs 0.85). The 2026-07-26 full-suite log matches that
-pattern (CAGRA recall $0.0$ on TopK / serialize; IVF\_PQ TopK near-miss).
-
-\paragraph{Reproduce.}
-\begin{verbatim}
-KT=$WORKDIR/knowhere/build/tests/ut/knowhere_tests
-# Gate (PoC / Layer-2):
-"$KT" "Test All GPU Index" --section "Test Gpu Index Search" -s
-# Full case (expect 3 fails until CAGRA/TopK fixed):
-"$KT" "Test All GPU Index" -s
-\end{verbatim}
-
-\section{Layer 3 --- Milvus from source (end-to-end)}
-\label{sec:layer3-milvus-hip}
-
-\noindent\textit{Status: \textbf{Done} (2026-07-17) --- sealed \texttt{GPU\_IVF\_FLAT} build/load on
-\texttt{amd-rx7900xtx}; DXC branch \texttt{amd-hip-gfx1100-layer3} (Layer~4 green --- merge ready).}
-
-\subsection{Goal}
-
-Milvus Standalone uses the HIP-enabled Knowhere build (DXC \texttt{2.5} / local Layer~2 tree)
-against prebuilt hipVS/hipRAFT. Stock Docker \texttt{milvusdb/milvus:v2.5.4} is CPU-only and
-is \emph{not} the Layer~3 binary.
-
-\subsection{Repos and scripts}
-
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.28\textwidth}X@{}}
-\toprule
-\textbf{Field} & \textbf{Value} \\
-\midrule
-Milvus tag & \texttt{v2.5.4} (\texttt{milvus-io/milvus}) \\
-Knowhere & Local \texttt{\$WORKDIR/knowhere} (HIP) or DXC \texttt{llmkb-internal/knowhere} \texttt{2.5} \\
-hipVS/hipRAFT & \texttt{\$INSTALL\_PREFIX} (Layer~1.5) \\
-DXC Milvus & \url{https://github.dxc.com/llmkb-internal/milvus} branch \texttt{amd-hip-gfx1100-layer3} \\
-Harness patches & \texttt{patches/milvus/0001}--\texttt{0004} (Knowhere HIP FetchContent,
-                  skip CUDA language, Knowhere API, clang~19 Tantivy) \\
-Build & \texttt{scripts/build\_milvus\_layer3.sh} ($\rightarrow$ \texttt{make milvus-gpu}) \\
-Smoke & \texttt{scripts/run\_milvus\_gpu\_smoke.sh} (passes \texttt{--flush}) \\
-Client & \texttt{scripts/run\_milvus\_hdf5.py --index-type GPU\_IVF\_FLAT --flush} \\
-PR notes & \texttt{docs/PR\_milvus\_amd\_hip\_gfx1100\_layer3.md} \\
-\bottomrule
-\end{tabularx}
-
-\subsection{Steps (lab host, use \texttt{tmux})}
-
-\begin{enumerate}[leftmargin=*]
-  \item Confirm Layer~2 artifacts:
-\begin{verbatim}
-ls $HOME/rocmds_check_gfx1100/install/lib/libcuvs.so
-ls $HOME/rocmds_check_gfx1100/knowhere/build/libknowhere.so
-\end{verbatim}
-  \item Pull harness and build Milvus (long):
-\begin{verbatim}
-cd ~/ann-harness-amd && git pull
-export WORKDIR=~/rocmds_check_gfx1100
-export INSTALL_PREFIX=$WORKDIR/install
-export MILVUS_HIP_INSTALL_PREFIX=$INSTALL_PREFIX
-export ROCM_PATH=/opt/rocm
-# Pin discrete GPU (hide Raphael iGPU gfx1036)
-export ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0
-# uses local HIP Knowhere when present; else FetchContent DXC 2.5
-SKIP_CLONE=1 bash scripts/build_milvus_layer3.sh
-\end{verbatim}
-  \item Start HIP Milvus with writable rocksmq/runtime paths (not \texttt{/var/lib/milvus}),
-        etcd/minio up, then smoke with \textbf{flush} so IndexNode seals GPU indexes:
-\begin{verbatim}
-bash scripts/run_milvus_gpu_smoke.sh
-# or manually (unique collection avoids stale etcd node IDs):
-# python scripts/run_milvus_hdf5.py --uri http://127.0.0.1:19530 \
-#   --index-type GPU_IVF_FLAT --flush --nlist 128 --nprobes 8,16 \
-#   --max-train-rows 50000 --max-query-rows 500 \
-#   --collection sift_gpu_ivf_smoke_$(date +%s)
-\end{verbatim}
-\end{enumerate}
-
-\textbf{Pass (Layer~3):}
-\begin{itemize}[leftmargin=*]
-  \item Client: insert $\rightarrow$ flush $\rightarrow$ \texttt{GPU\_IVF\_FLAT} index
-        (\texttt{indexed\_rows} complete, \texttt{LoadState: Loaded}) $\rightarrow$ search.
-  \item Logs: IndexNode writes \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
-        \texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_FLAT}; \textbf{no}
-        \texttt{hipErrorInvalidDeviceFunction}.
-  \item Do \emph{not} treat growing-path \texttt{IVF\_FLAT\_CC} remap alone as failure---that
-        is the interim CPU index before seal. Without \texttt{--flush}, search often stays on
-        \texttt{IVF\_FLAT\_CC} and is \emph{not} a HIP proof.
-\end{itemize}
-
-\subsection{Measured on lab host (Layer~3 pass)}
-\label{sec:layer3-measured}
-
-\begin{table}[h]
-\centering
-\caption{Layer~3 results (\texttt{amd-rx7900xtx}, 2026-07-17)}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Item} & \textbf{Result} \\
-\midrule
-ROCm / arch & 7.0.2 / \texttt{gfx1100} (pin \texttt{ROCR\_VISIBLE\_DEVICES=0}) \\
-Milvus & \texttt{v2.5.4} HIP Standalone (\texttt{bin/milvus}) \\
-Knowhere & Nested Layer~2 HIP tree / DXC \texttt{2.5} \\
-Index build & IndexNode: \texttt{GPU\_CUVS\_IVF\_FLAT\_0/1} + \texttt{SLICE\_META} \\
-Sealed load & QueryNode \texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_FLAT}; no \texttt{InvalidDeviceFunction} \\
-Client gate & 50k SIFT slice, \texttt{--flush}: \texttt{indexed\_rows=50000}, \texttt{Loaded} \\
-DXC branch & \texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus} (open; merge after L4) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{What the Milvus patches change}
-
-\texttt{internal/core/thirdparty/knowhere/CMakeLists.txt} (\texttt{0001}):
-\begin{itemize}[leftmargin=*]
-  \item Default Knowhere remote $\rightarrow$ DXC \texttt{2.5} (override via CMake vars).
-  \item Optional \texttt{MILVUS\_KNOWHERE\_SOURCE\_DIR} skips git and uses the Layer~2 tree.
-  \item \texttt{MILVUS\_GPU\_VERSION=ON} forces \texttt{WITH\_CUVS} + \texttt{WITH\_HIP}
-        (not NVIDIA \texttt{WITH\_RAFT}).
-  \item Prefers \texttt{MILVUS\_HIP\_INSTALL\_PREFIX} / \texttt{ROCMDS\_INSTALL\_PREFIX}
-        (not Milvus-clobbered \texttt{INSTALL\_PREFIX}) for hipVS/xxHash.
-\end{itemize}
-\texttt{internal/core/src/CMakeLists.txt} (\texttt{0002}):
-\begin{itemize}[leftmargin=*]
-  \item GPU build keeps \texttt{MILVUS\_GPU\_VERSION} but does \emph{not} enable the CUDA
-        language (no \texttt{nvcc} on AMD).
-\end{itemize}
-\texttt{0003}/\texttt{0004}: Knowhere \texttt{IsAdditionalScalarSupported} API alignment;
-clang~19 Tantivy \texttt{template} keyword fix.
-
-\subsection{Known caveats (do not block Layer~3; watch in Layer~4)}
+\section{Scope and limitations}
+\label{sec:scope}
 
 \begin{itemize}[leftmargin=*]
-  \item \textbf{Dual GPU:} host has \texttt{gfx1100} + iGPU \texttt{gfx1036}. Without
-        \texttt{ROCR\_VISIBLE\_DEVICES=0}, sealed deserialize can hit
-        \texttt{hipErrorInvalidDeviceFunction}.
-  \item \textbf{Growing segments} still remap \texttt{GPU\_IVF\_FLAT}$\rightarrow$\texttt{IVF\_FLAT\_CC};
-        always \texttt{--flush} before claiming GPU search.
-  \item \textbf{50k-slice recall} vs full-1M GT is meaningless; Layer~4 needs full train (or matching GT).
-  \item \textbf{DXC merge:} keep \texttt{amd-hip-gfx1100-layer3} open until clean rebuild from the
-        branch + full-SIFT evidence; optional Knowhere follow-up
-        (\texttt{CMAKE\_CURRENT\_SOURCE\_DIR} for nested \texttt{.cu}).
+  \item Consumer RDNA3 PoC --- not a claim of full NVIDIA feature or speed parity.
+  \item \texttt{GPU\_CAGRA}: unfiltered search only on \texttt{gfx1100}; filtered /
+        bitset paths are out of scope for this release.
+  \item Stock hipVS needed an RDNA3 IVF packer fix (\texttt{kIndexGroupSize}${=}32$
+        with \texttt{USE\_WARPSIZE\_32}); see harness \texttt{patches/hipvs/}.
+  \item Optional PQ launch tuning (prefer \texttt{blockDim}${=}512$ on AMD) is tracked
+        in harness \texttt{results/lib\_bench/LAUNCH\_KNOBS.md}; rebuild hipVS for
+        dashboard/product binaries to pick it up.
 \end{itemize}
-
-\section{Layer 4 --- Harness benchmarks (comparison science)}
-\label{sec:layer4-benchmarks}
-
-\noindent\textit{Status: \textbf{Done} (2026-07-17) --- full SIFT-1M sealed \texttt{GPU\_IVF\_FLAT};
-Table~\ref{tab:layer4-measured}. Checklist: \texttt{docs/layer4\_run\_checklist.md}.}
-
-\subsection{Goal}
-
-Measure sealed HIP \texttt{GPU\_IVF\_FLAT} against same-host CPU Milvus
-(\texttt{IVF\_FLAT}) on SIFT-1M with the \textbf{same client protocol on both sides}.
-Report two protocols separately (as in the management slides):
-
-\begin{enumerate}[leftmargin=*]
-  \item \textbf{Batched harness} --- one \texttt{search()} with all 10k queries
-        (porting show-off / throughput).
-  \item \textbf{VectorDBBench concurrent} --- industry tool, multi-client QPS.
-\end{enumerate}
-
-Never mix protocols in one speed-up column (that produced the withdrawn
-$\sim$50$\times$ apples-to-oranges figures).
-
-\begin{table}[h]
-\centering
-\caption{Layer~4 experiments}
-\begin{tabular}{@{}lll@{}}
-\toprule
-\textbf{Experiment} & \textbf{Tool} & \textbf{What you learn} \\
-\midrule
-Batched CPU vs GPU & \texttt{run\_milvus\_hdf5.py} / Layer~4 & Same-protocol throughput speed-up \\
-VDBBench concurrent & \texttt{milvusivfflat} / \texttt{milvusgpuivfflat} & Industry-tool QPS speed-up \\
-HIP sealed smoke & \texttt{run\_milvus\_layer4.sh} & Engineering proof of \texttt{GPU\_CUVS} path \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Fair compare recipe (VectorDBBench)}
-
-\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.28\textwidth}X@{}}
-\toprule
-\textbf{Field} & \textbf{Value} \\
-\midrule
-Dataset & SIFT-1M parquet (\texttt{\textasciitilde{}vdbbench-sift1m}) \\
-Index & CPU \texttt{IVF\_FLAT} / GPU \texttt{GPU\_IVF\_FLAT}, \texttt{nlist=1024}, \texttt{k=10} \\
-\texttt{nprobe} grid & $1,4,8,16,32$ \\
-Runner & \texttt{scripts/run\_vdbbench\_milvus\_ivf\_sweep.sh} \\
-Checklist & \texttt{docs/vdbbench\_cpu\_gpu\_compare.md} \\
-Order & CPU Docker on \texttt{:19530}, then HIP Standalone on \texttt{:19530} \\
-Outputs & \texttt{logs/vdb\_cpu\_ivf\_nprobe\_*.log}, \texttt{logs/vdb\_gpu\_ivf\_nprobe\_*.log} \\
-\bottomrule
-\end{tabularx}
-
-\subsection{Steps (lab host, use \texttt{tmux})}
-
-\begin{verbatim}
-cd ~/ann-harness-amd && git pull
-source ~/vdbbench-venv/bin/activate
-# 1) Docker CPU Milvus on :19530
-MODE=cpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
-# 2) Stop Docker milvus; start HIP milvus (ROCR_VISIBLE_DEVICES=0)
-MODE=gpu bash scripts/run_vdbbench_milvus_ivf_sweep.sh
-\end{verbatim}
-
-\textbf{Pass (Layer~4 fair compare):}
-\begin{itemize}[leftmargin=*]
-  \item Layer~4 batched GPU run finishes; recall@10 \textbf{rises} with \texttt{nprobe};
-        fill Table~\ref{tab:layer4-cpu-gpu-batch} with same-protocol CPU batched QPS.
-  \item VDBBench concurrent CPU + GPU sweeps finish; fill Table~\ref{tab:layer4-cpu-gpu}.
-  \item GPU: sealed \texttt{GPU\_CUVS\_IVF\_FLAT} in milvus log; no \texttt{InvalidDeviceFunction}.
-\end{itemize}
-
-\subsection{Measured on lab host (Layer~4)}
-\label{sec:layer4-measured}
-
-Host: \texttt{amd-rx7900xtx}, Milvus \texttt{v2.5.4} HIP Standalone,
-\texttt{ROCR\_VISIBLE\_DEVICES=0}, collection \texttt{sift\_gpu\_l4\_20260717\_200716},
-\texttt{scripts/run\_milvus\_layer4.sh}.
-Results JSON: \texttt{\$WORKDIR/logs/layer4\_gpu\_ivf\_20260717\_200716.json}.
-
-Timings: insert $14.16$\,s, flush $3.02$\,s, index build $16.06$\,s;
-\texttt{indexed\_rows=1000000}, load \texttt{Finished}/\texttt{Loaded}.
-IndexNode saved multi-slice \texttt{GPU\_CUVS\_IVF\_FLAT\_*}; QueryNode
-\texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_FLAT}; no \texttt{InvalidDeviceFunction}.
-
-\begin{table}[h]
-\centering
-\caption{Layer~4 GPU Milvus SIFT-1M (\texttt{k=10}, \texttt{nlist=1024}, RX 7900 XTX, 2026-07-17)}
-\label{tab:layer4-measured}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{QPS} & \textbf{p99 ms} & \textbf{recall@10} \\
-\midrule
-1  & 16981.8 & 2.59 & 0.38 \\
-4  & 21881.7 & 2.49 & 0.71 \\
-8  & 21838.3 & 2.76 & 0.84 \\
-16 & 26181.3 & 2.76 & 0.93 \\
-32 & 19578.4 & 2.81 & 0.98 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Two fair CPU vs GPU comparisons (do not mix)}
-\label{sec:layer4-cpu-gpu}
-
-Same host \texttt{amd-rx7900xtx}, SIFT-1M L2, IVF \texttt{nlist=1024}, \texttt{k=10}.
-Same order and numbers as the management slides.
-Present \textbf{two} protocols separately; never divide batched GPU QPS by
-serial VectorDBBench CPU QPS (that mix previously produced a spurious
-$\sim$52$\times$ at \texttt{nprobe}=32 --- \textbf{withdrawn}).
-
-\paragraph{Why VectorDBBench serial is not the speed headline.}
-A serial VDBBench stage issues \textbf{one query per RPC} (latency/recall).
-That under-utilizes GPU parallelism. Use it for recall only; see
-\texttt{docs/vdbbench\_cpu\_gpu\_compare.md}. Throughput belongs in the
-batched table below; industry multi-client QPS in the concurrent table.
-
-\subsubsection{A --- Batched harness throughput (lead with this)}
-
-Both sides: one \texttt{MilvusClient.search()} with all 10k queries
-(\texttt{scripts/run\_milvus\_hdf5.py}). GPU = Table~\ref{tab:layer4-measured}.
-CPU = same-host batched diagnostic (runbook Table~7);
-re-run \texttt{scripts/run\_milvus\_batch\_cpu\_compare.sh} on Docker v2.5.4 for
-strict same-day parity.
-
-\begin{table}[H]
-\centering
-\caption{A: Milvus CPU vs GPU HIP --- batched 10k-query search (7900 XTX)
-(same protocol both sides; matches slides ``Batched harness throughput'')}
-\label{tab:layer4-cpu-gpu-batch}
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{QPS speed-up} \\
-\midrule
-1  & 22013 & 16982 & 0.38 & $0.77\times$ \\
-4  & 14509 & 21882 & 0.71 & $1.51\times$ \\
-8  &  9516 & 21838 & 0.84 & $2.30\times$ \\
-16 &  5402 & 26181 & 0.93 & $4.85\times$ \\
-32 &  2749 & 19578 & 0.98 & $7.12\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent\textbf{Headline:} at \texttt{nprobe}=16--32, GPU HIP is $\sim$5--7$\times$ CPU
-under the \textbf{same batched protocol}, with matching recall@10 (CPU and GPU agree
-to two decimals) and sealed \texttt{GPU\_CUVS\_IVF\_FLAT}.
-
-\subsubsection{B --- VectorDBBench concurrent}
-
-\begin{table}[H]
-\centering
-\caption{B: Milvus CPU vs GPU HIP --- VectorDBBench concurrent QPS
-(7900 XTX, 2026-07-18; concurrency $\{1,10,20,40,80\}$, 30s;
-\texttt{vdb\_cpu\_concurrent\_nprobe\_20260718\_201956.log},
-\texttt{vdb\_gpu\_concurrent\_nprobe\_20260718\_203847.log}).
-recall@10 from serial companion (same index/\texttt{nprobe});
-matches slides ``VectorDBBench concurrent''}
-\label{tab:layer4-cpu-gpu}
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{CPU QPS} & \textbf{GPU QPS} & \textbf{recall@10} & \textbf{QPS speed-up} \\
-\midrule
-1  & 13884 & 11110 & 0.38 & $0.80\times$ \\
-4  & 10292 & 11066 & 0.71 & $1.08\times$ \\
-8  &  7731 & 11110 & 0.84 & $1.44\times$ \\
-16 &  4893 & 10904 & 0.93 & $2.23\times$ \\
-32 &  2742 & 10374 & 0.98 & $3.78\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent GPU HIP holds $\sim$11k QPS as \texttt{nprobe} rises; CPU falls off.
-At high-recall operating points (\texttt{nprobe}=16--32): $\sim$2--4$\times$.
-recall@10 (CPU and GPU) agree to two decimals.
-
-\subsection{GPU\_IVF\_PQ on AMD (Layer~4 extension)}
-\label{sec:layer4-pq}
-
-Same host and batched harness as Table~\ref{tab:layer4-measured};
-index \texttt{GPU\_IVF\_PQ}, \texttt{nlist}=1024, \texttt{nbits}=8, \texttt{k}=10
-(2026-07-21). Sealed path: IndexNode \texttt{GPU\_CUVS\_IVF\_PQ}; QueryNode
-\texttt{CGO\_LOAD} \texttt{GPU\_CUVS\_IVF\_PQ}.
-Scripts: \texttt{scripts/run\_milvus\_layer4\_pq.sh} (\texttt{M=8|16|32}).
-Plan notes: \texttt{docs/ivf\_pq\_amd\_cuda\_plan.md}.
-
-Higher \texttt{m} $\Rightarrow$ less compression $\Rightarrow$ better recall
-(still below FLAT --- expected). QPS stays in the same ballpark as FLAT
-($\sim$15k--25k); the PQ product story is mainly memory / footprint.
-
-\begin{table}[H]
-\centering
-\caption{AMD 7900 \texttt{GPU\_IVF\_PQ} recall@10 vs FLAT
-(SIFT-1M, \texttt{nlist}=1024, \texttt{nbits}=8, batched harness)}
-\label{tab:layer4-pq-recall}
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{m=8} & \textbf{m=16} & \textbf{m=32} & \textbf{FLAT} \\
-\midrule
-1  & 0.26 & 0.33 & 0.36 & 0.38 \\
-4  & 0.35 & 0.50 & 0.60 & 0.71 \\
-8  & 0.37 & 0.54 & 0.67 & 0.84 \\
-16 & 0.38 & 0.56 & 0.71 & 0.93 \\
-32 & 0.38 & 0.57 & 0.73 & 0.98 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{AMD 7900 \texttt{GPU\_IVF\_PQ} QPS vs FLAT (same runs as Table~\ref{tab:layer4-pq-recall})}
-\label{tab:layer4-pq-qps}
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{m=8} & \textbf{m=16} & \textbf{m=32} & \textbf{FLAT} \\
-\midrule
-1  & 24882 & 16388 & 24273 & 16982 \\
-4  & 21221 & 21084 & 20967 & 21882 \\
-8  & 19766 & 19341 & 19500 & 21838 \\
-16 & 23735 & 23566 & 22954 & 26181 \\
-32 & 15402 & 15295 & 14784 & 19578 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent JSON: \texttt{layer4\_gpu\_ivf\_pq\_20260721\_213748.json} (\texttt{m}=8),
-\texttt{\_213121.json} (\texttt{m}=16), \texttt{\_213909.json} (\texttt{m}=32)
-under \texttt{\$WORKDIR/logs/}. Peer CUDA compare done for \texttt{m}=8, 16, and 32.
-
-\subsection{Fair HIP vs CUDA (RTX 4080 peer)}
-\label{sec:hip-vs-cuda}
-
-Same client protocol as AMD Layer~4 (batched 10k-query \texttt{run\_milvus\_hdf5.py},
-SIFT-1M, \texttt{nlist}=1024, \texttt{k}=10, \texttt{nprobe} grid, \texttt{--flush}).
-CUDA host: RTX~4080, Ubuntu~22, \texttt{milvusdb/milvus:v2.5.4-gpu} via
-\texttt{scripts/start\_milvus\_cuda\_gpu\_docker.sh}
-(runbook: \texttt{docs/cuda\_4080\_benchmark\_runbook.md}).
-
-\textbf{Hardware note:} RX~7900~XTX and RTX~4080 are peer-class enthusiast GPUs
-(typical board power $\sim$320--355\,W). They are \emph{not} identical silicon;
-use recall for port correctness and QPS for hardware/stack speed only.
-
-\subsubsection{GPU\_IVF\_FLAT}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_FLAT} recall@10 (batched; two decimals)}
-\label{tab:hip-cuda-flat-recall}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-\midrule
-1  & 0.38 & 0.38 \\
-4  & 0.71 & 0.71 \\
-8  & 0.84 & 0.84 \\
-16 & 0.93 & 0.93 \\
-32 & 0.98 & 0.98 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_FLAT} QPS
-(speed-up $=$ AMD QPS / CUDA QPS)}
-\label{tab:hip-cuda-flat-qps}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
-\midrule
-1  & 16982 & 11597 & $1.46\times$ \\
-4  & 21882 & 19695 & $1.11\times$ \\
-8  & 21838 & 19800 & $1.10\times$ \\
-16 & 26181 & 18490 & $1.42\times$ \\
-32 & 19578 & 13868 & $1.41\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_cuda\_gpu\_ivf\_flat\_20260722\_225252.json}.
-
-\subsubsection{GPU\_IVF\_PQ (\texttt{m}=8)}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=8, \texttt{nbits}=8) recall@10}
-\label{tab:hip-cuda-pq8-recall}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-\midrule
-1  & 0.26 & 0.25 \\
-4  & 0.35 & 0.35 \\
-8  & 0.37 & 0.37 \\
-16 & 0.38 & 0.38 \\
-32 & 0.38 & 0.38 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=8) QPS
-(speed-up $=$ AMD QPS / CUDA QPS)}
-\label{tab:hip-cuda-pq8-qps}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
-\midrule
-1  & 24882 & 15401 & $1.62\times$ \\
-4  & 21221 & 19940 & $1.06\times$ \\
-8  & 19766 & 20177 & $0.98\times$ \\
-16 & 23735 & 19141 & $1.24\times$ \\
-32 & 15402 & 14801 & $1.04\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_gpu\_ivf\_pq\_20260723\_190900.json}.
-
-\subsubsection{GPU\_IVF\_PQ (\texttt{m}=16)}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=16, \texttt{nbits}=8) recall@10}
-\label{tab:hip-cuda-pq16-recall}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-\midrule
-1  & 0.33 & 0.33 \\
-4  & 0.50 & 0.50 \\
-8  & 0.54 & 0.54 \\
-16 & 0.56 & 0.56 \\
-32 & 0.57 & 0.57 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=16) QPS
-(speed-up $=$ AMD QPS / CUDA QPS)}
-\label{tab:hip-cuda-pq16-qps}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
-\midrule
-1  & 16388 & 15540 & $1.05\times$ \\
-4  & 21084 & 19716 & $1.07\times$ \\
-8  & 19341 & 19829 & $0.98\times$ \\
-16 & 23566 & 19155 & $1.23\times$ \\
-32 & 15295 & 14717 & $1.04\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_gpu\_ivf\_pq\_20260723\_190933.json}.
-
-\subsubsection{GPU\_IVF\_PQ (\texttt{m}=32)}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=32, \texttt{nbits}=8) recall@10}
-\label{tab:hip-cuda-pq-recall}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-\midrule
-1  & 0.36 & 0.36 \\
-4  & 0.60 & 0.60 \\
-8  & 0.67 & 0.67 \\
-16 & 0.71 & 0.71 \\
-32 & 0.73 & 0.73 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{HIP vs CUDA --- \texttt{GPU\_IVF\_PQ} (\texttt{m}=32) QPS
-(speed-up $=$ AMD QPS / CUDA QPS)}
-\label{tab:hip-cuda-pq-qps}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} & \textbf{Speed-up AMD vs NVIDIA} \\
-\midrule
-1  & 24273 & 11282 & $2.15\times$ \\
-4  & 20967 & 19714 & $1.06\times$ \\
-8  & 19500 & 19786 & $0.99\times$ \\
-16 & 22954 & 18475 & $1.24\times$ \\
-32 & 14784 & 14144 & $1.05\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent CUDA JSON: \texttt{\textasciitilde{}milvus\_cuda\_4080/logs/layer4\_gpu\_ivf\_pq\_20260722\_225328.json}.
-
-\paragraph{How to read HIP vs CUDA.}
-Recall@10 matches on FLAT and PQ (\texttt{m}=8/16/32), so the HIP port returns the same
-answer quality as CUDA on this recipe. QPS differences mainly reflect
-\textbf{which GPU and software stack are faster}
-(7900~XTX + HIP Standalone vs 4080 + CUDA Docker) --- not whether HIP search
-returns wrong neighbors.
-
-\subsection{Library-level hipVS vs cuVS (no Milvus)}
-\label{sec:hipvs-vs-cuvs-lib}
-
-Management ask: after RDNA3 \texttt{warp\_size}=32 hipVS works, is the
-\textbf{library} competitive with NVIDIA cuVS?
-Section~\ref{sec:hip-vs-cuda} is the \emph{product} path (Milvus $\rightarrow$ Knowhere
-$\rightarrow$ hipVS/cuVS). This subsection isolates the libraries, then contrasts
-both paths.
-
-\paragraph{Method.}
-Shared Python API (\texttt{import cuvs}; hipVS keeps the cuVS package name).
-Harness: \texttt{scripts/bench\_cuvs\_ivf.py} with wrappers
-\texttt{run\_hipvs\_ivf\_bench.sh} / \texttt{run\_cuvs\_ivf\_bench.sh}.
-Recipe locked to Layer~4: SIFT-1M HDF5, \texttt{nlist}=1024, \texttt{k}=10,
-\texttt{nprobe}$\in\{1,4,8,16,32\}$, index \texttt{IVF\_PQ} (\texttt{m}=32 $\mapsto$ cuVS
-\texttt{pq\_dim}, \texttt{nbits}=8 $\mapsto$ \texttt{pq\_bits}).
-Runbook: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}.
-Slide deck: \texttt{docs/hipvs\_vs\_cuvs\_lib\_speed\_slides.tex}.
-
-\paragraph{Fairness.}
-Same API and recipe; \textbf{different GPUs} (RX~7900~XTX vs RTX~4080).
-Always report recall@10 with QPS. Speed-up $=$ hipVS QPS / cuVS QPS.
-Compare JSON with \texttt{scripts/compare\_cuvs\_lib\_json.py}.
-
-\paragraph{Status (2026-07-23 / 2026-07-27).}
-Library \texttt{IVF\_PQ} (\texttt{m}=32) measured on both hosts
-(JSON under \texttt{results/lib\_bench/}).
-Recall@10 matches; hipVS QPS is about \textbf{0.37--0.55$\times$} cuVS
-($\sim$0.5$\times$ mid-grid; cuVS $\sim$2$\times$ hipVS).
-Library \texttt{IVF\_FLAT} with high \texttt{nprobe} (GPU-heavy; 2026-07-27):
-recall matches; hipVS is about \textbf{1.31--1.39$\times$} cuVS
-(Table~\ref{tab:lib-hipvs-cuvs-flat-heavy-qps}).
-Ratio is \textbf{kernel-dependent}.
-
-\begin{table}[H]
-\centering
-\caption{Library hipVS vs cuVS --- \texttt{IVF\_PQ} (\texttt{m}=32, \texttt{nbits}=8)
-recall@10 (batched; two decimals)}
-\label{tab:lib-hipvs-cuvs-pq-recall}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{hipVS (7900 XTX)} & \textbf{cuVS (4080)} \\
-\midrule
-1  & 0.35 & 0.35 \\
-4  & 0.59 & 0.59 \\
-8  & 0.67 & 0.67 \\
-16 & 0.71 & 0.71 \\
-32 & 0.72 & 0.72 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{Library hipVS vs cuVS --- \texttt{IVF\_PQ} (\texttt{m}=32) QPS
-(speed-up $=$ hipVS QPS / cuVS QPS)}
-\label{tab:lib-hipvs-cuvs-pq-qps}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{hipVS} & \textbf{cuVS} & \textbf{Speed-up} \\
-\midrule
-1  & 1593707 & 4326105 & $0.37\times$ \\
-4  & 1268942 & 2297667 & $0.55\times$ \\
-8  & 710989  & 1411722 & $0.50\times$ \\
-16 & 393742  & 806267  & $0.49\times$ \\
-32 & 217275  & 453316  & $0.48\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{Library hipVS vs cuVS --- GPU-heavy \texttt{IVF\_FLAT}
-(\texttt{nprobe}$\in\{32,64,128,256\}$; speed-up $=$ hipVS / cuVS).
-QPS roughly halves when \texttt{nprobe} doubles (compute-bound search).}
-\label{tab:lib-hipvs-cuvs-flat-heavy-qps}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{hipVS (7900)} & \textbf{cuVS (4080)} & \textbf{Speed-up} \\
-\midrule
-32  & 64142 & 49039 & $1.31\times$ \\
-64  & 33381 & 24759 & $1.35\times$ \\
-128 & 17200 & 12498 & $1.38\times$ \\
-256 & 8784  & 6332  & $1.39\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Library vs Milvus (same GPUs, same PQ recipe).}
-Table~\ref{tab:lib-vs-milvus-pq} puts the direct-library microbench next to the
-batched Milvus product path (Section~\ref{sec:hip-vs-cuda}).
-\textbf{Library QPS} means throughput from \texttt{cuvs.neighbors} alone
-(no RPC). \textbf{Milvus QPS} means the full server path
-(client $\xrightarrow{\mathrm{RPC}}$ Milvus $\rightarrow$ Knowhere $\rightarrow$ hipVS/cuVS).
-
-\begin{table}[H]
-\centering
-\caption{Library vs Milvus --- \texttt{IVF\_PQ} (\texttt{m}=32), peer GPUs.
-AMD/NVIDIA $=$ AMD QPS / NVIDIA QPS. ``Below lib'' $=$ how many times lower
-Milvus QPS is than library QPS on the AMD column (order of magnitude).}
-\label{tab:lib-vs-milvus-pq}
-\begin{tabular}{@{}llrrrr@{}}
-\toprule
-\textbf{Path} & \textbf{nprobe}
-  & \textbf{AMD 7900 QPS} & \textbf{NVIDIA QPS}
-  & \textbf{AMD/NVIDIA} & \textbf{Below lib (AMD)} \\
-\midrule
-Library & 8  & 710989 & 1411722 & $0.50\times$ & --- \\
-Library & 32 & 217275 & 453316  & $0.48\times$ & --- \\
-\midrule
-Milvus  & 8  & 19500 & 19786 & $0.99\times$ & $\sim$36$\times$ \\
-Milvus  & 32 & 14784 & 14144 & $1.05\times$ & $\sim$15$\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Is hipVS the bottleneck in Milvus?}
-On the measured \textbf{SIFT} product path: \textbf{no} (stack dominates).
-Evidence: (1)~library path shows cuVS $\sim$2$\times$ hipVS on PQ;
-(2)~Milvus SIFT path shows AMD $\sim$1$\times$ NVIDIA;
-(3)~Milvus QPS is $\sim$15--36$\times$ below library QPS on the same GPU.
-That $\sim$1$\times$ is \textbf{not} a fair ANN-speed verdict --- it is a
-stack-overhead verdict.
-\textbf{Fair product-path speed trial:} GIST-1M + \texttt{GPU\_IVF\_PQ}
-(Section~\ref{sec:milvus-gist-pq}).
-
-\paragraph{How to brief.}
-\begin{itemize}[leftmargin=*]
-  \item RDNA3 hipVS (\texttt{warp\_size}=32) is \textbf{correct} (recall match).
-  \item Raw library: ratio depends on kernel --- PQ $m{=}32$ $\sim$0.5$\times$;
-        FLAT high-\texttt{nprobe} $\sim$1.3$\times$ on peer GPUs.
-  \item Milvus SIFT: stack-limited $\sim$1$\times$ --- do not call this ANN parity.
-  \item Fair Milvus speed (GIST PQ, 2026-07-28): AMD/CUDA
-        $\sim$0.60--0.80$\times$ at matched recall
-        (Section~\ref{sec:milvus-gist-pq}).
-\end{itemize}
-
-\subsection{Fair Milvus speed: GIST-1M + GPU\_IVF\_PQ}
-\label{sec:milvus-gist-pq}
-
-Goal: product-path QPS where GPU kernels dominate, so a cuVS advantage can
-appear under Milvus (same client both GPUs).
-
-\begin{table}[H]
-\centering
-\caption{Freeze --- GIST Milvus HIP↔CUDA (NVIDIA-ahead hunt)}
-\label{tab:gist-milvus-freeze}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Field} & \textbf{Value} \\
-\midrule
-Dataset & GIST-1M (\texttt{gist-960-euclidean.hdf5}, 960-d) \\
-Index & \texttt{GPU\_IVF\_PQ}, $m{=}32$, $nbits{=}8$, $nlist{=}1024$, flush \\
-Search & $k{=}10$; \texttt{nprobe}$\in\{8,16,32,64,128\}$ \\
-Client & \texttt{scripts/run\_milvus\_hdf5.py} (batched) \\
-Script & \texttt{scripts/run\_milvus\_layer4\_gist\_pq.sh} \\
-Compare & \texttt{scripts/compare\_milvus\_layer4\_json.py} \\
-Success & matched recall; AMD/CUDA QPS $\le\sim 0.85\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Runbook: \texttt{docs/milvus\_amd\_behind\_nvidia\_plan.md}.
-Results dir: \texttt{results/milvus\_gist\_pq/}.
-
-\begin{table}[H]
-\centering
-\caption{Milvus GIST \texttt{GPU\_IVF\_PQ} ($m{=}32$) --- HIP vs CUDA
-(2026-07-28; speed-up $=$ AMD QPS / CUDA QPS).
-Recall@10 matches; NVIDIA ahead on QPS.}
-\label{tab:milvus-gist-pq-qps}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-\textbf{nprobe} & \textbf{{\color{red}AMD 7900}} & \textbf{{\color{green!60!black}CUDA 4080}} & \textbf{Speed-up} \\
-\midrule
-8   & 4867 & 7167 & $0.68\times$ \\
-16  & 2945 & 4102 & $0.72\times$ \\
-32  & 2228 & 2774 & $0.80\times$ \\
-64  & 1145 & 1908 & $0.60\times$ \\
-128 & 700  & 959  & $0.73\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent JSON: AMD
-\texttt{layer4\_gist\_gpu\_ivf\_pq\_20260728\_100624.json};
-CUDA \texttt{layer4\_gist\_gpu\_ivf\_pq\_20260728\_095805.json}.
-Filled summary: \texttt{results/milvus\_gist\_pq/FILLED.md}.
-
-\paragraph{How to brief (GIST).}
-Under a GPU-heavy Milvus recipe, AMD trails NVIDIA
-($\sim$0.60--0.80$\times$ QPS) at matched recall --- unlike stack-limited SIFT
-($\sim$1$\times$). That is the fair product-path ANN speed signal.
-
-\section{Metrics matrix}
-
-For each backend (Milvus CPU IVF, Milvus GPU IVF), record:
-
-\begin{table}[h]
-\centering
-\caption{Minimum metrics per experiment}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Metric} & \textbf{Why} \\
-\midrule
-Index build time & GPU port often breaks here first \\
-Load / cache time & \texttt{cache\_dataset\_on\_device} behavior \\
-recall@10 vs \texttt{nprobe} & Correctness \\
-QPS (batched 10k / VDBBench concurrent) & Same protocol on CPU and GPU; never mix \\
-p99 latency & Serving angle \\
-GPU memory peak & \texttt{rocm-smi} during build/search \\
-Logs / stack traces & SIGILL, OOM, HIP errors \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Use one filled teammate run block per experiment (template in the main runbook appendix).
-
-\section{Engineering workflow}
-
-Recommended flow:
-
-\begin{enumerate}[leftmargin=*]
-  \item Layer~0: ROCm + Milvus CPU healthy on \texttt{amd-rx7900xtx}.
-  \item Layer~1: hipVS/hipRAFT standalone on \texttt{gfx1100} (Section~\ref{sec:layer1-measured}).
-  \item Layer~1.5: \texttt{kIndexGroupSize} patch; IVF gtests 98/98 (Section~\ref{sec:layer15-measured}).
-  \item Layer~2: Knowhere + HIP; L2 GPU search UT green (Section~\ref{sec:layer2-measured}).
-  \item Layer~3: Milvus source build; sealed \texttt{GPU\_IVF\_FLAT} build/load
-        (Section~\ref{sec:layer3-measured}).
-  \item Layer~4: same-protocol CPU vs GPU tables
-        (batched Table~\ref{tab:layer4-cpu-gpu-batch}, then VDBBench concurrent
-        Table~\ref{tab:layer4-cpu-gpu}).
-  \item If recall OK and GPU faster at target points: widen index types + VectorDBBench GPU
-        cases.
-  \item If not: debug numerics, params, device cache before advancing.
-\end{enumerate}
-
-\textbf{Branching:} DXC Knowhere \texttt{2.5} (Layer~2 merged); Milvus branch
-\texttt{amd-hip-gfx1100-layer3} on \texttt{llmkb-internal/milvus} --- ready to merge after
-Layer~4 (Table~\ref{tab:layer4-measured}).
-Pin versions: Milvus tag $\leftrightarrow$ Knowhere tag $\leftrightarrow$ hipVS
-release $\leftrightarrow$ ROCm version in a single compatibility table per experiment.
-
-\textbf{CI/local:} small dataset on every commit; full SIFT-1M nightly on the lab host in
-\texttt{tmux}.
-
-\section{Scope and realism}
-
-\begin{itemize}[leftmargin=*]
-  \item \textbf{hipVS is early} (e.g.\ v0.1.x)---expect gaps vs cuVS; start with
-        \textbf{float} \texttt{GPU\_IVF\_FLAT} or GPU brute force, not every index at once.
-  \item \textbf{RDNA3 IVF packer bug (fixed Layer~1.5)}---stock \texttt{release/rocmds-25.10} used
-        \texttt{kIndexGroupSize=64} despite \texttt{USE\_WARPSIZE\_32}; patch \texttt{0002} in
-        \texttt{ann-harness-amd} restores 98/98 float gtests on \texttt{gfx1100}.
-  \item \textbf{API compatibility $\neq$ drop-in binary}---Milvus/Knowhere still need
-        build-system and wrapper changes. Layers~2--3 deliver Knowhere HIP + Milvus
-        Standalone sealed \texttt{GPU\_IVF\_FLAT}; Layer~4 measures end-to-end quality.
-  \item \textbf{CPU baseline stays essential}---GPU work asks whether the hipVS path improves
-        the recall--QPS trade-off vs CPU Milvus on the same host (same dataset and IVF recipe).
-  \item \textbf{Stock Docker Milvus} remains the CPU control; GPU porting is source-build +
-        fork work, not a config toggle.
-  \item \textbf{Library vs product (2026-07-23):} direct hipVS/cuVS \texttt{IVF\_PQ}
-        ($m{=}32$) shows recall match and hipVS $\sim$0.5$\times$ cuVS QPS; under Milvus
-        AMD $\sim$1$\times$ --- hipVS is not the product-path bottleneck on this SIFT path
-        (Section~\ref{sec:hipvs-vs-cuvs-lib}).
-\end{itemize}
-
-\section{Immediate next steps (lab host)}
-
-\textbf{Where we are:} Layers~0--4 complete (Section~\ref{sec:layer4-measured});
-\texttt{GPU\_IVF\_PQ} measured on AMD (Section~\ref{sec:layer4-pq});
-fair HIP vs CUDA on RTX~4080 done (Section~\ref{sec:hip-vs-cuda});
-library hipVS vs cuVS \texttt{IVF\_PQ} ($m{=}32$) filled
-(Section~\ref{sec:hipvs-vs-cuvs-lib}; slides
-\texttt{docs/hipvs\_vs\_cuvs\_lib\_speed\_slides.tex}).
-\textbf{What remains:} optional library \texttt{IVF\_FLAT} / wider indexes;
-shared gtest wall-clock compare if a CUDA C++ test env is available;
-public GitHub packaging.
-
-\begin{enumerate}[leftmargin=*]
-  \item Optional: library \texttt{IVF\_FLAT} on AMD with \texttt{--p99-sample 0}
-        (\texttt{docs/hipvs\_vs\_cuvs\_bench.md}).
-  \item Optional: shared gtest timing on both hosts
-        (\texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}) --- needs cuVS C++ tests
-        on the 4080 box.
-  \item Optional: \textbf{CAGRA} smoke + SIFT grid (watch Knowhere bitset gaps).
-  \item Optional: VectorDBBench concurrent on CUDA for industry-tool HIP vs CUDA QPS.
-  \item Copy / publish DXC HIP line notes to public GitHub when Business Value is agreed.
-  \item Optional triage: CAGRA bitset recall$=0$; IVF\_PQ TopK threshold flakes on gfx1100
-        (did not block sealed Layer~4 PQ on AMD).
-\end{enumerate}
 
 \section{References}
+\label{sec:refs}
 
 \begin{itemize}[leftmargin=*]
-  \item Main CPU runbook: \texttt{docs/ann\_framework\_runbook.tex}
-  \item Milvus Knowhere: \url{https://milvus.io/docs/knowhere.md}
-  \item RAPIDS cuVS $\leftrightarrow$ Milvus: \url{https://docs.rapids.ai/api/cuvs/stable/integrations/milvus/}
-  \item hipVS docs: \url{https://rocm.docs.amd.com/projects/hipVS/en/latest/}
-  \item hipVS repo: \url{https://github.com/ROCm-DS/hipVS}
-  \item hipRAFT repo: \url{https://github.com/ROCm-DS/hipRaft}
-  \item DXC Knowhere (HIP): \url{https://github.dxc.com/llmkb-internal/knowhere}
-  \item DXC Milvus (Layer~3 branch): \url{https://github.dxc.com/llmkb-internal/milvus}
-  \item Public Knowhere mirror: \url{https://github.com/konkolchin/knowhere}
-  \item Harness (patches + Layer~2/3/4 scripts): \url{https://github.com/konkolchin/ann-harness-amd}
-  \item CUDA 4080 runbook: \texttt{docs/cuda\_4080\_benchmark\_runbook.md}
-  \item hipVS vs cuVS library bench: \texttt{docs/hipvs\_vs\_cuvs\_bench.md}
-  \item Library speed slides: \texttt{docs/hipvs\_vs\_cuvs\_lib\_speed\_slides.tex}
-  \item Library PQ results: \texttt{results/lib\_bench/FILLED\_pq\_m32.md}
-  \item Shared gtest timing (optional): \texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}
-  \item IVF\_PQ AMD$\leftrightarrow$CUDA plan: \texttt{docs/ivf\_pq\_amd\_cuda\_plan.md}
-  \item Layer~2 PR notes: \texttt{docs/PR\_knowhere\_amd\_hip\_gfx1100.md}
-  \item Layer~3 PR notes: \texttt{docs/PR\_milvus\_amd\_hip\_gfx1100\_layer3.md}
+  \item Harness: \url{https://github.com/konkolchin/ann-harness-amd}
+  \item Lab runbook (long form): \texttt{docs/porting\_milvus\_gpu\_to\_amd\_lab\_runbook.tex}
+  \item hipVS: \url{https://github.com/ROCm-DS/hipVS}
+  \item CUDA~4080 runbook: \texttt{docs/cuda\_4080\_benchmark\_runbook.md}
+  \item GIST PQ filled: \texttt{results/milvus\_gist\_pq/FILLED.md}
+  \item Library PQ / FLAT: \texttt{results/lib\_bench/FILLED\_pq\_m32.md},
+        \texttt{FILLED\_flat\_heavy.md}
 \end{itemize}
 
 \end{document}

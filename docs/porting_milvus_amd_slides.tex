@@ -276,7 +276,7 @@
           font=\scriptsize, anchor=west] at (0,-1.75)
       {\textbf{Rule of thumb:} larger \texttt{m} $\Rightarrow$ less compression tax
        (closer to FLAT quality).\\
-       Our lab: \texttt{m}$\in\{8,16,32\}$ --- see recall ladders in Appendix.};
+       Our lab: \texttt{m}$\in\{8,16,32\}$ --- recall ladders in QPS plots.};
   \end{tikzpicture}
 \end{frame}
 
@@ -306,7 +306,7 @@
   \vspace{0.5em}
   \textbf{How to read the next slides:}
   plots show QPS vs \texttt{nprobe} (AMD red, NVIDIA green).
-  Detail tables (recall + QPS + speed-up) are in the \textbf{Appendix}.
+  QPS vs \texttt{nprobe} plots are in the main deck (SIFT FLAT/PQ, GIST PQ).
 \end{frame}
 
 %----- 5g2 library framing (management) -----
@@ -406,10 +406,20 @@
     (not a port bug). Freeze: GPU\_IVF\_PQ, nlist=1024, nbits=8, k=10, sealed.}
 \end{frame}
 
+%----- GIST FLAT (pending) -----
+\begin{frame}{Fair Milvus --- GIST-1M GPU\_IVF\_FLAT (pending)}
+  \vspace{-0.1em}
+  {\footnotesize Same protocol as GIST PQ. Numbers pending
+  \texttt{run\_milvus\_layer4\_gist\_flat.sh} on both GPUs.}\\[0.6em]
+  \centering
+  {\large\textit{QPS vs nprobe --- to be filled}}\\[0.8em]
+  {\footnotesize Higher recall / lower QPS than GIST PQ expected.}
+\end{frame}
+
 %----- 5h-plot (main) -----
 \begin{frame}{HIP vs CUDA --- GPU\_IVF\_FLAT QPS}
   \vspace{-0.3em}
-  {\footnotesize Batched SIFT-1M. Recall@10 identical (0.38$\rightarrow$0.98) --- see Appendix.}\\[0.15em]
+  {\footnotesize Batched SIFT-1M. Recall@10 identical (0.38$\rightarrow$0.98).}\\[0.15em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
@@ -442,7 +452,7 @@
 %----- PQ m=8 plot -----
 \begin{frame}{HIP vs CUDA --- GPU\_IVF\_PQ (\texttt{m}=8) QPS}
   \vspace{-0.3em}
-  {\footnotesize Recall@10 matches ($\approx$0.25$\rightarrow$0.38) --- see Appendix.}\\[0.15em]
+  {\footnotesize Recall@10 matches ($\approx$0.25$\rightarrow$0.38).}\\[0.15em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
@@ -475,7 +485,7 @@
 %----- PQ m=16 plot -----
 \begin{frame}{HIP vs CUDA --- GPU\_IVF\_PQ (\texttt{m}=16) QPS}
   \vspace{-0.3em}
-  {\footnotesize Recall@10 matches (0.33$\rightarrow$0.57) --- see Appendix.}\\[0.15em]
+  {\footnotesize Recall@10 matches (0.33$\rightarrow$0.57).}\\[0.15em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
@@ -508,7 +518,7 @@
 %----- PQ m=32 plot -----
 \begin{frame}{HIP vs CUDA --- GPU\_IVF\_PQ (\texttt{m}=32) QPS}
   \vspace{-0.3em}
-  {\footnotesize Same PQ recipe. Recall@10 identical (0.36$\rightarrow$0.73) --- see Appendix.}\\[0.15em]
+  {\footnotesize Same PQ recipe. Recall@10 identical (0.36$\rightarrow$0.73).}\\[0.15em]
   \centering
   \begin{tikzpicture}
     \begin{axis}[
@@ -809,7 +819,7 @@
       & Best quality for a given scan; more memory \\
     Product quantization
       & \texttt{IVF\_PQ}, \texttt{GPU\_IVF\_PQ}
-      & Much smaller; recall loss (see Appendix) \\
+      & Much smaller; recall loss vs FLAT \\
     Scalar quantization
       & SQ8 / similar
       & Smaller than FLAT; simpler than PQ \\
@@ -822,336 +832,6 @@
     \bottomrule
   \end{tabular}
   \end{center}
-\end{frame}
-
-%===== Appendix: backup detail (Q\&A) =====
-\appendix
-\begin{frame}{Appendix --- backup detail}
-  \begin{itemize}
-    \item AMD 7900: \texttt{GPU\_IVF\_PQ} detail tables / vs FLAT
-    \item HIP vs CUDA (product path): FLAT + PQ recall / QPS
-    \item Fair Milvus GPU-heavy: GIST PQ (main deck + Appendix)
-    \item Library competitive?: shared gtest timing
-      (\texttt{docs/hipvs\_vs\_cuvs\_gtest\_timing.md}); SIFT microbench is appendix/engineer only
-      (\texttt{docs/hipvs\_vs\_cuvs\_bench.md})
-  \end{itemize}
-  \vspace{0.8em}
-  {\small SIFT tables $=$ stack-limited; GIST PQ $=$ fair ANN speed signal.
-  Speed-up $=$ AMD QPS / CUDA QPS.}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ detail tables (m = 8 / 16 / 32)}
-  \scriptsize
-  AMD 7900, sealed \texttt{GPU\_CUVS\_IVF\_PQ}, 2026-07-21.\\[0.25em]
-
-  \begin{columns}[T]
-    \begin{column}{0.32\textwidth}
-      \centering\textbf{m=8}\\[0.2em]
-      \begin{tabular}{@{}lrr@{}}
-        \toprule
-        \textbf{np} & \textbf{QPS} & \textbf{R@10} \\
-        \midrule
-        1  & 24882 & 0.26 \\
-        4  & 21221 & 0.35 \\
-        8  & 19766 & 0.37 \\
-        16 & 23735 & 0.38 \\
-        32 & 15402 & 0.38 \\
-        \bottomrule
-      \end{tabular}
-    \end{column}
-    \begin{column}{0.32\textwidth}
-      \centering\textbf{m=16}\\[0.2em]
-      \begin{tabular}{@{}lrr@{}}
-        \toprule
-        \textbf{np} & \textbf{QPS} & \textbf{R@10} \\
-        \midrule
-        1  & 16388 & 0.33 \\
-        4  & 21084 & 0.50 \\
-        8  & 19341 & 0.54 \\
-        16 & 23566 & 0.56 \\
-        32 & 15295 & 0.57 \\
-        \bottomrule
-      \end{tabular}
-    \end{column}
-    \begin{column}{0.32\textwidth}
-      \centering\textbf{m=32}\\[0.2em]
-      \begin{tabular}{@{}lrr@{}}
-        \toprule
-        \textbf{np} & \textbf{QPS} & \textbf{R@10} \\
-        \midrule
-        1  & 24273 & 0.36 \\
-        4  & 20967 & 0.60 \\
-        8  & 19500 & 0.67 \\
-        16 & 22954 & 0.71 \\
-        32 & 14784 & 0.73 \\
-        \bottomrule
-      \end{tabular}
-    \end{column}
-  \end{columns}
-
-  \vspace{0.5em}
-  {\footnotesize JSON under \texttt{\$WORKDIR/logs/layer4\_gpu\_ivf\_pq\_*.json}.
-  Logs confirm \texttt{GPU\_CUVS\_IVF\_PQ} save + \texttt{CGO\_LOAD}.}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ recall@10 vs FLAT (AMD 7900)}
-  \footnotesize
-  SIFT-1M, \texttt{nlist}=1024, \texttt{nbits}=8, batched harness.\\
-  Higher \texttt{m} $\Rightarrow$ less compression $\Rightarrow$ better recall.\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrrrr@{}}
-    \toprule
-    \textbf{nprobe}
-      & \textbf{m=8} & \textbf{m=16} & \textbf{m=32}
-      & \textbf{FLAT} \\
-    \midrule
-    1  & 0.26 & 0.33 & 0.36 & 0.38 \\
-    4  & 0.35 & 0.50 & 0.60 & 0.71 \\
-    8  & 0.37 & 0.54 & 0.67 & 0.84 \\
-    16 & 0.38 & 0.56 & 0.71 & 0.93 \\
-    32 & 0.38 & 0.57 & 0.73 & 0.98 \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.4em}
-  \textbf{Takeaway:} recall rises with \texttt{nprobe} and with \texttt{m};
-  PQ stays below FLAT (expected compression tax).\\
-  {\small HIP vs CUDA peer done for \texttt{m}=8/16/32.}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ QPS vs FLAT (AMD 7900)}
-  \footnotesize
-  Same runs as previous slide (batched 10k-query search).\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrrrr@{}}
-    \toprule
-    \textbf{nprobe}
-      & \textbf{m=8} & \textbf{m=16} & \textbf{m=32}
-      & \textbf{FLAT} \\
-    \midrule
-    1  & 24882 & 16388 & 24273 & 16982 \\
-    4  & 21221 & 21084 & 20967 & 21882 \\
-    8  & 19766 & 19341 & 19500 & 21838 \\
-    16 & 23735 & 23566 & 22954 & 26181 \\
-    32 & 15402 & 15295 & 14784 & 19578 \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.4em}
-  \textbf{Takeaway:} on this protocol, PQ QPS is in the same ballpark as FLAT
-  ($\sim$15k--25k). The PQ story is mainly \textbf{memory / footprint},
-  not a large QPS jump vs FLAT.
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_FLAT recall@10}
-  \footnotesize
-  Batched 10k-query search. Values rounded to two decimals.\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-    \midrule
-    1  & 0.38 & 0.38 \\
-    4  & 0.71 & 0.71 \\
-    8  & 0.84 & 0.84 \\
-    16 & 0.93 & 0.93 \\
-    32 & 0.98 & 0.98 \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.5em}
-  \textbf{Takeaway:} recall ladders are \textbf{identical} ---
-  sealed HIP \texttt{GPU\_IVF\_FLAT} matches CUDA quality on this recipe.
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_FLAT QPS}
-  \footnotesize
-  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
-      & \textbf{Speed-up AMD vs NVIDIA} \\
-    \midrule
-    1  & 16982 & 11597 & $1.46\times$ \\
-    4  & 21882 & 19695 & $1.11\times$ \\
-    8  & 21838 & 19800 & $1.10\times$ \\
-    16 & 26181 & 18490 & $1.42\times$ \\
-    32 & 19578 & 13868 & $1.41\times$ \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.4em}
-  {\small QPS differences reflect GPU + stack speed, not wrong neighbors
-  (recall already matched).}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=8) recall@10}
-  \footnotesize
-  \begin{center}
-  \begin{tabular}{@{}lrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-    \midrule
-    1  & 0.26 & 0.25 \\
-    4  & 0.35 & 0.35 \\
-    8  & 0.37 & 0.37 \\
-    16 & 0.38 & 0.38 \\
-    32 & 0.38 & 0.38 \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-  \vspace{0.4em}
-  {\small Ladders match within rounding (nprobe 1: 0.26 vs 0.25).}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=8) QPS}
-  \footnotesize
-  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
-  \begin{center}
-  \begin{tabular}{@{}lrrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
-      & \textbf{Speed-up AMD vs NVIDIA} \\
-    \midrule
-    1  & 24882 & 15401 & $1.62\times$ \\
-    4  & 21221 & 19940 & $1.06\times$ \\
-    8  & 19766 & 20177 & $0.98\times$ \\
-    16 & 23735 & 19141 & $1.24\times$ \\
-    32 & 15402 & 14801 & $1.04\times$ \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=16) recall@10}
-  \footnotesize
-  \begin{center}
-  \begin{tabular}{@{}lrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-    \midrule
-    1  & 0.33 & 0.33 \\
-    4  & 0.50 & 0.50 \\
-    8  & 0.54 & 0.54 \\
-    16 & 0.56 & 0.56 \\
-    32 & 0.57 & 0.57 \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-  \vspace{0.4em}
-  {\small Recall ladders \textbf{match}.}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=16) QPS}
-  \footnotesize
-  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
-  \begin{center}
-  \begin{tabular}{@{}lrrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
-      & \textbf{Speed-up AMD vs NVIDIA} \\
-    \midrule
-    1  & 16388 & 15540 & $1.05\times$ \\
-    4  & 21084 & 19716 & $1.07\times$ \\
-    8  & 19341 & 19829 & $0.98\times$ \\
-    16 & 23566 & 19155 & $1.23\times$ \\
-    32 & 15295 & 14717 & $1.04\times$ \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=32) recall@10}
-  \footnotesize
-  Same PQ recipe: \texttt{m}=32, \texttt{nbits}=8, \texttt{nlist}=1024.\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080} \\
-    \midrule
-    1  & 0.36 & 0.36 \\
-    4  & 0.60 & 0.60 \\
-    8  & 0.67 & 0.67 \\
-    16 & 0.71 & 0.71 \\
-    32 & 0.73 & 0.73 \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.5em}
-  \textbf{Takeaway:} PQ recall ladders also \textbf{match}.
-\end{frame}
-
-\begin{frame}{Appendix --- GPU\_IVF\_PQ (\texttt{m}=32) QPS}
-  \footnotesize
-  Speed-up $=$ AMD QPS / CUDA QPS.\\[0.3em]
-
-  \begin{center}
-  \begin{tabular}{@{}lrrr@{}}
-    \toprule
-    \textbf{nprobe} & \textbf{AMD 7900} & \textbf{CUDA 4080}
-      & \textbf{Speed-up AMD vs NVIDIA} \\
-    \midrule
-    1  & 24273 & 11282 & $2.15\times$ \\
-    4  & 20967 & 19714 & $1.06\times$ \\
-    8  & 19500 & 19786 & $0.99\times$ \\
-    16 & 22954 & 18475 & $1.24\times$ \\
-    32 & 14784 & 14144 & $1.05\times$ \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-
-  \vspace{0.4em}
-  {\small Same reading as FLAT: port correctness = recall match;
-  QPS = hardware/stack comparison.}
-\end{frame}
-
-\begin{frame}{Appendix --- GIST Milvus GPU\_IVF\_PQ (fair speed)}
-  \vspace{-0.15em}
-  {\footnotesize GIST-1M, \texttt{m}=32, \texttt{nlist}=1024 (2026-07-28).
-  {\color{red}AMD} / {\color{green!60!black}NVIDIA}.}\\[0.1em]
-  \centering
-  \begin{tikzpicture}
-    \begin{axis}[
-      width=0.92\textwidth,
-      height=0.58\textheight,
-      xlabel={nprobe},
-      ylabel={QPS},
-      xmin=0, xmax=140,
-      ymin=0, ymax=8000,
-      xtick={8,16,32,64,128},
-      grid=both,
-      major grid style={gray!40},
-      legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
-      thick,
-    ]
-      \addplot[red, mark=*, mark size=2.8pt, line width=1.2pt] coordinates {
-        (8,4867) (16,2945) (32,2228) (64,1145) (128,700)
-      };
-      \addlegendentry{AMD (7900 XTX, HIP)}
-      \addplot[green!70!black, mark=square*, mark size=2.8pt, line width=1.2pt] coordinates {
-        (8,7167) (16,4102) (32,2774) (64,1908) (128,959)
-      };
-      \addlegendentry{NVIDIA (4080, CUDA)}
-    \end{axis}
-  \end{tikzpicture}
-
-  \vspace{0.1em}
-  {\footnotesize \textbf{Product ANN speed:} NVIDIA ahead (AMD/CUDA $\sim$0.60--0.80$\times$).}
-  \note{Recall@10 matches both GPUs ($\sim$0.25--0.27). Low absolute recall =
-    PQ compression on 960-d with m=32, not a wrong port. Speed-up = AMD QPS / CUDA QPS.
-    Sources: layer4\_gist\_gpu\_ivf\_pq\_20260728\_100624.json (AMD),
-    \_095805.json (CUDA).}
 \end{frame}
 
 \end{document}
