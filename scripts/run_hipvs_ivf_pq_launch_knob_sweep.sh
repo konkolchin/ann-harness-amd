@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # A/B hipVS IVF-PQ launch variants on gfx1100 (requires patch 0005 applied + rebuilt).
 #
-# Default grid: 3 variants × {auto,256,512} block threads, plus no-local-topk once.
+# Default grid: variants × block threads. Do NOT include FORCE_NO_LOCAL_TOPK —
+# flipping manage_local_topk only in compute_similarity_select desyncs the
+# search path (caller still expects fused local top-k buffers) → hipError 700.
 # Override with SWEEP_CASES (newline-separated "tag|exports").
 #
 # Usage:
@@ -33,7 +35,6 @@ no_smem_lut|HIPVS_IVF_PQ_FORCE_VARIANT=no_smem_lut
 fast_bt256|HIPVS_IVF_PQ_FORCE_VARIANT=fast HIPVS_IVF_PQ_BLOCK_THREADS=256
 fast_bt512|HIPVS_IVF_PQ_FORCE_VARIANT=fast HIPVS_IVF_PQ_BLOCK_THREADS=512
 no_smem_bt256|HIPVS_IVF_PQ_FORCE_VARIANT=no_smem_lut HIPVS_IVF_PQ_BLOCK_THREADS=256
-no_local_topk|HIPVS_IVF_PQ_FORCE_VARIANT=fast HIPVS_IVF_PQ_FORCE_NO_LOCAL_TOPK=1
 EOF
 )"
 fi
@@ -74,10 +75,23 @@ while IFS= read -r line; do
   echo "${tag} rc=${rc} json=${RESULTS_JSON} exports=${exports:-stock}" | tee -a "${SUMMARY}"
   if [[ ${rc} -ne 0 ]]; then
     echo "WARN: case ${tag} failed (rc=${rc}); continuing" | tee -a "${SUMMARY}"
+  elif [[ -f "${RESULTS_JSON}" ]]; then
+    python3 - "${RESULTS_JSON}" "${tag}" >>"${SUMMARY}" <<'PY'
+import json, sys
+path, tag = sys.argv[1], sys.argv[2]
+d = json.load(open(path))
+parts = [f"{tag}"]
+for r in d.get("nprobe_results", []):
+    parts.append(f"nprobe={r['nprobe']}:qps={r['qps']:.0f}:R10={r.get('recall@10', float('nan')):.4f}")
+print("  " + "  ".join(parts))
+PY
   fi
 done <<<"${SWEEP_CASES}"
 
 unset_knobs
 echo ""
 echo "Done. Summary: ${SUMMARY}"
-echo "Compare QPS with: python3 scripts/compare_cuvs_lib_json.py ${LOG_DIR}/lib_hipvs_ivf_pq_m32_*.json"
+echo "Paste SUMMARY or:"
+echo "  for f in ${LOG_DIR}/lib_hipvs_ivf_pq_m32_*.json; do"
+echo "    python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); print(sys.argv[1].split('/')[-1], [(r['nprobe'], round(r['qps']), round(r.get('recall@10',0),4)) for r in d['nprobe_results']])\" \"\$f\""
+echo "  done"

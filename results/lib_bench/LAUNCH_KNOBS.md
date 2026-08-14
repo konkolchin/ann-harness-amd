@@ -18,8 +18,12 @@ On first search with knobs set, stderr prints:
 | `HIPVS_IVF_PQ_FORCE_VARIANT` | `fast` / `no_basediff` / `no_smem_lut` | Force `(Precomp,SMemLUT)` template |
 | `HIPVS_IVF_PQ_FORCE_SMEM_LUT` + `FORCE_PRECOMP` | `0`/`1` | Same mapping without VARIANT name |
 | `HIPVS_IVF_PQ_BLOCK_THREADS` | power-of-two ≥32 | Fix `blockDim.x` (skip auto shrink) |
-| `HIPVS_IVF_PQ_FORCE_NO_LOCAL_TOPK` | `1` | Disable fused local top-k |
 | `HIPVS_IVF_PQ_PREFERRED_CARVEOUT` | `0.0`–`1.0` | Override preferred shmem carveout |
+
+**Do not use** `HIPVS_IVF_PQ_FORCE_NO_LOCAL_TOPK=1` alone: it only flips
+`manage_local_topk` inside `compute_similarity_select`, while the IVF-PQ search
+caller still allocates/reads fused local top-k outputs → **hipErrorIllegalMemoryAccess (700)**
+on gfx1100 (seen 2026-08-14). Proper fused-topk off needs a matching search-path change.
 
 Compatible with patch **0004** (compute_score pipeline); apply either order.
 
@@ -64,6 +68,14 @@ _(fill after lab)_
 | no_smem_lut | | | | |
 | fast + bt256 | | | | |
 | fast + bt512 | | | | |
-| no_local_topk | | | | |
+| no_smem + bt256 | | | | |
+| no_local_topk | **CRASH 700** — unsafe knob; skip | | | |
+
+After a sweep on the lab:
+
+```bash
+python3 scripts/compare_cuvs_lib_json.py \
+  $WORKDIR/logs/launch_knobs/lib_hipvs_ivf_pq_m32_*.json
+```
 
 **Verdict:** _(TBD — look for ≥5–10% QPS move at nprobe≥8 with unchanged recall)_
