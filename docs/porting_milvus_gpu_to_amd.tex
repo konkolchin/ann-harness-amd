@@ -43,6 +43,8 @@ on SIFT-1M and GIST-1M recipes used here.
 \textbf{Speed (product path, batched Milvus QPS):}
 \begin{itemize}[nosep,leftmargin=*]
   \item \textbf{SIFT-1M} is often stack-limited ($\sim$1$\times$ AMD/CUDA);
+  \item \textbf{GIST-1M + IVF\_FLAT}: mostly peer / slight AMD lead
+        (one mid-grid dip);
   \item \textbf{GIST-1M + IVF\_PQ} is GPU-heavier: AMD trails at roughly
         $0.60$--$0.80\times$ CUDA at matched recall.
 \end{itemize}
@@ -202,15 +204,36 @@ Mid/high \texttt{nprobe} $\approx 1\times$ AMD/CUDA --- still stack-limited vs l
 
 \begin{figure}[H]
 \centering
-\fbox{\parbox{0.85\textwidth}{\centering\vspace{1.2em}
-\textit{QPS vs \texttt{nprobe} --- pending both-GPU fill}\\[0.6em]
-{\small Run \texttt{scripts/run\_milvus\_layer4\_gist\_flat.sh}
-on AMD and CUDA (\texttt{nprobe}$\in\{8,16,32,64,128\}$),
-then replace this box with the same plot style as Figure~\ref{fig:gist-pq}.}\\[0.4em]
-{\small Expect higher recall and lower QPS than GIST PQ; VRAM $\sim$3.8\,GB raw floats.}
-\vspace{1.2em}}}
-\caption{GIST-1M, sealed \texttt{GPU\_IVF\_FLAT}, $nlist{=}1024$, $k{=}10$.
-\textbf{Pending lab numbers} (script ready in the harness).}
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.88\textwidth,
+  height=0.48\textwidth,
+  xlabel={nprobe},
+  ylabel={QPS},
+  xmin=0, xmax=140,
+  ymin=0, ymax=5500,
+  xtick={8,16,32,64,128},
+  grid=both,
+  major grid style={gray!35},
+  legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+  thick,
+]
+\addplot[red, mark=*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (8,1643) (16,4925) (32,4158) (64,2554) (128,2256)
+};
+\addlegendentry{AMD 7900 XTX (HIP)}
+\addplot[green!70!black, mark=square*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (8,1339) (16,4648) (32,4103) (64,3774) (128,1961)
+};
+\addlegendentry{NVIDIA 4080 (CUDA)}
+\end{axis}
+\end{tikzpicture}
+\caption{GIST-1M (960-d), sealed \texttt{GPU\_IVF\_FLAT}, $nlist{=}1024$, $k{=}10$
+(2026-08-14).
+Recall@10 matches ($\approx0.64\rightarrow0.99$).
+AMD/CUDA QPS mostly $\sim$1.0--1.2$\times$ (exception: $0.68\times$ at \texttt{nprobe}=64).
+First point is cold on both GPUs.
+Sources: \texttt{results/milvus\_gist\_flat/FILLED.md}.}
 \label{fig:gist-flat}
 \end{figure}
 
@@ -260,6 +283,8 @@ Sources: \texttt{results/milvus\_gist\_pq/FILLED.md}.}
   \item \textbf{SIFT} (Figures~\ref{fig:sift-flat},~\ref{fig:sift-pq}): absolute
         Milvus QPS is far below direct hipVS/cuVS library rates; AMD$\approx$CUDA is a
         \emph{stack-overhead} verdict, not an ANN-kernel parity claim.
+  \item \textbf{GIST FLAT} (Figure~\ref{fig:gist-flat}): high recall ladder;
+        QPS mostly peer / slight AMD lead (one mid-grid dip).
   \item \textbf{GIST PQ} (Figure~\ref{fig:gist-pq}): GPU work dominates; NVIDIA ahead
         at matched recall --- the honest product-path speed gap for this PoC.
   \item \textbf{Library context} (optional microbench, no Milvus):
@@ -313,6 +338,7 @@ hipVS / hipRAFT & ROCm-DS upstream + harness gfx1100 patches & e.g.\ \texttt{rel
   \item hipVS: \url{https://github.com/ROCm-DS/hipVS}
   \item CUDA~4080 runbook: \texttt{docs/cuda\_4080\_benchmark\_runbook.md}
   \item GIST PQ filled: \texttt{results/milvus\_gist\_pq/FILLED.md}
+  \item GIST FLAT filled: \texttt{results/milvus\_gist\_flat/FILLED.md}
   \item Library PQ / FLAT: \texttt{results/lib\_bench/FILLED\_pq\_m32.md},
         \texttt{FILLED\_flat\_heavy.md}
 \end{itemize}
