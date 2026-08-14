@@ -26,7 +26,8 @@ On first search with knobs set, stderr prints:
 caller still allocates/reads fused local top-k outputs → **hipErrorIllegalMemoryAccess (700)**
 on gfx1100 (seen 2026-08-14). Proper fused-topk off needs a matching search-path change.
 
-Compatible with patch **0004** (compute_score pipeline); apply either order.
+Compatible with patch **0006** (AMD default bt512). Spot‑1 patch **0004** is
+**reverted** (no QPS win) — do not re-apply.
 
 ## Lab steps
 
@@ -69,9 +70,9 @@ Recall@10 flat across the grid (~0.34 → ~0.73).
 
 **Verdict:** spots 6–7 **partial win** via larger block size. **Hardcoded** as AMD
 default `blockDim=512` in DXC hipVS (`konkolchin/hipVS` `aae4bbe`) and harness
-patch `0006` / apply script below. LUT-build (spot 5) remains secondary.
+patch `0006` / apply script below.
 
-## Hardcoded default (dashboard)
+## Hardcoded default — confirmed live (2026-08-15)
 
 | Item | Value |
 |------|--------|
@@ -79,21 +80,29 @@ patch `0006` / apply script below. LUT-build (spot 5) remains secondary.
 | Branch | `release/rocmds-25.10` |
 | Harness patch | `patches/hipvs/0006-ivf-pq-default-blockdim-512-amd.patch` |
 | Apply | `scripts/apply_hipvs_ivf_pq_default_bt512.sh` |
+| Confirm JSON | `lib_hipvs_ivf_pq_m32_20260815_000637.json` |
+
+Default-on library bench (no env override; stderr showed `block_threads=512`):
+
+| nprobe | QPS | R@10 |
+|-------:|----:|-----:|
+| 1 | 1,733,219 | 0.347 |
+| 4 | 1,177,594 | 0.592 |
+| 8 | 862,599 | 0.670 |
+| 16 | 497,091 | 0.710 |
+| 32 | **269,845** | 0.727 |
+
+Matches the sweep’s `fast+bt512` band. Updated hipVS/cuVS ratios: see `FILLED_pq_m32.md`
+(~**0.60–0.62×** mid-grid, was ~0.48–0.50×).
 
 ```bash
-# Lab hipVS that already has 0005 knobs OR clean tree:
 cd ~/ann-harness-amd && git pull
 bash scripts/apply_hipvs_ivf_pq_default_bt512.sh "$WORKDIR/hipVS"
-
-# Or sync DXC fork tip:
-#   cd "$WORKDIR/hipVS" && git fetch origin && git checkout aae4bbe
-
-# Rebuild hipVS → install prefix (Milvus/Knowhere load this .so):
 cd "$WORKDIR/hipVS"
-INSTALL_PREFIX=$WORKDIR/install ./build.sh libcuvs python \
+INSTALL_PREFIX=$WORKDIR/install ./build.sh libcuvs \
   '--cmake-args="-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF"' \
   --gpu-arch=gfx1100
-# reinstall python/cuvs if library benches need it; restart Milvus for dashboard.
+# reinstall python/cuvs into hipvs-bench-venv if needed; restart Milvus for product path
 ```
 
 Unset env knobs for dashboard runs (default is already 512). To A/B again:

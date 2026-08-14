@@ -48,8 +48,10 @@ on SIFT-1M and GIST-1M recipes used here.
   \item \textbf{GIST-1M + IVF\_PQ} is GPU-heavier: AMD trails at roughly
         $0.60$--$0.80\times$ CUDA at matched recall.
 \end{itemize}
-Library microbenches (no Milvus) show a larger PQ gap ($\sim$0.5$\times$) and a
-FLAT-heavy AMD lead ($\sim$1.3$\times$) --- useful context, not a product-QPS claim.
+Library microbenches (no Milvus): after an AMD-default
+\texttt{blockDim}${=}512$ launch fix, hipVS \texttt{IVF\_PQ} ($m{=}32$) sits at
+roughly $0.60$--$0.62\times$ cuVS mid-grid (was $\sim$0.5$\times$); GPU-heavy
+\texttt{IVF\_FLAT} remains $\sim$1.3$\times$ --- useful context, not a product-QPS claim.
 \end{abstract}
 
 \tableofcontents
@@ -287,11 +289,63 @@ Sources: \texttt{results/milvus\_gist\_pq/FILLED.md}.}
         QPS mostly peer / slight AMD lead (one mid-grid dip).
   \item \textbf{GIST PQ} (Figure~\ref{fig:gist-pq}): GPU work dominates; NVIDIA ahead
         at matched recall --- the honest product-path speed gap for this PoC.
-  \item \textbf{Library context} (optional microbench, no Milvus):
-        hipVS \texttt{IVF\_PQ} $m{=}32$ $\sim$0.37--0.55$\times$ cuVS;
-        GPU-heavy \texttt{IVF\_FLAT} $\sim$1.3$\times$ hipVS/cuVS on the same peer GPUs
+  \item \textbf{Library context} (optional microbench, no Milvus;
+        Figure~\ref{fig:lib-pq}):
+        with AMD-default \texttt{blockDim}${=}512$, hipVS \texttt{IVF\_PQ} $m{=}32$
+        is $\sim$0.60--0.62$\times$ cuVS mid-grid (was $\sim$0.48--0.50$\times$);
+        GPU-heavy \texttt{IVF\_FLAT} $\sim$1.3$\times$
         (\texttt{results/lib\_bench/}).
 \end{itemize}
+
+\section{Library PQ: AMD launch default (\texttt{blockDim}${=}512$)}
+\label{sec:lib-bt512}
+
+Stock hipVS \texttt{compute\_similarity\_select} auto-shrinks block size with an
+NVIDIA-oriented occupancy heuristic. On \texttt{gfx1100}, forcing
+\texttt{blockDim}${=}512$ raised library IVF-PQ search QPS by $\sim$25--35\%
+at matched recall (harness A/B: \texttt{results/lib\_bench/LAUNCH\_KNOBS.md}).
+That preference is now the AMD default in our hipVS line
+(\url{https://github.com/konkolchin/hipVS}, commit \texttt{aae4bbe};
+harness patch \texttt{0006}). A separate score-loop micro-opt (pipeline / pq8)
+was tried and \textbf{reverted} --- no QPS win.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.88\textwidth,
+  height=0.48\textwidth,
+  xlabel={nprobe},
+  ylabel={QPS},
+  xmin=0, xmax=34,
+  ymin=0, ymax=5e6,
+  xtick={1,4,8,16,32},
+  grid=both,
+  major grid style={gray!35},
+  legend style={at={(0.98,0.98)}, anchor=north east, font=\small},
+  thick,
+  scaled ticks=false,
+]
+\addplot[red, mark=*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (1,1733219) (4,1177594) (8,862599) (16,497091) (32,269845)
+};
+\addlegendentry{hipVS 7900 (bt512 default)}
+\addplot[blue!70!black, mark=triangle*, mark size=2.5pt, line width=1.0pt, dashed] coordinates {
+  (1,1593707) (4,1268942) (8,710989) (16,393742) (32,217275)
+};
+\addlegendentry{hipVS 7900 (Jul stock)}
+\addplot[green!70!black, mark=square*, mark size=2.5pt, line width=1.15pt] coordinates {
+  (1,4326105) (4,2297667) (8,1411722) (16,806267) (32,453316)
+};
+\addlegendentry{cuVS 4080}
+\end{axis}
+\end{tikzpicture}
+\caption{Library \texttt{IVF\_PQ} ($m{=}32$, SIFT-1M, no Milvus).
+Recall@10 matched across series ($\approx0.35\rightarrow0.73$).
+Default \texttt{blockDim}${=}512$ lifts mid-grid hipVS/cuVS from $\sim$0.5$\times$
+to $\sim$0.60--0.62$\times$ (\texttt{FILLED\_pq\_m32.md}, 2026-08-15 confirm).}
+\label{fig:lib-pq}
+\end{figure}
 
 \section{Public repositories}
 \label{sec:repos}
@@ -307,7 +361,8 @@ Sources: \texttt{results/milvus\_gist\_pq/FILLED.md}.}
 Milvus & \url{https://github.com/konkolchin/milvus-hip} & \texttt{v2.5.4} \\
 Knowhere & \url{https://github.com/konkolchin/knowhere-hip} & \texttt{2.5} \\
 Harness & \url{https://github.com/konkolchin/ann-harness-amd} & \texttt{master} \\
-hipVS / hipRAFT & ROCm-DS upstream + harness gfx1100 patches & e.g.\ \texttt{release/rocmds-25.10} \\
+hipVS / hipRAFT & \url{https://github.com/konkolchin/hipVS} (+ ROCm-DS)
+  & \texttt{release/rocmds-25.10} + gfx1100 patches (incl.\ bt512) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -324,9 +379,10 @@ hipVS / hipRAFT & ROCm-DS upstream + harness gfx1100 patches & e.g.\ \texttt{rel
         bitset paths are out of scope for this release.
   \item Stock hipVS needed an RDNA3 IVF packer fix (\texttt{kIndexGroupSize}${=}32$
         with \texttt{USE\_WARPSIZE\_32}); see harness \texttt{patches/hipvs/}.
-  \item Optional PQ launch tuning (prefer \texttt{blockDim}${=}512$ on AMD) is tracked
-        in harness \texttt{results/lib\_bench/LAUNCH\_KNOBS.md}; rebuild hipVS for
-        dashboard/product binaries to pick it up.
+  \item PQ search launch: AMD-default \texttt{blockDim}${=}512$ is on
+        (Section~\ref{sec:lib-bt512}); product Milvus must load the rebuilt
+        \texttt{libcuvs} (restart Standalone; do not run Docker
+        \texttt{milvus-standalone} alongside the HIP binary).
 \end{itemize}
 
 \section{References}
@@ -341,6 +397,8 @@ hipVS / hipRAFT & ROCm-DS upstream + harness gfx1100 patches & e.g.\ \texttt{rel
   \item GIST FLAT filled: \texttt{results/milvus\_gist\_flat/FILLED.md}
   \item Library PQ / FLAT: \texttt{results/lib\_bench/FILLED\_pq\_m32.md},
         \texttt{FILLED\_flat\_heavy.md}
+  \item PQ launch knobs / bt512 default: \texttt{results/lib\_bench/LAUNCH\_KNOBS.md}
+  \item hipVS DXC fork (bt512): \url{https://github.com/konkolchin/hipVS}
 \end{itemize}
 
 \end{document}
