@@ -1,0 +1,310 @@
+% Compile: pdfLaTeX (or LuaLaTeX). Overleaf-friendly.
+% Suspicious spots in hipVS IVF-PQ compute_similarity_kernel for gfx1100 tuning.
+\documentclass[aspectratio=169,10pt]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{whale}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\setbeamerfont{title}{size=\Large\bfseries}
+\setbeamerfont{frametitle}{size=\large\bfseries}
+
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{blue!70!black}\bfseries,
+  commentstyle=\color{gray},
+  breaklines=true,
+  columns=fullflexible,
+  frame=single,
+  framerule=0.4pt,
+  xleftmargin=0.2em,
+  xrightmargin=0.2em,
+  aboveskip=0.3em,
+  belowskip=0.2em,
+  showstringspaces=false,
+  language=C++
+}
+
+\title{hipVS IVF-PQ --- \texttt{compute\_similarity\_kernel}}
+\subtitle{Optimization hunt on RDNA3 (\texttt{gfx1100}) \\
+\small Source: \texttt{ROCm-DS/hipVS} \texttt{release/rocmds-25.10} \\
+\texttt{cpp/src/neighbors/ivf\_pq/ivf\_pq\_compute\_similarity\_impl.cuh}}
+\author{Konstantin Kolchin}
+\date{13 August 2026}
+
+\begin{document}
+
+%----- title -----
+\begin{frame}
+  \titlepage
+  \vspace{0.2em}
+  \begin{center}
+    \footnotesize
+    Lab: search-only rocprof $\approx$ \textbf{91\%} time in
+    \texttt{ivf\_pq::detail::compute\_similarity\_kernel}
+    (LUT build + PQ scan). Hints are hypotheses --- measure after each change.
+  \end{center}
+\end{frame}
+
+%----- map -----
+\begin{frame}{Kernel map (what burns time)}
+  \footnotesize
+  One block $=$ one (\texttt{query}, \texttt{probe}) pair.
+  \begin{enumerate}
+    \item Optional \textbf{PrecompBaseDiff} into shared memory
+    \item Build \textbf{LUT} $[\texttt{pq\_dim}\times 2^{\texttt{pq\_bits}}]$
+          (often in LDS / shared)
+    \item For each list vector: unpack PQ codes $\rightarrow$ gather LUT
+          $\rightarrow$ accumulate score \quad\textbf{(dominant)}
+    \item Optional fused local top-$k$ + \texttt{atomicMin} on
+          \texttt{query\_kths}
+  \end{enumerate}
+  \vspace{0.4em}
+  \begin{block}{This deck}
+    Quote the suspicious spots; one-line hope per spot.
+    Not a complete rewrite plan.
+  \end{block}
+\end{frame}
+
+%----- spot 1: hot score loop -----
+\begin{frame}[fragile]{Spot 1 --- per-vector score (hot loop)}
+\begin{lstlisting}
+score = ivfpq_compute_score<OutT, LutT, vec_t, PqBits>(
+    pq_dim,
+    reinterpret_cast<...>(pq_thread_data),
+    lut_scores,
+    early_stop_limit);
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    This call is the PQ scan; any fewer loads / better LUT locality /
+    wider vectorization here moves the 91\% needle.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 2: compute_score body -----
+\begin{frame}[fragile]{Spot 2 --- \texttt{ivfpq\_compute\_score} chunk walk}
+\begin{lstlisting}
+for (; pq_dim >= kChunkSize; pq_dim -= kChunkSize) {
+  *pq_codes.vectorized_data() = *pq_head;
+  pq_head += kIndexGroupSize;          // interleaved stride
+  ivfpq_compute_chunk<...>(score, pq_code, pq_codes,
+                           lut_head, lut_end);
+  if (score >= early_stop_limit) { return score; }
+}
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Stride \texttt{kIndexGroupSize} and early-exit branches are RDNA3-sensitive;
+    retune group size / reduce divergent early-stop.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 3: bit unpack -----
+\begin{frame}[fragile]{Spot 3 --- PQ bit unpack + LUT gather}
+\begin{lstlisting}
+// inside ivfpq_compute_chunk (recursive template)
+uint8_t code = pq_code & kPqMask;
+pq_code >>= PqBits;
+score += OutT(lut_head[code]);   // gather from LUT
+lut_head += kPqShift;            // next subspace book
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Random LUT gathers + scalar unpack dominate; try denser unrolls,
+    half/uint8 LUT, or subspace tiling that hits LDS banks better on RDNA3.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 4: kIndexGroupSize -----
+\begin{frame}[fragile]{Spot 4 --- interleave group $=$ warp assumption}
+\begin{lstlisting}
+// ivf_pq.hpp (layout contract used by the kernel)
+#if defined(CUCO_USE_WARPSIZE_32) && CUCO_USE_WARPSIZE_32
+constexpr static uint32_t kIndexGroupSize = 32;
+#else
+constexpr static uint32_t kIndexGroupSize = raft::warp_size(); // 64 on AMD
+#endif
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Layout/coalescing assumes NVIDIA-style groups; gfx1100 wave32 vs 64
+    mismatch wastes bandwidth --- keep packer and scan on the same group size.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 5: LUT build -----
+\begin{frame}[fragile]{Spot 5 --- LUT construction (before the scan)}
+\begin{lstlisting}
+for (uint32_t i = threadIdx.x; i < lut_size; i += blockDim.x) {
+  ...
+  do {
+    float pq_c = *cur_pq_center;
+    cur_pq_center += PqShift;   // strided codebook walk
+    switch (metric) {           // L2 / IP / Cosine
+      case L2Expanded: { ... score += diff * diff; } break;
+      case InnerProduct: { ... score -= q * pq_c; } break;
+    }
+  } while (++j < j_end);
+  lut_scores[i] = LutT(score);
+}
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Metric \texttt{switch} + strided codebook reads inflate LUT build;
+    specialize L2-only kernel and vectorize \texttt{pq\_center} loads.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 6: smem lut -----
+\begin{frame}[fragile]{Spot 6 --- LUT in shared vs global}
+\begin{lstlisting}
+if constexpr (EnableSMemLut) {
+  lut_scores = reinterpret_cast<LutT*>(smem_buf);
+} else {
+  lut_scores += lut_size * blockIdx.x;  // device LUT
+}
+// later: compute_similarity_select tries
+//   (PrecompBaseDiff, EnableSMemLut) =
+//   (true,true) -> (false,true) -> (true,false)
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Heuristics pick shmem/L1 carveout for NVIDIA; re-tune
+    \texttt{preferred\_shmem\_carveout} / force variants on gfx1100.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 7: select occupancy -----
+\begin{frame}[fragile]{Spot 7 --- launch heuristics (host)}
+\begin{lstlisting}
+constexpr double kTargetOccupancy = 0.75;
+// grow n_threads_min from warpSize ...
+// cudaFuncSetAttribute(...PreferredSharedMemoryCarveout...)
+// pick candidate with best occupancy / locality_hint
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Block size and carveout were not fitted on RDNA3; a gfx1100 grid of
+    $(n\_threads, carveout, EnableSMemLut)$ may beat the stock picker.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 8: precomp -----
+\begin{frame}[fragile]{Spot 8 --- \texttt{PrecompBaseDiff} into LDS}
+\begin{lstlisting}
+if constexpr (PrecompBaseDiff) {
+  // L2: lut_end[i] = query[i] - cluster_center[i];
+  // IP:  store float2(query, query*center)
+  __syncthreads();
+}
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Extra LDS pressure can steal L1 on RDNA3; for some
+    $(\texttt{pq\_dim},\texttt{dim})$ the \texttt{false} variant may win.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 9: fences -----
+\begin{frame}[fragile]{Spot 9 --- barriers before the scan}
+\begin{lstlisting}
+__threadfence_block();
+__syncthreads();
+local_topk_t block_topk(topk, lut_end, query_kth);
+
+for (uint32_t i = threadIdx.x; i < n_samples_aligned;
+     i += blockDim.x, pq_thread_data += pq_line_width) {
+  ...
+}
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Double sync after LUT may be heavier than needed on HIP; test dropping
+    \texttt{\_\_threadfence\_block} if LDS visibility is already covered.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 10: filter in hot path -----
+\begin{frame}[fragile]{Spot 10 --- filter check inside sample loop}
+\begin{lstlisting}
+bool valid = i < n_samples;
+if (valid && sample_filter(queries_offset + query_ix, label, i)) {
+  score = ivfpq_compute_score<...>(...);
+  if (metric == CosineExpanded) { score = OutT(1) + score; }
+}
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Even \texttt{none\_sample\_filter} still sits in the hot path; compile a
+    filter-free specialization for the unfiltered Milvus case.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 11: fused topk -----
+\begin{frame}[fragile]{Spot 11 --- fused top-$k$ + atomic}
+\begin{lstlisting}
+if constexpr (kManageLocalTopK) {
+  block_topk.add(score, sample_offset + i);
+  ...
+  block_topk.done(smem_buf);
+  block_topk.store(out_scores, out_indices);
+  if (threadIdx.x == 0) {
+    atomicMin(query_kths + query_ix, float(out_scores[topk - 1]));
+  }
+}
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Warp-sort + cross-probe \texttt{atomicMin} contend on AMD; try
+    Capacity$=0$ (score then select) for large batches on gfx1100.
+  \end{alertblock}
+\end{frame}
+
+%----- spot 12: early stop -----
+\begin{frame}[fragile]{Spot 12 --- early stop vs full scan}
+\begin{lstlisting}
+OutT early_stop_limit = kDummy;
+switch (metric) {
+  case L2Expanded: case L2SqrtExpanded:
+    early_stop_limit = query_kth; break;
+  default: break;
+}
+// inside score loop:
+if (score >= early_stop_limit) { return score; }
+\end{lstlisting}
+  \vspace{0.3em}
+  \begin{alertblock}{Hope (1 line)}
+    Early-stop saves FLOPs but adds divergence; A/B with
+    \texttt{kDummy} always (full scan) on wave32 RDNA3.
+  \end{alertblock}
+\end{frame}
+
+%----- priority -----
+\begin{frame}{Suggested attack order}
+  \footnotesize
+  \begin{enumerate}
+    \item \textbf{Spots 1--4} --- PQ scan + interleave/\texttt{kIndexGroupSize}
+          (where 91\% lives)\\
+          {\scriptsize First patch in harness:
+          \texttt{patches/hipvs/0004-\ldots compute-score-pipeline-pq8\ldots}
+          --- software-pipeline loads + \texttt{pq\_bits=8} byte LUT path.
+          Apply: \texttt{scripts/apply\_hipvs\_ivf\_pq\_compute\_score\_opt.sh}}
+    \item \textbf{Spot 6--7} --- force launch variants / carveout grid on gfx1100
+    \item \textbf{Spot 5} --- L2-specialized LUT build
+    \item \textbf{Spots 8--12} --- cheaper wins (sync, filter-free, top-$k$ mode,
+          early-stop A/B)
+  \end{enumerate}
+  \vspace{0.5em}
+  \begin{block}{Measure}
+    Keep search-only rocprof (time-filter after build). Report QPS +
+    \% time in \texttt{compute\_similarity\_kernel} per change.
+  \end{block}
+\end{frame}
+
+\end{document}

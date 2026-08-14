@@ -1,0 +1,103 @@
+diff --git a/cpp/src/neighbors/ivf_pq/ivf_pq_compute_similarity_impl.cuh b/cpp/src/neighbors/ivf_pq/ivf_pq_compute_similarity_impl.cuh
+index 0227e8c..2ad4593 100644
+--- a/cpp/src/neighbors/ivf_pq/ivf_pq_compute_similarity_impl.cuh
++++ b/cpp/src/neighbors/ivf_pq/ivf_pq_compute_similarity_impl.cuh
+@@ -186,10 +186,89 @@ __device__ auto ivfpq_compute_score(uint32_t pq_dim,
+                                     OutT early_stop_limit) -> OutT
+ {
+   constexpr uint32_t kChunkSize = sizeof(VecT) * 8u / PqBits;
++  constexpr uint32_t kPqShift   = 1u << PqBits;
+   auto lut_head                 = lut_scores;
+   auto lut_end                  = lut_scores + (pq_dim << PqBits);
+-  VecT pq_codes;
+   OutT score{0};
++#if defined(__HIP_PLATFORM_AMD__)
++  // gfx1100 tune (ann-harness): software-pipeline interleaved PQ loads to hide
++  // global latency; for pq_bits==8 (default IVF_PQ) skip bit-unpack and gather
++  // LUT by byte. Measure with search-only rocprof on compute_similarity_kernel.
++  if constexpr (PqBits == 8) {
++    if (pq_dim >= kChunkSize) {
++      VecT cur;
++      *cur.vectorized_data() = *pq_head;
++      pq_head += kIndexGroupSize;
++      pq_dim -= kChunkSize;
++      while (pq_dim >= kChunkSize) {
++        VecT nxt;
++        *nxt.vectorized_data() = *pq_head;
++        pq_head += kIndexGroupSize;
++        const auto* bytes = reinterpret_cast<const uint8_t*>(cur.vectorized_data());
++#pragma unroll
++        for (uint32_t i = 0; i < kChunkSize; ++i) {
++          score += OutT(lut_head[bytes[i]]);
++          lut_head += kPqShift;
++        }
++        if (score >= early_stop_limit) { return score; }
++        cur = nxt;
++        pq_dim -= kChunkSize;
++      }
++      {
++        const auto* bytes = reinterpret_cast<const uint8_t*>(cur.vectorized_data());
++#pragma unroll
++        for (uint32_t i = 0; i < kChunkSize; ++i) {
++          score += OutT(lut_head[bytes[i]]);
++          lut_head += kPqShift;
++        }
++        if (pq_dim == 0 && score >= early_stop_limit) { return score; }
++      }
++    }
++    if (pq_dim > 0) {
++      VecT rem;
++      *rem.vectorized_data() = *pq_head;
++      const auto* bytes = reinterpret_cast<const uint8_t*>(rem.vectorized_data());
++      for (uint32_t i = 0; i < pq_dim; ++i) {
++        score += OutT(lut_head[bytes[i]]);
++        lut_head += kPqShift;
++      }
++    }
++    return score;
++  }
++  // Non-8-bit PQ on HIP: pipeline loads, keep stock bit-unpack chunk.
++  if (pq_dim >= kChunkSize) {
++    VecT cur;
++    *cur.vectorized_data() = *pq_head;
++    pq_head += kIndexGroupSize;
++    pq_dim -= kChunkSize;
++    while (pq_dim >= kChunkSize) {
++      VecT nxt;
++      *nxt.vectorized_data() = *pq_head;
++      pq_head += kIndexGroupSize;
++      typename VecT::math_t pq_code = 0;
++      ivfpq_compute_chunk<OutT, LutT, VecT, false, PqBits>(
++        score, pq_code, cur, lut_head, lut_end);
++      if (score >= early_stop_limit) { return score; }
++      cur = nxt;
++      pq_dim -= kChunkSize;
++    }
++    {
++      typename VecT::math_t pq_code = 0;
++      ivfpq_compute_chunk<OutT, LutT, VecT, false, PqBits>(
++        score, pq_code, cur, lut_head, lut_end);
++      if (pq_dim == 0 && score >= early_stop_limit) { return score; }
++    }
++  }
++  if (pq_dim > 0) {
++    VecT pq_codes;
++    *pq_codes.vectorized_data()   = *pq_head;
++    typename VecT::math_t pq_code = 0;
++    ivfpq_compute_chunk<OutT, LutT, VecT, true, PqBits>(
++      score, pq_code, pq_codes, lut_head, lut_end);
++  }
++  return score;
++#else
++  VecT pq_codes;
+   for (; pq_dim >= kChunkSize; pq_dim -= kChunkSize) {
+     *pq_codes.vectorized_data() = *pq_head;
+     pq_head += kIndexGroupSize;
+@@ -206,6 +285,7 @@ __device__ auto ivfpq_compute_score(uint32_t pq_dim,
+       score, pq_code, pq_codes, lut_head, lut_end);
+   }
+   return score;
++#endif
+ }
+ 
+ /**
