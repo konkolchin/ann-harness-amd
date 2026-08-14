@@ -54,7 +54,8 @@
 +      }
 +    }
 +  }
-+  uint32_t force_block_threads = 0;
++  // DXC gfx1100 default (LAUNCH_KNOBS.md): prefer 512 unless env overrides.
++  uint32_t force_block_threads = 512;
 +  if (const char* e = std::getenv("HIPVS_IVF_PQ_BLOCK_THREADS"); e != nullptr && e[0] != '\0') {
 +    force_block_threads = static_cast<uint32_t>(std::atoi(e));
 +    RAFT_EXPECTS(force_block_threads >= 32u && (force_block_threads & (force_block_threads - 1u)) == 0u,

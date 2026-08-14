@@ -67,12 +67,34 @@ Recall@10 flat across the grid (~0.34 → ~0.73).
 3. **Real lever = `blockDim`:** `HIPVS_IVF_PQ_BLOCK_THREADS=512` with `fast` gives **~+28–36% QPS** at `nprobe≥8`, same recall. `no_smem_lut` + `bt256` matches that — stock thread shrink for that variant is wrong on RDNA3.
 4. Still **not** closing the full ~2× cuVS gap alone, but first concrete PQ search win on gfx1100.
 
-**Verdict:** spots 6–7 **partial win** via larger block size. Next: bake a gfx1100-friendly default (prefer `n_threads≥512` when occupancy allows, or ship env default in bench scripts), optionally sweep `bt1024` + carveout; LUT-build (spot 5) remains secondary.
+**Verdict:** spots 6–7 **partial win** via larger block size. **Hardcoded** as AMD
+default `blockDim=512` in DXC hipVS (`konkolchin/hipVS` `aae4bbe`) and harness
+patch `0006` / apply script below. LUT-build (spot 5) remains secondary.
 
-## Re-check best case
+## Hardcoded default (dashboard)
+
+| Item | Value |
+|------|--------|
+| hipVS commit | https://github.com/konkolchin/hipVS/commit/aae4bbe3bcc91cf17ddc407c0d7d3b835196f44a |
+| Branch | `release/rocmds-25.10` |
+| Harness patch | `patches/hipvs/0006-ivf-pq-default-blockdim-512-amd.patch` |
+| Apply | `scripts/apply_hipvs_ivf_pq_default_bt512.sh` |
 
 ```bash
-HIPVS_IVF_PQ_FORCE_VARIANT=fast HIPVS_IVF_PQ_BLOCK_THREADS=512 \
-  INDEX_TYPE=IVF_PQ M=32 LUT_DTYPE=float32 P99_SAMPLE=0 \
-  bash scripts/run_hipvs_ivf_bench.sh
+# Lab hipVS that already has 0005 knobs OR clean tree:
+cd ~/ann-harness-amd && git pull
+bash scripts/apply_hipvs_ivf_pq_default_bt512.sh "$WORKDIR/hipVS"
+
+# Or sync DXC fork tip:
+#   cd "$WORKDIR/hipVS" && git fetch origin && git checkout aae4bbe
+
+# Rebuild hipVS → install prefix (Milvus/Knowhere load this .so):
+cd "$WORKDIR/hipVS"
+INSTALL_PREFIX=$WORKDIR/install ./build.sh libcuvs python \
+  '--cmake-args="-DUSE_WARPSIZE_32=ON -DBUILD_CAGRA_HNSWLIB=OFF"' \
+  --gpu-arch=gfx1100
+# reinstall python/cuvs if library benches need it; restart Milvus for dashboard.
 ```
+
+Unset env knobs for dashboard runs (default is already 512). To A/B again:
+`HIPVS_IVF_PQ_BLOCK_THREADS=256` (requires 0005 knobs patch).
